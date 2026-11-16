@@ -160,11 +160,12 @@ func (s *Service) applyCellUpdate(cells []protocol.TimetableCell, req protocol.T
 	if req.RequestType == "SWAP" && req.TargetCell.ID != "" {
 		// 맞교환: 두 셀의 요일/교시를 상호 교환 저장
 		for i := range cells {
-			if cells[i].ID == req.SourceCell.ID {
+			switch cells[i].ID {
+			case req.SourceCell.ID:
 				cells[i].DayOfWeek = req.TargetCell.DayOfWeek
 				cells[i].Period = req.TargetCell.Period
 				_ = s.store.SaveRecord("timetable_cells", cells[i].ID, cells[i])
-			} else if cells[i].ID == req.TargetCell.ID {
+			case req.TargetCell.ID:
 				cells[i].DayOfWeek = req.SourceCell.DayOfWeek
 				cells[i].Period = req.SourceCell.Period
 				_ = s.store.SaveRecord("timetable_cells", cells[i].ID, cells[i])
@@ -274,14 +275,15 @@ func (s *Service) onSchoolEventPublished(evt protocol.DomainEvent) {
 		tNameMap[t.ID] = t.Name
 	}
 
-	if ev.LinkType == protocol.EventLinkClassBlock {
+	switch ev.LinkType {
+	case protocol.EventLinkClassBlock:
 		for _, c := range cells {
 			if c.DayOfWeek == wd && c.Period >= ev.StartPeriod && c.Period <= ev.EndPeriod && sliceContainsInt(ev.TargetGrades, c.Grade) {
 				c.BlockedBy = ev.Title
 				_ = s.store.SaveRecord("timetable_cells", c.ID, c)
 			}
 		}
-	} else if ev.LinkType == protocol.EventLinkTeacherTrip {
+	case protocol.EventLinkTeacherTrip:
 		for _, tid := range ev.LeadTeachers {
 			for _, c := range cells {
 				if c.DayOfWeek == wd && c.TeacherID == tid && (ev.StartPeriod == 0 || (c.Period >= ev.StartPeriod && c.Period <= ev.EndPeriod)) {

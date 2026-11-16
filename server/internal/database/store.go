@@ -271,8 +271,12 @@ func (s *Store) ExportEncryptedBackup(tag string) (string, error) {
 			snapshot = append(snapshot, r)
 		}
 	}
+	rowsErr := rows.Err()
 	_ = rows.Close()
 	s.mu.RUnlock()
+	if rowsErr != nil {
+		return "", rowsErr
+	}
 
 	plain, err := json.Marshal(snapshot)
 	if err != nil {
