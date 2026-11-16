@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,11 @@ import (
 	"kkomi-timetable/pkg/pathutil"
 	"kkomi-timetable/pkg/protocol"
 )
+
+// ClientVersion은 현재 교사 클라이언트의 릴리즈 버전입니다.
+const ClientVersion = "0.1.01"
+
+const gitHubLatestAPI = "https://api.github.com/repos/purnpado/kkomi_timetable/releases/latest"
 
 // ClientConfig는 교사용 클라이언트의 서버 접속 정보(os.Executable() 기준 절대 경로 저장)입니다.
 type ClientConfig struct {
@@ -165,17 +171,26 @@ func (c *Client) connectLoop(stop <-chan struct{}) {
 	}
 }
 
-// ApplyClientSelfUpdate는 서버에 배포된 최신 클라이언트 바이너리(꼬미시간.exe)를 내려받아 자가 교체 재실행합니다.
+// ApplyClientSelfUpdate는 서버에 배포된 최신 클라이언트 패치 또는 GitHub Releases(v0.1.01+)에서
+// 최신 꼬미시간 실행 파일을 내려받아 자가 교체 재실행합니다.
 func (c *Client) ApplyClientSelfUpdate() error {
+	var body io.ReadCloser
 	patchURL := c.ServerURL() + "/api/system/client-patch"
-	resp, err := http.Get(patchURL) // #nosec G107 -- 업무망 내부 서버 URL
-	if err != nil {
-		return fmt.Errorf("패치 다운로드 연결 실패: %w", err)
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(patchURL) // #nosec G107 -- 업무망 내부 서버 URL
+	if err == nil && resp.StatusCode == http.StatusOK {
+		body = resp.Body
+	} else {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		ghBody, ghErr := openGitHubClientAsset(client)
+		if ghErr != nil {
+			return ghErr
+		}
+		body = ghBody
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("등록된 클라이언트 패치가 없습니다 (상태코드 %d)", resp.StatusCode)
-	}
+	defer body.Close()
 
 	exePath, err := os.Executable()
 	if err != nil {
@@ -186,7 +201,7 @@ func (c *Client) ApplyClientSelfUpdate() error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	if _, err := io.Copy(out, body); err != nil {
 		_ = out.Close()
 		return err
 	}
@@ -211,4 +226,59 @@ func (c *Client) ApplyClientSelfUpdate() error {
 		os.Exit(0)
 	}()
 	return nil
+}
+
+func openGitHubClientAsset(httpCli *http.Client) (io.ReadCloser, error) {
+	req, err := http.NewRequest(http.MethodGet, gitHubLatestAPI, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "KkomiTimetable-Client/"+ClientVersion)
+
+	resp, err := httpCli.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("서버 및 GitHub 릴리즈 업데이트 연결 실패: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub 최신 릴리즈 조회 실패 (상태코드 %d)", resp.StatusCode)
+	}
+
+	var rel struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, fmt.Errorf("GitHub 릴리즈 응답 파싱 실패: %w", err)
+	}
+
+	var assetName, assetURL string
+	for _, a := range rel.Assets {
+		low := strings.ToLower(a.Name)
+		if strings.Contains(a.Name, "꼬미시간") && !strings.Contains(a.Name, "서버") && strings.HasSuffix(low, ".exe") {
+			assetName = a.Name
+			assetURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if assetURL == "" {
+		return nil, fmt.Errorf("GitHub 릴리즈(%s)에서 클라이언트 실행 파일(꼬미시간.exe)을 찾지 못했습니다", rel.TagName)
+	}
+	if runtime.GOOS != "windows" {
+		return nil, fmt.Errorf("GitHub 최신 릴리즈(%s)는 Windows용(%s)입니다. macOS에서는 소스 빌드를 이용해 주세요", rel.TagName, assetName)
+	}
+
+	dlResp, err := httpCli.Get(assetURL) // #nosec G107 -- GitHub Releases 공식 다운로드 URL
+	if err != nil {
+		return nil, fmt.Errorf("GitHub 클라이언트 다운로드 실패: %w", err)
+	}
+	if dlResp.StatusCode != http.StatusOK {
+		_ = dlResp.Body.Close()
+		return nil, fmt.Errorf("GitHub 클라이언트 다운로드 오류 (%d)", dlResp.StatusCode)
+	}
+	return dlResp.Body, nil
 }

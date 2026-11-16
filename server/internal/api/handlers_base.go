@@ -9,6 +9,7 @@ import (
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/internal_exam"
 	"kkomi-timetable/server/internal/modules/timetable"
+	"kkomi-timetable/server/internal/ws"
 )
 
 func (a *ServerApp) handleTimetableCells(w http.ResponseWriter, r *http.Request) {
@@ -251,4 +252,43 @@ func (a *ServerApp) handleInternalExamTeacherPolicy(w http.ResponseWriter, r *ht
 	}
 	fairness, _ := a.InternalExam.CalculateFairnessSummary()
 	writeJSON(w, http.StatusOK, fairness)
+}
+
+func (a *ServerApp) handleGitHubRelease(w http.ResponseWriter, r *http.Request) {
+	if actor := a.currentActor(r); actor == nil {
+		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+		return
+	}
+	info, err := ws.CheckGitHubLatestRelease()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (a *ServerApp) handleGitHubUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
+		return
+	}
+	var body struct {
+		Target string `json:"target"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Target == "" {
+		body.Target = "client"
+	}
+	info, err := ws.ApplyGitHubReleaseUpdate(body.Target, a.Store, a.Bus, a.OnShutdown)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  fmt.Sprintf("GitHub 최신 릴리즈(%s) 기반 %s 업데이트를 적용했습니다.", info.TagName, body.Target),
+		"release": info,
+	})
 }

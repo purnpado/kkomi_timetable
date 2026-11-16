@@ -3,7 +3,7 @@ set -euo pipefail
 
 export PATH="/Users/kkomi/homebrew/bin:/Users/kkomi/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.01}"
 DO_RELEASE="${RELEASE:-0}"
 if [ "${1:-}" = "--release" ]; then
   DO_RELEASE="1"

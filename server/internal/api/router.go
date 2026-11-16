@@ -121,6 +121,8 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/system/reset", a.handleSystemReset)
 	mux.HandleFunc("/api/system/client-patch", a.handleClientPatch)
 	mux.HandleFunc("/api/system/server-update", a.handleServerSelfUpdate)
+	mux.HandleFunc("/api/system/github-release", a.handleGitHubRelease)
+	mux.HandleFunc("/api/system/github-update", a.handleGitHubUpdate)
 
 	if webFS != nil {
 		fileServer := http.FileServer(http.FS(webFS))

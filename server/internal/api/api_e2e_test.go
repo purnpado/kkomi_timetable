@@ -16,6 +16,7 @@ import (
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/api"
 	"kkomi-timetable/server/internal/database"
+	"kkomi-timetable/server/internal/ws"
 )
 
 func TestMain(m *testing.M) {
@@ -72,9 +73,9 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// 1. 헬스체크 (v0.1.0 확인)
+	// 1. 헬스체크 (현재 서버 버전 확인)
 	code, raw := doRecorderReq(t, h, http.MethodGet, "/api/health", "", nil)
-	if code != http.StatusOK || !strings.Contains(string(raw), `"version":"0.1.0"`) {
+	if code != http.StatusOK || !strings.Contains(string(raw), `"version":"`+ws.ServerVersion+`"`) {
 		t.Fatalf("헬스체크 실패 (status=%d, body=%s)", code, string(raw))
 	}
 

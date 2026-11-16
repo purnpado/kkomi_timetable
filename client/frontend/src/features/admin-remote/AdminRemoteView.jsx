@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, Database, RefreshCw, Shield, UploadCloud, UserCog } from "lucide-react";
+import { AlertTriangle, CloudDownload, Database, RefreshCw, Shield, UploadCloud, UserCog } from "lucide-react";
 import { apiFetch, applySelfUpdateBridge, ROLE_LABELS } from "../../events/eventStore";
 import TeacherManagerCard from "./TeacherManagerCard";
 
 const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
 
 // AdminRemoteView는 시스템 총괄(마스터)의 교사 관리, RBAC 권한 배정,
-// 전체 시스템 초기화, 원격 DB 암호화 백업 및 무중단 자가 업데이트를 담당합니다.
+// 전체 시스템 초기화, 원격 DB 암호화 백업 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
 export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, onResetComplete, onNotify }) {
   const [backups, setBackups] = useState([]);
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers?.[0]?.id || "t01");
@@ -14,6 +14,8 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
   const [handoverTo, setHandoverTo] = useState("t06");
   const [handoverRole, setHandoverRole] = useState("TIMETABLE_ADMIN");
   const [confirmResetMode, setConfirmResetMode] = useState("");
+  const [ghRelease, setGhRelease] = useState(null);
+  const [ghBusy, setGhBusy] = useState(false);
 
   const loadBackups = async () => {
     try {
@@ -90,12 +92,43 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
     if (!file) return;
     const form = new FormData();
     form.append("file", file);
-    form.append("version", "0.1.1");
+    form.append("version", "0.1.01");
     try {
       const res = await apiFetch(serverUrl, endpoint, user.id, { method: "POST", body: form });
       onNotify("바이너리 원격 업데이트 전달", res.status || "패치가 등록되었습니다.", true);
     } catch (err) {
       onNotify("업로드 실패", err.message, true);
+    }
+  };
+
+  const handleCheckGitHub = async () => {
+    setGhBusy(true);
+    try {
+      const info = await apiFetch(serverUrl, "/api/system/github-release", user.id);
+      setGhRelease(info);
+      onNotify(
+        "GitHub 릴리즈 확인 완료",
+        info.hasUpdate ? `새 버전 ${info.tagName} 출시됨 (현재 v${info.currentVersion})` : `최신 버전(${info.tagName})을 사용 중입니다.`
+      );
+    } catch (err) {
+      onNotify("GitHub 릴리즈 조회 실패", err.message, true);
+    } finally {
+      setGhBusy(false);
+    }
+  };
+
+  const handleApplyGitHub = async (target) => {
+    setGhBusy(true);
+    try {
+      const res = await apiFetch(serverUrl, "/api/system/github-update", user.id, {
+        method: "POST",
+        body: JSON.stringify({ target }),
+      });
+      onNotify("GitHub 자동 업데이트 적용", res.status || "업데이트가 반영되었습니다.", true);
+    } catch (err) {
+      onNotify("GitHub 자동 업데이트 실패", err.message, true);
+    } finally {
+      setGhBusy(false);
     }
   };
 
@@ -198,15 +231,36 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
 
         <div className="card">
           <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
-            <UploadCloud size={15} style={{ verticalAlign: "middle" }} /> 무중단 원격 바이너리 자가 업데이트
+            <UploadCloud size={15} style={{ verticalAlign: "middle" }} /> GitHub 릴리즈 & 무중단 자가 업데이트
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12.5 }}>
+            <div style={{ padding: 10, borderRadius: 8, background: "#f8fafc", border: "1px solid #cbd5e1", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <span><b>저장소:</b> github.com/purnpado/kkomi_timetable (현재 v0.1.01)</span>
+                {ghRelease && (
+                  <span className={`badge ${ghRelease.hasUpdate ? "badge-amber" : "badge-green"}`}>
+                    최신: {ghRelease.tagName} {ghRelease.hasUpdate ? "(업데이트 가능)" : "(최신 상태)"}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button type="button" className="btn btn-sm btn-primary" disabled={ghBusy} onClick={handleCheckGitHub}>
+                  <CloudDownload size={13} /> GitHub 최신 릴리즈 확인
+                </button>
+                <button type="button" className="btn btn-sm btn-green" disabled={ghBusy} onClick={() => handleApplyGitHub("client")}>
+                  GitHub에서 클라이언트 패치 배포
+                </button>
+                <button type="button" className="btn btn-sm" disabled={ghBusy} onClick={() => handleApplyGitHub("server")}>
+                  GitHub에서 서버 무중단 업데이트
+                </button>
+              </div>
+            </div>
             <div>
-              <b>1. 메인 서버 교체 (`꼬미시간서버.exe`)</b>: 업로드 시 자동 DB 백업 후 재시작
+              <b>수동 1. 메인 서버 교체 (`꼬미시간서버.exe`)</b>: 업로드 시 자동 DB 백업 후 재시작
               <input type="file" style={{ display: "block", marginTop: 4 }} onChange={(e) => handleUploadBinary("/api/system/server-update", e.target.files?.[0])} />
             </div>
             <div>
-              <b>2. 교사용 클라이언트 패치 배포 (`꼬미시간.exe`)</b>: 전 교사 PC 자동 패치 알림
+              <b>수동 2. 교사용 클라이언트 패치 배포 (`꼬미시간.exe`)</b>: 전 교사 PC 자동 패치 알림
               <input type="file" style={{ display: "block", marginTop: 4 }} onChange={(e) => handleUploadBinary("/api/system/client-patch", e.target.files?.[0])} />
             </div>
             <button
@@ -216,11 +270,11 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
                 try {
                   await applySelfUpdateBridge();
                 } catch (err) {
-                  onNotify("클라이언트 패치 확인", err?.message || "서버에 등록된 최신 패치가 없습니다.");
+                  onNotify("클라이언트 패치 확인", err?.message || "서버 및 GitHub에 새 패치가 없습니다.");
                 }
               }}
             >
-              <RefreshCw size={13} /> 내 클라이언트 최신 패치 확인 및 적용
+              <RefreshCw size={13} /> 내 클라이언트 최신 패치 확인 및 적용 (서버/GitHub)
             </button>
           </div>
         </div>
