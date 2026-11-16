@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { KeyRound, Server, ShieldCheck } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-react";
 import { apiFetch, connectDesktopBridge } from "../../events/eventStore";
 
 const QUICK_ACCOUNTS = [
@@ -11,23 +11,66 @@ const QUICK_ACCOUNTS = [
   { label: "강국어 (일반 담임교사 1-2)", username: "t06", badge: "담임" },
 ];
 
-// LoginView는 교무실 공용 서버 IP 연결 및 초기 계정(admin / 1234) 로그인, 역할별 체험 전환을 제공합니다.
+// LoginView는 교무실 공용 서버 연결 및 [과목·성명 간편 선택 / 직접 입력(동명이인 구분)] 로그인을 제공합니다.
 export default function LoginView({ initialServerUrl, onLoginSuccess }) {
   const [serverUrl, setServerUrl] = useState(initialServerUrl || "http://127.0.0.1:18090");
-  const [username, setUsername] = useState("admin");
+  const [loginMode, setLoginMode] = useState("select"); // "select" | "manual"
+  const [directory, setDirectory] = useState([]);
+  const [dirStatus, setDirStatus] = useState("");
+
+  const [selectedSubject, setSelectedSubject] = useState(() => localStorage.getItem("kkomi_last_subject") || "ALL");
+  const [selectedUsername, setSelectedUsername] = useState(() => localStorage.getItem("kkomi_last_user") || "admin");
+
+  const [manualName, setManualName] = useState("admin");
+  const [manualSubject, setManualSubject] = useState("");
   const [password, setPassword] = useState("1234");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const performLogin = async (u, p) => {
+  const normalizedServer = (srv = serverUrl) => (srv.startsWith("http") ? srv : `http://${srv}`).replace(/\/+$/, "");
+
+  const loadDirectory = async (srv = serverUrl) => {
+    try {
+      const list = await apiFetch(normalizedServer(srv), "/api/auth/directory", "");
+      setDirectory(list || []);
+      setDirStatus(`교사 ${list?.length || 0}명 연결됨`);
+      if (list && list.length > 0 && !list.some((t) => t.username === selectedUsername)) {
+        setSelectedUsername(list[0].username);
+      }
+    } catch {
+      setDirectory([]);
+      setDirStatus("서버 연결 대기 중");
+    }
+  };
+
+  useEffect(() => {
+    loadDirectory(initialServerUrl || serverUrl);
+  }, [initialServerUrl]);
+
+  const subjectOptions = useMemo(() => {
+    const s = new Set();
+    directory.forEach((t) => {
+      if (t.subject) s.add(t.subject);
+    });
+    return ["ALL", ...Array.from(s)];
+  }, [directory]);
+
+  const filteredTeachers = useMemo(() => {
+    if (selectedSubject === "ALL") return directory;
+    return directory.filter((t) => t.subject === selectedSubject);
+  }, [directory, selectedSubject]);
+
+  const performLogin = async (payload) => {
     setError("");
     setLoading(true);
     try {
-      const normalized = serverUrl.startsWith("http") ? serverUrl : `http://${serverUrl}`;
+      const normalized = normalizedServer();
       const user = await apiFetch(normalized, "/api/auth/login", "", {
         method: "POST",
-        body: JSON.stringify({ username: u, password: p }),
+        body: JSON.stringify(payload),
       });
+      localStorage.setItem("kkomi_last_user", user.username || "");
+      localStorage.setItem("kkomi_last_subject", selectedSubject);
       await connectDesktopBridge(normalized, user.id);
       onLoginSuccess(normalized, user);
     } catch (err) {
@@ -37,10 +80,29 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
     }
   };
 
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (loginMode === "select" && directory.length > 0) {
+      const chosen = directory.find((t) => t.username === selectedUsername) || filteredTeachers[0];
+      performLogin({
+        username: chosen?.username || selectedUsername,
+        subject: selectedSubject === "ALL" ? chosen?.subject || "" : selectedSubject,
+        password,
+      });
+      return;
+    }
+    performLogin({
+      username: manualName.trim(),
+      name: manualName.trim(),
+      subject: manualSubject.trim(),
+      password,
+    });
+  };
+
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #3b5bdb 100%)", padding: 20 }}>
-      <div className="card" style={{ width: "min(540px, 95vw)", padding: 30, boxShadow: "0 24px 60px rgba(0,0,0,0.35)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+      <div className="card" style={{ width: "min(560px, 95vw)", padding: 28, boxShadow: "0 24px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
           <div className="brand-logo" style={{ width: 48, height: 48, fontSize: 22 }}>🐾</div>
           <div>
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>꼬미시간 (KkomiTimetable)</h1>
@@ -50,35 +112,85 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
           </div>
         </div>
 
-        <div style={{ padding: "9px 12px", borderRadius: 9, background: "#edf2ff", color: "#2b4590", fontSize: 12.5, marginBottom: 14 }}>
-          초기 관리자 계정: 아이디 <b>admin</b> / 비밀번호 <b>1234</b> (최초 로그인 시 즉시 변경 가능)
+        <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+          <button type="button" className={`btn btn-sm ${loginMode === "select" ? "btn-primary" : ""}`} onClick={() => setLoginMode("select")}>
+            <UserCheck size={14} /> 간편 선택 로그인 (동명이인 자동 구분)
+          </button>
+          <button type="button" className={`btn btn-sm ${loginMode === "manual" ? "btn-primary" : ""}`} onClick={() => setLoginMode("manual")}>
+            직접 입력 로그인 (과목 · 이름/ID · 비번)
+          </button>
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            performLogin(username, password);
-          }}
-          style={{ display: "flex", flexDirection: "column", gap: 12 }}
-        >
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
-            <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
-              <Server size={12} style={{ verticalAlign: "middle" }} /> 교무실 메인 서버 주소 (업무망 LAN)
-            </label>
-            <input className="input" value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder="예: http://192.168.0.10:18090" />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 700 }}>
+                <Server size={12} style={{ verticalAlign: "middle" }} /> 교무실 메인 서버 주소 (업무망 LAN)
+              </label>
+              <span className="badge badge-blue">{dirStatus || "확인 중"}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                className="input"
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                onBlur={() => loadDirectory(serverUrl)}
+                placeholder="예: http://192.168.0.10:18090"
+              />
+              <button type="button" className="btn btn-sm" onClick={() => loadDirectory(serverUrl)} title="교사 목록 새로고침">
+                <RefreshCw size={14} />
+              </button>
+            </div>
           </div>
 
-          <div className="grid-2">
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>교사 아이디</label>
-              <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} />
+          {loginMode === "select" && directory.length > 0 ? (
+            <div className="grid-2">
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>1. 담당과목 선택</label>
+                <select
+                  className="select"
+                  value={selectedSubject}
+                  onChange={(e) => {
+                    const subj = e.target.value;
+                    setSelectedSubject(subj);
+                    const nextList = subj === "ALL" ? directory : directory.filter((t) => t.subject === subj);
+                    if (nextList.length > 0) setSelectedUsername(nextList[0].username);
+                  }}
+                >
+                  {subjectOptions.map((s) => (
+                    <option key={s} value={s}>{s === "ALL" ? "전체 교과 보기" : s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>2. 교사 성명 선택</label>
+                <select className="select" value={selectedUsername} onChange={(e) => setSelectedUsername(e.target.value)}>
+                  {filteredTeachers.map((t) => (
+                    <option key={t.id} value={t.username}>
+                      {t.name} ({t.subject}{t.homeroomClass ? ` · ${t.homeroomClass}` : ""} · {t.username})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
-                <KeyRound size={12} style={{ verticalAlign: "middle" }} /> 비밀번호
-              </label>
-              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          ) : (
+            <div className="grid-2">
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>담당과목 (동명이인 구분)</label>
+                <input className="input" value={manualSubject} onChange={(e) => setManualSubject(e.target.value)} placeholder="예: 국어 (선택 또는 필수)" />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>성명 또는 아이디</label>
+                <input className="input" value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="예: 강국어 또는 admin" />
+              </div>
             </div>
+          )}
+
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
+              <KeyRound size={12} style={{ verticalAlign: "middle" }} /> 비밀번호 (초기 기본값: 1234)
+            </label>
+            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
 
           {error && <div className="badge badge-red" style={{ padding: "8px 12px", borderRadius: 8 }}>{error}</div>}
@@ -88,9 +200,9 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
           </button>
         </form>
 
-        <div style={{ marginTop: 20, borderTop: "1px solid #e2e8f0", paddingTop: 14 }}>
+        <div style={{ marginTop: 18, borderTop: "1px solid #e2e8f0", paddingTop: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8 }}>
-            빠른 계정 전환 (초기 비밀번호: 1234)
+            체험용 빠른 계정 전환 (초기 비밀번호: 1234)
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {QUICK_ACCOUNTS.map((acc) => (
@@ -98,11 +210,7 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
                 key={acc.username}
                 type="button"
                 className="btn btn-sm"
-                onClick={() => {
-                  setUsername(acc.username);
-                  setPassword("1234");
-                  performLogin(acc.username, "1234");
-                }}
+                onClick={() => performLogin({ username: acc.username, password: "1234" })}
               >
                 <span className="badge badge-blue">{acc.badge}</span> {acc.label}
               </button>

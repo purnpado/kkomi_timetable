@@ -61,12 +61,21 @@ func (a *ServerApp) handleAutoGenerateBaseTimetable(w http.ResponseWriter, r *ht
 		Grades          []int `json:"grades"`
 		ClassesPerGrade int   `json:"classesPerGrade"`
 		ClearExisting   bool  `json:"clearExisting"`
+		UseCurriculum   bool  `json:"useCurriculum"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	created, err := a.Timetable.AutoGenerateBaseTimetable(body.Grades, body.ClassesPerGrade, body.ClearExisting)
+	var (
+		created []protocol.TimetableCell
+		err     error
+	)
+	if body.UseCurriculum {
+		created, err = a.Timetable.AutoGenerateFromCurriculum(body.ClearExisting)
+	} else {
+		created, err = a.Timetable.AutoGenerateBaseTimetable(body.Grades, body.ClassesPerGrade, body.ClearExisting)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

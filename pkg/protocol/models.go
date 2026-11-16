@@ -32,6 +32,8 @@ type Teacher struct {
 	Position             string   `json:"position"`               // 직위 (예: 교무부장, 연구부장, 평교사)
 	IsDepartmentHead     bool     `json:"isDepartmentHead"`       // 부장교사 여부
 	Subject              string   `json:"subject"`                // 주 담당 과목 (예: 수학, 영어, 국어)
+	ShortSubject         string   `json:"shortSubject,omitempty"` // 2자 단축 과목명 (컴시간 호환, 예: 국어, 생국)
+	DefaultRoom          string   `json:"defaultRoom,omitempty"`  // 교과교실제 교사 전용 강의실/특별실
 	HomeroomClass        string   `json:"homeroomClass"`          // 담임 학급 (예: "2-3", 비담임이면 "")
 	Phone                string   `json:"phone"`                  // 교내 내선 또는 연락처 (외부감독 파견 명단용)
 	Roles                []Role   `json:"roles"`                  // 다중 겸임 가능한 RBAC 권한 목록
@@ -57,10 +59,63 @@ type TimetableCell struct {
 	SubjectCode   string `json:"subjectCode"`   // 나이스(NEIS) 과목 코드
 	TeacherID     string `json:"teacherId"`     // 주 담당 교사 ID
 	CoTeacherID   string `json:"coTeacherId"`   // 코티칭 협력 교사 ID (선택)
-	Room          string `json:"room"`          // 교실 또는 이동수업 전용실
-	ElectiveGroup string `json:"electiveGroup"` // 고교학점제 이동수업 동시간대 블록 그룹 ID
-	BlockGroupID  string `json:"blockGroupID"`  // 연속 블록타임 묶음 ID
-	BlockedBy     string `json:"blockedBy"`     // 행사 등으로 수업 블록 처리된 사유
+	Room          string `json:"room"`               // 교실 또는 이동수업/교과교실 전용실
+	ElectiveGroup string `json:"electiveGroup"`      // 고교학점제 이동수업 동시간대 블록 그룹 ID
+	BlockGroupID  string `json:"blockGroupID"`       // 연속 블록타임 묶음 ID
+	IsLocked      bool   `json:"isLocked,omitempty"` // 이동금지 고정 수업 여부
+	BlockedBy     string `json:"blockedBy"`          // 행사 등으로 수업 블록 처리된 사유
+}
+
+// SpecialRoom은 교과교실제 전용 강의실 및 특별실(과학실·컴퓨터실·음악실 등) 정의입니다.
+type SpecialRoom struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Subject  string `json:"subject"`
+	Capacity int    `json:"capacity"`
+}
+
+// SchoolConfig는 학교 기본사항(학년별 학급수, 가상학급수, 요일별 기준 시수, 교과교실) 설정입니다.
+type SchoolConfig struct {
+	ID                 string              `json:"id"`
+	SchoolName         string              `json:"schoolName"`
+	AcademicYear       int                 `json:"academicYear"`
+	GradeClassCounts   map[int]int         `json:"gradeClassCounts"`   // 학년 -> 실제 학급수 (1~3)
+	VirtualClassCounts map[int]int         `json:"virtualClassCounts"` // 학년 -> 수준별/선택 가상학급수
+	DailyPeriodLimits  map[int]map[int]int `json:"dailyPeriodLimits"`  // 학년 -> (요일 1~5 -> 기준 교시수)
+	SpecialRooms       []SpecialRoom       `json:"specialRooms"`       // 교과교실·특별실 등록부
+}
+
+// TeachingLoad는 컴시간 방식 교사별·과목별·학급별 주당 배당 시수표 행 모델입니다.
+type TeachingLoad struct {
+	ID                string         `json:"id"`
+	TeacherID         string         `json:"teacherId"`
+	TeacherName       string         `json:"teacherName"`
+	Subject           string         `json:"subject"`
+	ShortSubject      string         `json:"shortSubject"`
+	SubjectCode       string         `json:"subjectCode"`
+	Grade             int            `json:"grade"`
+	ClassHours        map[string]int `json:"classHours"`        // 학급명("1-1") -> 주당 시수
+	TotalHours        int            `json:"totalHours"`        // 행 합계 시수
+	BlockHours        int            `json:"blockHours"`        // 연속수업 시수 (예: 2연강=2)
+	SimultaneousGroup string         `json:"simultaneousGroup"` // 동시수업/수준별 그룹 코드
+	DedicatedRoom     string         `json:"dedicatedRoom"`     // 지정 교과교실/특별실
+	CoTeacherID       string         `json:"coTeacherId"`       // 복수교사(코티칭) ID
+}
+
+// ChainSwapStep은 삼각(3단계) 또는 사각(4단계) 연쇄 수업 교환의 단계별 상세 이동 내역입니다.
+type ChainSwapStep struct {
+	Step        int    `json:"step"`
+	CellID      string `json:"cellId"`
+	ClassName   string `json:"className"`
+	Subject     string `json:"subject"`
+	TeacherID   string `json:"teacherId"`
+	TeacherName string `json:"teacherName"`
+	Room        string `json:"room"`
+	FromDay     int    `json:"fromDay"`
+	FromPeriod  int    `json:"fromPeriod"`
+	ToDay       int    `json:"toDay"`
+	ToPeriod    int    `json:"toPeriod"`
+	Description string `json:"description"`
 }
 
 // EvaluateMoveRequest는 시간표 Canvas 드래그 앤 드롭 시 신호등 판정을 요청하는 구조체입니다.
@@ -72,32 +127,34 @@ type EvaluateMoveRequest struct {
 	TargetTeacher string `json:"targetTeacher"`
 }
 
-// MoveEvaluationResult는 신호등 판정 결과(GREEN/YELLOW/RED)를 담습니다.
+// MoveEvaluationResult는 신호등 판정 결과(GREEN/YELLOW/RED)와 다단계 연쇄 교환 과정을 담습니다.
 type MoveEvaluationResult struct {
-	Signal       string   `json:"signal"`       // "GREEN", "YELLOW", "RED"
-	Mode         string   `json:"mode"`         // "MOVE", "SWAP", "TRIANGLE", "BLOCKED"
-	Reason       string   `json:"reason"`       // 한글 안내 또는 충돌 불가 사유
-	TrianglePath []string `json:"trianglePath"` // 삼각 교환 가능 시 A -> B -> C 셀 ID 경로
+	Signal       string          `json:"signal"`                 // "GREEN", "YELLOW", "RED"
+	Mode         string          `json:"mode"`                   // "MOVE", "SWAP", "TRIANGLE", "QUAD", "BLOCKED"
+	Reason       string          `json:"reason"`                 // 한글 안내 또는 충돌 불가 사유
+	TrianglePath []string        `json:"trianglePath"`           // 연쇄 교환 경로 셀 ID 목록
+	ChainSteps   []ChainSwapStep `json:"chainSteps,omitempty"`   // 1~4단계 연쇄 교환 상세 변경 과정
 }
 
 // TimetableChangeRequest는 교사 간 수업 교환 및 결보강 대기열(STAGING) 요청입니다.
 type TimetableChangeRequest struct {
-	ID              string         `json:"id"`
-	RequestType     string         `json:"requestType"`     // "SWAP"(맞교환), "SUBSTITUTE"(결보강), "EXTERNAL_TRIP"(외부감독출장), "EVENT_TRIP"(행사출장)
-	TargetDate      string         `json:"targetDate"`      // 변경 적용 일자 (YYYY-MM-DD)
-	RequesterID     string         `json:"requesterId"`
-	RequesterName   string         `json:"requesterName"`
-	PartnerID       string         `json:"partnerId"`       // 맞교환/보강 교사 ID
-	PartnerName     string         `json:"partnerName"`
-	PartnerAgreed   bool           `json:"partnerAgreed"`   // 상대 교사 동의 여부
-	SourceCell      TimetableCell  `json:"sourceCell"`      // 변경 전 셀
-	TargetCell      TimetableCell  `json:"targetCell"`      // 변경 후/대상 셀
-	Reason          string         `json:"reason"`          // 신청 사유 또는 비고
-	Status          ApprovalStatus `json:"status"`          // STAGING, APPROVED, REJECTED
-	RejectReason    string         `json:"rejectReason"`    // 반려 사유 칩
-	ReviewedBy      string         `json:"reviewedBy"`
-	CreatedAt       string         `json:"createdAt"`
-	CommittedAt     string         `json:"committedAt"`
+	ID              string          `json:"id"`
+	RequestType     string          `json:"requestType"`            // "SWAP", "TRIANGLE", "QUAD", "SUBSTITUTE", "EXTERNAL_TRIP", "EVENT_TRIP"
+	TargetDate      string          `json:"targetDate"`             // 변경 적용 일자 (YYYY-MM-DD)
+	RequesterID     string          `json:"requesterId"`
+	RequesterName   string          `json:"requesterName"`
+	PartnerID       string          `json:"partnerId"`              // 맞교환/보강 교사 ID
+	PartnerName     string          `json:"partnerName"`
+	PartnerAgreed   bool            `json:"partnerAgreed"`          // 상대 교사 동의 여부
+	SourceCell      TimetableCell   `json:"sourceCell"`             // 변경 전 셀
+	TargetCell      TimetableCell   `json:"targetCell"`             // 변경 후/대상 셀
+	ChainSteps      []ChainSwapStep `json:"chainSteps,omitempty"`   // 다단계 연쇄 교환 1~4단계 목록
+	Reason          string          `json:"reason"`                 // 신청 사유 또는 비고
+	Status          ApprovalStatus  `json:"status"`                 // STAGING, APPROVED, REJECTED
+	RejectReason    string          `json:"rejectReason"`           // 반려 사유 칩
+	ReviewedBy      string          `json:"reviewedBy"`
+	CreatedAt       string          `json:"createdAt"`
+	CommittedAt     string          `json:"committedAt"`
 }
 
 // SubjectHandlingMode는 담당과목 시험 교시 배정 옵션을 정의합니다.

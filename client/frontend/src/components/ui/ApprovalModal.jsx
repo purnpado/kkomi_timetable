@@ -59,6 +59,19 @@ export default function ApprovalModal({ open, onOpenChange, queue, currentIndex,
             </div>
           </div>
 
+          {item.chainSteps && item.chainSteps.length > 0 && (
+            <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: "#fff9db", border: "1px solid #fcc419" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#b86e00", marginBottom: 6 }}>
+                연쇄 이동 상세 과정 ({item.chainSteps.length}단계 일괄 반영 예정)
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+                {item.chainSteps.map((st) => (
+                  <div key={st.step}>{st.description}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>반려 시 사유 칩 선택 (또는 직접 입력)</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>

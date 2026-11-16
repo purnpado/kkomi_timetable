@@ -34,6 +34,7 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 	academicCollections := []string{
 		"timetable_cells",
 		"timetable_requests",
+		"teaching_loads",
 		"exam_configs",
 		"exam_slots",
 		"external_exams",
@@ -42,7 +43,7 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 
 	switch mode {
 	case ResetModeAcademicTerm:
-		// 학기 초기화: 교사 명렬표 및 일과시간표는 보존하고 시간표·시험·행사 데이터만 삭제
+		// 학기 초기화: 교사 명렬표 및 학교 기본설정·일과시간표는 보존하고 시간표·시수·시험·행사 데이터만 삭제
 		if err := s.ClearCollections(academicCollections...); err != nil {
 			return backupPath, err
 		}
@@ -50,7 +51,7 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 
 	case ResetModeDemoSeed:
 		// 시연용 샘플 데이터 복원
-		all := append([]string{"teachers", "bell_schedule"}, academicCollections...)
+		all := append([]string{"teachers", "bell_schedule", "school_configs"}, academicCollections...)
 		if err := s.ClearCollections(all...); err != nil {
 			return backupPath, err
 		}
@@ -60,8 +61,8 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 		return backupPath, nil
 
 	default:
-		// FULL_FACTORY_RESET: 모든 데이터를 비우고 초기 admin(비번 1234) + 기본 일과시간만 생성
-		all := append([]string{"teachers", "bell_schedule"}, academicCollections...)
+		// FULL_FACTORY_RESET: 모든 데이터를 비우고 초기 admin(비번 1234) + 기본 일과시간/학교설정만 생성
+		all := append([]string{"teachers", "bell_schedule", "school_configs"}, academicCollections...)
 		if err := s.ClearCollections(all...); err != nil {
 			return backupPath, err
 		}
@@ -94,6 +95,10 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 			if err := s.SaveRecord("bell_schedule", fmt.Sprintf("period-%d", b.Period), b); err != nil {
 				return backupPath, err
 			}
+		}
+		cfg := DefaultSchoolConfig()
+		if err := s.SaveRecord("school_configs", cfg.ID, cfg); err != nil {
+			return backupPath, err
 		}
 		return backupPath, nil
 	}

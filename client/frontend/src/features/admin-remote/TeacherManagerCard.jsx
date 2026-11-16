@@ -1,15 +1,16 @@
 import React, { useState } from "react";
-import { KeyRound, Trash2, UserPlus } from "lucide-react";
+import { Download, KeyRound, Trash2, Upload, UserPlus } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
 
-// TeacherManagerCard는 마스터 또는 시간표 담당교사가 서버에 직접 접속하지 않고도
-// 클라이언트에서 신규 교사를 등록하거나 담임/과목/전입일/순회요일을 수정하는 관리 카드입니다.
+// TeacherManagerCard는 마스터 또는 시간표 담당교사가 클라이언트에서 신규 교사 등록,
+// 전용 교과교실 지정, 명렬표 엑셀 다운로드/일괄 업로드를 수행하는 관리 카드입니다.
 export default function TeacherManagerCard({ serverUrl, user, teachers, onRefresh, onNotify }) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [subject, setSubject] = useState("국어");
   const [position, setPosition] = useState("평교사");
   const [homeroomClass, setHomeroomClass] = useState("");
+  const [defaultRoom, setDefaultRoom] = useState("");
   const [transferDate, setTransferDate] = useState("2026-03-01");
   const [itinerantDaysText, setItinerantDaysText] = useState("");
 
@@ -30,6 +31,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
             name: name.trim(),
             position: position.trim() || "평교사",
             subject: subject.trim() || "국어",
+            defaultRoom: defaultRoom.trim(),
             homeroomClass: homeroomClass.trim(),
             transferDate,
             itinerantDays,
@@ -42,10 +44,24 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
       setName("");
       setUsername("");
       setHomeroomClass("");
+      setDefaultRoom("");
       setItinerantDaysText("");
       onRefresh();
     } catch (err) {
       onNotify("교사 등록 실패", err.message, true);
+    }
+  };
+
+  const handleImportTeachersXLSX = async (file) => {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await apiFetch(serverUrl, "/api/teachers/import-xlsx", user.id, { method: "POST", body: form });
+      onNotify("교사 명렬표 엑셀 업로드 완료", `총 ${res.importedCount}명의 교사 정보가 반영되었습니다.`);
+      onRefresh();
+    } catch (err) {
+      onNotify("명렬표 업로드 실패", err.message, true);
     }
   };
 
@@ -73,24 +89,37 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
 
   return (
     <div className="card">
-      <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
-        <UserPlus size={15} style={{ verticalAlign: "middle" }} /> 교사·학급 기초 명렬표 등록 및 관리 (원격)
-      </h3>
-      <form onSubmit={handleSaveTeacher} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <h3 style={{ margin: 0, fontSize: 15 }}>
+          <UserPlus size={15} style={{ verticalAlign: "middle" }} /> 교사·교과교실 기초 명렬표 등록 및 관리
+        </h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=teachers`} target="_blank" rel="noreferrer">
+            <Download size={13} /> 교사 명렬표 엑셀 (.xlsx)
+          </a>
+          <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
+            <Upload size={13} /> 명렬표 엑셀 일괄 업로드
+            <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => handleImportTeachersXLSX(e.target.files?.[0])} />
+          </label>
+        </div>
+      </div>
+
+      <form onSubmit={handleSaveTeacher} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 14 }}>
         <input className="input" placeholder="성명 (예: 박새별)" value={name} onChange={(e) => setName(e.target.value)} required />
         <input className="input" placeholder="아이디 (예: t21)" value={username} onChange={(e) => setUsername(e.target.value)} required />
         <input className="input" placeholder="담당과목 (예: 수학)" value={subject} onChange={(e) => setSubject(e.target.value)} required />
         <input className="input" placeholder="직위 (예: 평교사)" value={position} onChange={(e) => setPosition(e.target.value)} />
         <input className="input" placeholder="담임학급 (예: 1-3)" value={homeroomClass} onChange={(e) => setHomeroomClass(e.target.value)} />
+        <input className="input" placeholder="전용교과교실 (예: 과학실1)" value={defaultRoom} onChange={(e) => setDefaultRoom(e.target.value)} />
         <input className="input" type="date" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} title="현임교 전입일" />
         <input className="input" placeholder="순회요일 (예: 1,3,5)" value={itinerantDaysText} onChange={(e) => setItinerantDaysText(e.target.value)} />
         <button type="submit" className="btn btn-primary">교사 등록/갱신</button>
       </form>
 
-      <div style={{ maxHeight: 230, overflowY: "auto" }}>
+      <div style={{ maxHeight: 240, overflowY: "auto" }}>
         <table className="table">
           <thead>
-            <tr><th>성명 (아이디)</th><th>과목</th><th>담임</th><th>전입일</th><th>순회요일</th><th>관리</th></tr>
+            <tr><th>성명 (아이디)</th><th>과목</th><th>담임</th><th>전용교과교실</th><th>전입일</th><th>순회요일</th><th>관리</th></tr>
           </thead>
           <tbody>
             {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => (
@@ -98,6 +127,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
                 <td><b>{t.name}</b> ({t.username})</td>
                 <td>{t.subject}</td>
                 <td>{t.homeroomClass || "-"}</td>
+                <td>{t.defaultRoom || "학급교실"}</td>
                 <td>{t.transferDate || "-"}</td>
                 <td>{t.itinerantDays?.length ? t.itinerantDays.join(",") : "전일"}</td>
                 <td style={{ display: "flex", gap: 6 }}>

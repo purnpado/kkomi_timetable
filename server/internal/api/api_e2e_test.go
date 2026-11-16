@@ -169,11 +169,34 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("시스템 마스터 백업 생성 실패: %d", code)
 	}
-	for _, ep := range []string{"/api/export/hwpx?kind=calendar", "/api/export/xlsx?kind=timetable", "/api/export/xlsx?kind=base-template", "/api/export/print"} {
+	for _, ep := range []string{
+		"/api/export/hwpx?kind=calendar",
+		"/api/export/xlsx?kind=timetable",
+		"/api/export/xlsx?kind=teachers",
+		"/api/export/xlsx?kind=loads",
+		"/api/export/xlsx?kind=base-template",
+		"/api/export/print",
+	} {
 		c, body := doRecorderReq(t, h, http.MethodGet, ep, "t01", nil)
 		if c != http.StatusOK || len(body) == 0 {
 			t.Fatalf("출력 엔드포인트 실패 (%s): status=%d", ep, c)
 		}
+	}
+
+	// 6-1. 교사 공개 디렉토리(동명이인 구분) · 학교 기본설정 · 시수표 조회 및 시수기반 자동편성
+	code, raw = doRecorderReq(t, h, http.MethodGet, "/api/auth/directory", "", nil)
+	if code != http.StatusOK || strings.Contains(string(raw), "passwordHash") {
+		t.Fatalf("공개 디렉토리 조회 실패 또는 해시 노출: status=%d", code)
+	}
+	code, raw = doRecorderReq(t, h, http.MethodGet, "/api/timetable/loads", "t02", nil)
+	if code != http.StatusOK || !strings.Contains(string(raw), "classStatuses") {
+		t.Fatalf("시수표 조회 실패: status=%d, body=%s", code, string(raw))
+	}
+	code, _ = doRecorderReq(t, h, http.MethodPost, "/api/timetable/auto-generate", "t02", map[string]interface{}{
+		"useCurriculum": true, "clearExisting": true,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("시수표 기반 자동 편성 실패: status=%d", code)
 	}
 
 	// 7. 클라이언트에서 마스터/시간표 담당 권한으로 기초 시간표 셀 저장·삭제·일괄 자동 편성

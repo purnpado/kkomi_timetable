@@ -118,12 +118,15 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
           ctx.fillText(`${cell.subject}`, x + 10, y + 20);
           ctx.fillStyle = "#475569";
           ctx.font = "11px Pretendard, sans-serif";
-          const subLine = cell.blockedBy ? `행사블록: ${cell.blockedBy}` : `${cell.className} · ${tName}`;
-          ctx.fillText(subLine.slice(0, 17), x + 10, y + 37);
+          const isSpecialRoom = cell.room && cell.room !== `${cell.className}교실`;
+          const subLine = cell.blockedBy
+            ? `행사블록: ${cell.blockedBy}`
+            : `${cell.className} · ${tName}${isSpecialRoom ? ` (${cell.room})` : ""}`;
+          ctx.fillText(subLine.slice(0, 21), x + 10, y + 37);
           if (cell.coTeacherId || cell.electiveGroup) {
             ctx.fillStyle = "#5f3dc4";
             ctx.font = "10.5px Pretendard, sans-serif";
-            ctx.fillText(cell.electiveGroup ? "고교학점제 블록" : "코티칭 수업", x + 10, y + 52);
+            ctx.fillText(cell.electiveGroup ? `선택블록: ${cell.electiveGroup}` : "코티칭 수업", x + 10, y + 52);
           }
         }
       });
@@ -215,7 +218,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
           <span className="badge badge-green">🟢 이동/맞교환 가능</span>
-          <span className="badge badge-amber">🟡 삼각 교환 가능</span>
+          <span className="badge badge-amber">🟡 삼각·사각 연쇄교환 가능</span>
           <span className="badge badge-red">🔴 충돌 불가(사유 툴팁)</span>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -253,7 +256,12 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
               color: dragState.evalResult.signal === "GREEN" ? "#087f5b" : dragState.evalResult.signal === "YELLOW" ? "#b86e00" : "#c92a2a",
             }}
           >
-            [{dragState.evalResult.signal}] {dragState.evalResult.reason}
+            <div>[{dragState.evalResult.signal}] {dragState.evalResult.reason}</div>
+            {dragState.evalResult.chainSteps?.length > 1 && (
+              <div style={{ marginTop: 4, fontSize: 11.5, fontWeight: 500 }}>
+                {dragState.evalResult.chainSteps.map((s) => s.description).join("  ➜  ")}
+              </div>
+            )}
           </div>
         )}
       </div>

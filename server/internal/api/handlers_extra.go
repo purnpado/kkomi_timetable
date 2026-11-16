@@ -334,6 +334,14 @@ func (a *ServerApp) handleExportXLSX(w http.ResponseWriter, r *http.Request) {
 	fileName := "꼬미시간_출력.xlsx"
 
 	switch kind {
+	case "teachers":
+		raw, err = a.Timetable.ExportTeachersXLSX()
+		writeCurriculumXLSX(w, "교사명렬표.xlsx", raw, err)
+		return
+	case "loads":
+		raw, err = a.Timetable.ExportTeachingLoadsXLSX()
+		writeCurriculumXLSX(w, "교사별시수표.xlsx", raw, err)
+		return
 	case "base-template":
 		writeBaseTemplateXLSX(w)
 		return

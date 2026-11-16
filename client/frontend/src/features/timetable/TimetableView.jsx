@@ -1,15 +1,18 @@
 import React, { useMemo, useState } from "react";
-import { CheckSquare, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
+import { BookOpenCheck, CheckSquare, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
 import { apiFetch, hasRole } from "../../events/eventStore";
 import BaseTimetableBuilder from "./BaseTimetableBuilder";
+import CurriculumLoadManager from "./CurriculumLoadManager";
+import ChainSwapPreview from "./ChainSwapPreview";
 import TeacherManagerCard from "../admin-remote/TeacherManagerCard";
 
-// TimetableView는 60fps HTML5 Canvas 시간표 조정, 교사 간 수업교환 신청,
-// 마스터/담당교사의 학년·학급별 기초 시간표 작성 및 나이스(NEIS) 입력 도우미를 제공합니다.
+// TimetableView는 60fps HTML5 Canvas 시간표 조정, 교사별 시수표/교과교실 편성,
+// 1~4단계 연쇄교환 미리보기, 학급별 기초 시간표 작성 및 나이스(NEIS) 입력 도우미를 제공합니다.
 export default function TimetableView({ serverUrl, user, cells, teachers, requests, bellSchedule, onRefresh, onOpenApproval, onNotify }) {
-  const [subTab, setSubTab] = useState("board"); // "board" | "builder" | "teachers"
+  const [subTab, setSubTab] = useState("board"); // "board" | "curriculum" | "builder" | "teachers"
   const [filterClass, setFilterClass] = useState("2-1");
+  const [activeChain, setActiveChain] = useState(null);
   const [reason, setReason] = useState("학년 협의 및 수업 교환");
   const [reqType, setReqType] = useState("SWAP");
   const [sourceId, setSourceId] = useState(cells[0]?.id || "");
@@ -47,16 +50,25 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
   };
 
   const handleRequestFromCanvas = async (srcCell, tgtCell, targetDay, targetPeriod, evalRes) => {
+    if (evalRes.mode === "TRIANGLE" || evalRes.mode === "QUAD") {
+      setActiveChain({ evalResult: evalRes });
+      onNotify(
+        `${evalRes.chainSteps?.length || 3}단계 연쇄 교환 경로 확인`,
+        "아래 연쇄 교환 미리보기에서 1~4단계 변경 과정을 확인한 뒤 신청하세요."
+      );
+      return;
+    }
     try {
       const payload = {
-        requestType: tgtCell ? "SWAP" : "SUBSTITUTE",
+        requestType: tgtCell ? "SWAP" : "MOVE",
         requesterId: user.id,
         requesterName: teachersMap[srcCell.teacherId]?.name || user.name,
         partnerId: tgtCell ? tgtCell.teacherId : srcCell.teacherId,
         partnerName: tgtCell ? teachersMap[tgtCell.teacherId]?.name || tgtCell.teacherId : "빈 교시 이동",
         partnerAgreed: true,
         sourceCell: srcCell,
-        targetCell: tgtCell || { ...srcCell, dayOfWeek: targetDay, period: targetPeriod },
+        targetCell: tgtCell || { ...srcCell, id: "", dayOfWeek: targetDay, period: targetPeriod },
+        chainSteps: evalRes.chainSteps || [],
         reason: `[Canvas 조정: ${evalRes.mode}] ${evalRes.reason}`,
       };
       await apiFetch(serverUrl, "/api/timetable/requests", user.id, {
@@ -101,18 +113,23 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
       {isAdmin && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className={`btn ${subTab === "board" ? "btn-primary" : ""}`} onClick={() => setSubTab("board")}>
-            <TableProperties size={15} /> 주간 시간표 & 일일 결보강 조정
+            <TableProperties size={15} /> 주간 시간표 & 일일 결보강·연쇄교환
+          </button>
+          <button className={`btn ${subTab === "curriculum" ? "btn-primary" : ""}`} onClick={() => setSubTab("curriculum")}>
+            <BookOpenCheck size={15} /> 시수표 등록부 · 학급수 · 교과교실
           </button>
           <button className={`btn ${subTab === "builder" ? "btn-primary" : ""}`} onClick={() => setSubTab("builder")}>
-            <Wrench size={15} /> 학년별·학급별 기초 시간표 작성
+            <Wrench size={15} /> 학급별 기초 시간표 수동 편집
           </button>
           <button className={`btn ${subTab === "teachers" ? "btn-primary" : ""}`} onClick={() => setSubTab("teachers")}>
-            <Users size={15} /> 교사 기초 명렬표 관리
+            <Users size={15} /> 교사 명렬표 관리 (엑셀 입출력)
           </button>
         </div>
       )}
 
-      {isAdmin && subTab === "builder" ? (
+      {isAdmin && subTab === "curriculum" ? (
+        <CurriculumLoadManager serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+      ) : isAdmin && subTab === "builder" ? (
         <BaseTimetableBuilder serverUrl={serverUrl} user={user} cells={cells} teachers={teachers} bellSchedule={bellSchedule} onRefresh={onRefresh} onNotify={onNotify} />
       ) : isAdmin && subTab === "teachers" ? (
         <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
@@ -152,6 +169,17 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           onRequestCommit={handleRequestFromCanvas}
         />
       </div>
+
+      <ChainSwapPreview
+        serverUrl={serverUrl}
+        user={user}
+        cells={cells}
+        teachersMap={teachersMap}
+        activeChain={activeChain}
+        onClearChain={() => setActiveChain(null)}
+        onRefresh={onRefresh}
+        onNotify={onNotify}
+      />
 
       <div className="grid-2">
         <div className="card">

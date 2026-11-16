@@ -41,24 +41,96 @@ func (s *Service) GetTeacher(id string) (*protocol.Teacher, error) {
 	return nil, fmt.Errorf("교사(%s)를 찾을 수 없습니다", id)
 }
 
+// PublicTeacherDirectoryEntry는 로그인 전 과목·성명 선택 및 동명이인 구분용 공개 목록 항목입니다.
+type PublicTeacherDirectoryEntry struct {
+	ID            string          `json:"id"`
+	Username      string          `json:"username"`
+	Name          string          `json:"name"`
+	Subject       string          `json:"subject"`
+	HomeroomClass string          `json:"homeroomClass"`
+	Position      string          `json:"position"`
+	Roles         []protocol.Role `json:"roles"`
+}
+
+// ListPublicDirectory는 로그인 화면에서 과목별 교사 선택 및 동명이인 확인을 위한 공개 목록을 반환합니다.
+func (s *Service) ListPublicDirectory() ([]PublicTeacherDirectoryEntry, error) {
+	teachers, err := s.ListTeachers()
+	if err != nil {
+		return nil, err
+	}
+	var out []PublicTeacherDirectoryEntry
+	for _, t := range teachers {
+		if t.IsParentHonorary {
+			continue
+		}
+		out = append(out, PublicTeacherDirectoryEntry{
+			ID:            t.ID,
+			Username:      t.Username,
+			Name:          t.Name,
+			Subject:       t.Subject,
+			HomeroomClass: t.HomeroomClass,
+			Position:      t.Position,
+			Roles:         t.Roles,
+		})
+	}
+	return out, nil
+}
+
 // Authenticate는 아이디와 비밀번호로 로그인을 검증합니다.
 func (s *Service) Authenticate(username, password string) (*protocol.Teacher, error) {
+	return s.AuthenticateLogin(username, "", "", password)
+}
+
+// AuthenticateLogin은 아이디 또는 [성명 + 담당과목(동명이인 구분)] + 비밀번호로 로그인을 검증합니다.
+func (s *Service) AuthenticateLogin(username, name, subject, password string) (*protocol.Teacher, error) {
 	teachers, err := s.ListTeachers()
 	if err != nil {
 		return nil, err
 	}
 	uname := strings.TrimSpace(username)
-	for i := range teachers {
-		if teachers[i].Username == uname {
-			if err := bcrypt.CompareHashAndPassword([]byte(teachers[i].PasswordHash), []byte(password)); err != nil {
+	tname := strings.TrimSpace(name)
+	tsubj := strings.TrimSpace(subject)
+
+	if uname != "" {
+		for i := range teachers {
+			if teachers[i].Username == uname {
+				if tsubj != "" && teachers[i].Subject != "" && !strings.EqualFold(teachers[i].Subject, tsubj) {
+					continue
+				}
+				if err := bcrypt.CompareHashAndPassword([]byte(teachers[i].PasswordHash), []byte(password)); err != nil {
+					return nil, errors.New("비밀번호가 일치하지 않습니다")
+				}
+				t := teachers[i]
+				t.PasswordHash = ""
+				return &t, nil
+			}
+		}
+		if tname == "" {
+			tname = uname
+		}
+	}
+
+	if tname != "" {
+		var matches []protocol.Teacher
+		for _, tc := range teachers {
+			if tc.Name == tname && (tsubj == "" || strings.EqualFold(tc.Subject, tsubj)) {
+				matches = append(matches, tc)
+			}
+		}
+		if len(matches) > 1 {
+			return nil, errors.New("동명이인 교사가 존재합니다. 담당과목을 지정해 주세요")
+		}
+		if len(matches) == 1 {
+			if err := bcrypt.CompareHashAndPassword([]byte(matches[0].PasswordHash), []byte(password)); err != nil {
 				return nil, errors.New("비밀번호가 일치하지 않습니다")
 			}
-			t := teachers[i]
+			t := matches[0]
 			t.PasswordHash = ""
 			return &t, nil
 		}
 	}
-	return nil, errors.New("존재하지 않는 교사 아이디입니다")
+
+	return nil, errors.New("일치하는 교사 계정을 찾을 수 없습니다 (아이디/성명 및 담당과목 확인)")
 }
 
 // SaveTeacher는 교사 기초 인사 정보를 등록 또는 수정합니다. (비밀번호 미지정 시 기존 해시 유지 또는 "1234" 초기화)

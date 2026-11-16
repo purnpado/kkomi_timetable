@@ -36,6 +36,16 @@ func SeedIfEmpty(s *Store) error {
 		}
 	}
 
+	cfg := DefaultSchoolConfig()
+	if err := s.SaveRecord("school_configs", cfg.ID, cfg); err != nil {
+		return err
+	}
+	for _, ld := range buildSeedTeachingLoads() {
+		if err := s.SaveRecord("teaching_loads", ld.ID, ld); err != nil {
+			return err
+		}
+	}
+
 	for _, cell := range buildSeedTimetable() {
 		if err := s.SaveRecord("timetable_cells", cell.ID, cell); err != nil {
 			return err
@@ -101,7 +111,7 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 		},
 		{
 			ID: "t04", Username: "external", PasswordHash: pwHash, MustChangePassword: true, Name: "최외부", Position: "교무기획(대외계)",
-			Subject: "과학", HomeroomClass: "3-1", Phone: "010-2100-0004",
+			Subject: "과학", ShortSubject: "과학", DefaultRoom: "과학실1", HomeroomClass: "3-1", Phone: "010-2100-0004",
 			Roles: []protocol.Role{protocol.RoleExternalExamAdmin, protocol.RoleTeacher},
 			TransferDate: "2024-03-01", LastExternalDispatch: "2024-06-04", ExternalExamCount: 2, InternalExamCount: 4, SubstitutionCount: 3,
 		},
@@ -131,40 +141,40 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 		},
 		{
 			ID: "t09", Username: "t09", PasswordHash: pwHash, Name: "한과학", Position: "평교사",
-			Subject: "과학", HomeroomClass: "", Phone: "010-2100-0009",
+			Subject: "과학", ShortSubject: "과학", DefaultRoom: "과학실1", HomeroomClass: "", Phone: "010-2100-0009",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2026-03-01", LastExternalDispatch: "", ExternalExamCount: 0, InternalExamCount: 2, SubstitutionCount: 1,
 		},
 		{
 			ID: "t10", Username: "t10", PasswordHash: pwHash, Name: "오역사", Position: "평교사",
-			Subject: "역사", HomeroomClass: "", Phone: "010-2100-0010",
+			Subject: "역사", ShortSubject: "역사", HomeroomClass: "", Phone: "010-2100-0010",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2022-03-01", LastExternalDispatch: "2023-06-01", ExternalExamCount: 2, InternalExamCount: 5, SubstitutionCount: 6,
 		},
 		{
 			ID: "t11", Username: "t11", PasswordHash: pwHash, Name: "서정보", Position: "순회교사",
-			Subject: "정보", HomeroomClass: "", Phone: "010-2100-0011",
+			Subject: "정보", ShortSubject: "정보", DefaultRoom: "컴퓨터실", HomeroomClass: "", Phone: "010-2100-0011",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2025-03-01", LastExternalDispatch: "", ExternalExamCount: 0, InternalExamCount: 1, SubstitutionCount: 0,
 			ItinerantDays: []int{1, 3, 5}, // 월·수·금만 출강
 		},
 		{
 			ID: "t12", Username: "t12", PasswordHash: pwHash, Name: "송체육", Position: "생활안전부장",
-			IsDepartmentHead: true, Subject: "체육", HomeroomClass: "", Phone: "010-2100-0012",
+			IsDepartmentHead: true, Subject: "체육", ShortSubject: "체육", DefaultRoom: "체육관", HomeroomClass: "", Phone: "010-2100-0012",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2021-03-01", LastExternalDispatch: "2024-11-14", ExternalExamCount: 3, InternalExamCount: 3, SubstitutionCount: 2,
 			ExemptReasons: []string{"원로교사"},
 		},
 		{
 			ID: "t13", Username: "t13", PasswordHash: pwHash, Name: "배음악", Position: "평교사",
-			Subject: "음악", HomeroomClass: "", Phone: "010-2100-0013",
+			Subject: "음악", ShortSubject: "음악", DefaultRoom: "음악실", HomeroomClass: "", Phone: "010-2100-0013",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2024-03-01", LastExternalDispatch: "", ExternalExamCount: 0, InternalExamCount: 2, SubstitutionCount: 1,
 			ExemptReasons: []string{"임산부"},
 		},
 		{
 			ID: "t14", Username: "t14", PasswordHash: pwHash, Name: "임미술", Position: "평교사",
-			Subject: "미술", HomeroomClass: "", Phone: "010-2100-0014",
+			Subject: "미술", ShortSubject: "미술", DefaultRoom: "미술실", HomeroomClass: "", Phone: "010-2100-0014",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2024-09-01", LastExternalDispatch: "2025-09-03", ExternalExamCount: 1, InternalExamCount: 3, SubstitutionCount: 2,
 			ExemptReasons: []string{"수험생 자녀"},
@@ -321,5 +331,48 @@ func buildSeedSchoolEvents(today string) []protocol.SchoolEvent {
 			Status:       protocol.StatusStaging,
 			ProposedBy:   "송체육",
 		},
+	}
+}
+
+// DefaultSchoolConfig는 기본 학년별 학급수·요일별 기준시수·교과교실 설정을 반환합니다.
+func DefaultSchoolConfig() protocol.SchoolConfig {
+	return protocol.SchoolConfig{
+		ID:                 "default",
+		SchoolName:         "꼬미중·고등학교",
+		AcademicYear:       2026,
+		GradeClassCounts:   map[int]int{1: 2, 2: 2, 3: 2},
+		VirtualClassCounts: map[int]int{1: 0, 2: 1, 3: 0},
+		DailyPeriodLimits: map[int]map[int]int{
+			1: {1: 6, 2: 6, 3: 6, 4: 6, 5: 6},
+			2: {1: 6, 2: 6, 3: 6, 4: 6, 5: 6},
+			3: {1: 6, 2: 6, 3: 6, 4: 6, 5: 6},
+		},
+		SpecialRooms: []protocol.SpecialRoom{
+			{ID: "rm-sci1", Name: "과학실1", Subject: "과학", Capacity: 35},
+			{ID: "rm-comp", Name: "컴퓨터실", Subject: "정보", Capacity: 32},
+			{ID: "rm-music", Name: "음악실", Subject: "음악", Capacity: 35},
+			{ID: "rm-art", Name: "미술실", Subject: "미술", Capacity: 35},
+			{ID: "rm-gym", Name: "체육관", Subject: "체육", Capacity: 70},
+			{ID: "rm-math1", Name: "수학전용1실", Subject: "수학", Capacity: 30},
+		},
+	}
+}
+
+func buildSeedTeachingLoads() []protocol.TeachingLoad {
+	return []protocol.TeachingLoad{
+		{ID: "ld-1-kor", TeacherID: "t06", TeacherName: "강국어", Subject: "국어", ShortSubject: "국어", SubjectCode: "KOR101", Grade: 1, ClassHours: map[string]int{"1-1": 4, "1-2": 4}, TotalHours: 8, BlockHours: 1},
+		{ID: "ld-1-mat", TeacherID: "t02", TeacherName: "이수업", Subject: "수학", ShortSubject: "수학", SubjectCode: "MAT101", Grade: 1, ClassHours: map[string]int{"1-1": 4, "1-2": 4}, TotalHours: 8, BlockHours: 1, DedicatedRoom: "수학전용1실"},
+		{ID: "ld-1-eng", TeacherID: "t08", TeacherName: "윤영어", Subject: "영어", ShortSubject: "영어", SubjectCode: "ENG101", Grade: 1, ClassHours: map[string]int{"1-1": 4, "1-2": 4}, TotalHours: 8, BlockHours: 1},
+		{ID: "ld-1-soc", TeacherID: "t05", TeacherName: "정행사", Subject: "사회", ShortSubject: "사회", SubjectCode: "SOC101", Grade: 1, ClassHours: map[string]int{"1-1": 3, "1-2": 3}, TotalHours: 6, BlockHours: 1},
+		{ID: "ld-1-sci", TeacherID: "t09", TeacherName: "한과학", Subject: "과학", ShortSubject: "과학", SubjectCode: "SCI101", Grade: 1, ClassHours: map[string]int{"1-1": 4, "1-2": 4}, TotalHours: 8, BlockHours: 1, DedicatedRoom: "과학실1"},
+		{ID: "ld-1-inf", TeacherID: "t11", TeacherName: "서정보", Subject: "정보", ShortSubject: "정보", SubjectCode: "INF101", Grade: 1, ClassHours: map[string]int{"1-1": 2, "1-2": 2}, TotalHours: 4, BlockHours: 2, DedicatedRoom: "컴퓨터실"},
+		{ID: "ld-1-his", TeacherID: "t10", TeacherName: "오역사", Subject: "역사", ShortSubject: "역사", SubjectCode: "HIS101", Grade: 1, ClassHours: map[string]int{"1-1": 3, "1-2": 3}, TotalHours: 6, BlockHours: 1},
+		{ID: "ld-1-pe", TeacherID: "t12", TeacherName: "송체육", Subject: "체육", ShortSubject: "체육", SubjectCode: "PHY101", Grade: 1, ClassHours: map[string]int{"1-1": 3, "1-2": 3}, TotalHours: 6, BlockHours: 1, DedicatedRoom: "체육관"},
+		{ID: "ld-1-mus", TeacherID: "t13", TeacherName: "배음악", Subject: "음악", ShortSubject: "음악", SubjectCode: "MUS101", Grade: 1, ClassHours: map[string]int{"1-1": 2, "1-2": 2}, TotalHours: 4, BlockHours: 1, DedicatedRoom: "음악실"},
+		{ID: "ld-1-art", TeacherID: "t14", TeacherName: "임미술", Subject: "미술", ShortSubject: "미술", SubjectCode: "ART101", Grade: 1, ClassHours: map[string]int{"1-1": 1, "1-2": 1}, TotalHours: 2, BlockHours: 1, DedicatedRoom: "미술실"},
+		{ID: "ld-2-kor", TeacherID: "t01", TeacherName: "김교무", Subject: "국어", ShortSubject: "국어", SubjectCode: "KOR201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1},
+		{ID: "ld-2-mat", TeacherID: "t07", TeacherName: "조수학", Subject: "수학", ShortSubject: "수학", SubjectCode: "MAT201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1, DedicatedRoom: "수학전용1실"},
+		{ID: "ld-2-eng", TeacherID: "t03", TeacherName: "박평가", Subject: "영어", ShortSubject: "영어", SubjectCode: "ENG201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1},
+		{ID: "ld-2-sci", TeacherID: "t04", TeacherName: "최외부", Subject: "과학", ShortSubject: "과학", SubjectCode: "SCI201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1, DedicatedRoom: "과학실1"},
 	}
 }

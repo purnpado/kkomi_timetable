@@ -157,6 +157,21 @@ func (s *Service) CommitRequest(requestID, reviewerName string, approve bool, re
 }
 
 func (s *Service) applyCellUpdate(cells []protocol.TimetableCell, req protocol.TimetableChangeRequest) {
+	// 삼각/사각 다단계 연쇄 교환 또는 단일 이동 step 목록이 있는 경우 전체 단계를 일괄 반영
+	if len(req.ChainSteps) > 0 {
+		cellMap := make(map[string]protocol.TimetableCell, len(cells))
+		for _, c := range cells {
+			cellMap[c.ID] = c
+		}
+		for _, step := range req.ChainSteps {
+			if c, ok := cellMap[step.CellID]; ok {
+				c.DayOfWeek = step.ToDay
+				c.Period = step.ToPeriod
+				_ = s.store.SaveRecord("timetable_cells", c.ID, c)
+			}
+		}
+		return
+	}
 	if req.RequestType == "SWAP" && req.TargetCell.ID != "" {
 		// 맞교환: 두 셀의 요일/교시를 상호 교환 저장
 		for i := range cells {
@@ -173,7 +188,18 @@ func (s *Service) applyCellUpdate(cells []protocol.TimetableCell, req protocol.T
 		}
 		return
 	}
-	// 보강/대타: 해당 셀 교사/과목 갱신
+	// 빈 교시 이동 (MOVE) 또는 보강/대타
+	if req.SourceCell.ID != "" && req.TargetCell.ID == "" && req.TargetCell.DayOfWeek > 0 && req.TargetCell.Period > 0 && req.RequestType == "MOVE" {
+		for i := range cells {
+			if cells[i].ID == req.SourceCell.ID {
+				cells[i].DayOfWeek = req.TargetCell.DayOfWeek
+				cells[i].Period = req.TargetCell.Period
+				_ = s.store.SaveRecord("timetable_cells", cells[i].ID, cells[i])
+				break
+			}
+		}
+		return
+	}
 	if req.SourceCell.ID != "" && req.PartnerID != "" {
 		for i := range cells {
 			if cells[i].ID == req.SourceCell.ID {

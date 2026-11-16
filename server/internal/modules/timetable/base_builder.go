@@ -54,6 +54,14 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 		return cell, fmt.Errorf("순회교사 %s 선생님은 해당 요일에 출강하지 않습니다", teacher.Name)
 	}
 
+	if cell.Room == "" {
+		if teacher.DefaultRoom != "" {
+			cell.Room = teacher.DefaultRoom
+		} else {
+			cell.Room = cell.ClassName + "교실"
+		}
+	}
+
 	cells, _ := s.ListCells()
 	// 같은 학급·요일·교시에 기존 셀이 있으면 덮어쓰기 대상으로 통일
 	for _, existing := range cells {
@@ -69,12 +77,12 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 				coName := tMap[cell.CoTeacherID].Name
 				return cell, fmt.Errorf("코티칭 교사 %s 선생님이 동시간대 %s반 수업 중입니다", coName, existing.ClassName)
 			}
+			if cell.Room != cell.ClassName+"교실" && existing.Room == cell.Room {
+				return cell, fmt.Errorf("교과교실(%s)이 동시간대 %s반(%s)에서 이미 사용 중입니다", cell.Room, existing.ClassName, existing.Subject)
+			}
 		}
 	}
 
-	if cell.Room == "" {
-		cell.Room = cell.ClassName + "교실"
-	}
 	if err := s.store.SaveRecord("timetable_cells", cell.ID, cell); err != nil {
 		return cell, err
 	}

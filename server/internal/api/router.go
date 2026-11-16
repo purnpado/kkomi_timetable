@@ -65,10 +65,12 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/health", a.handleHealth)
 
 	// 인증 및 교사/권한 관리
+	mux.HandleFunc("/api/auth/directory", a.handleAuthDirectory)
 	mux.HandleFunc("/api/auth/login", a.handleLogin)
 	mux.HandleFunc("/api/auth/change-password", a.handleChangePassword)
 	mux.HandleFunc("/api/auth/reset-password", a.handleResetPassword)
 	mux.HandleFunc("/api/teachers", a.handleTeachers)
+	mux.HandleFunc("/api/teachers/import-xlsx", a.handleImportTeachersXLSX)
 	mux.HandleFunc("/api/teachers/roles", a.handleUpdateRoles)
 	mux.HandleFunc("/api/teachers/handover", a.handleRoleHandover)
 
@@ -76,7 +78,10 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/dashboard", a.handleDashboard)
 	mux.HandleFunc("/api/events/recent", a.handleRecentEvents)
 
-	// 정규·일일 시간표, 기초 시간표 작성 및 결보강 승인
+	// 정규·일일 시간표, 시수표·교과교실 설정, 기초 시간표 작성 및 결보강 승인
+	mux.HandleFunc("/api/timetable/config", a.handleSchoolConfig)
+	mux.HandleFunc("/api/timetable/loads", a.handleTeachingLoads)
+	mux.HandleFunc("/api/timetable/import-loads-xlsx", a.handleImportTeachingLoadsXLSX)
 	mux.HandleFunc("/api/timetable/cells", a.handleTimetableCells)
 	mux.HandleFunc("/api/timetable/auto-generate", a.handleAutoGenerateBaseTimetable)
 	mux.HandleFunc("/api/timetable/import-xlsx", a.handleImportTimetableXLSX)

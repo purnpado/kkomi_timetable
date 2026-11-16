@@ -21,6 +21,15 @@ func (a *ServerApp) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *ServerApp) handleAuthDirectory(w http.ResponseWriter, r *http.Request) {
+	dir, err := a.Auth.ListPublicDirectory()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dir)
+}
+
 func (a *ServerApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
@@ -28,13 +37,15 @@ func (a *ServerApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Username string `json:"username"`
+		Name     string `json:"name"`
+		Subject  string `json:"subject"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "잘못된 로그인 요청 형식입니다")
 		return
 	}
-	t, err := a.Auth.Authenticate(body.Username, body.Password)
+	t, err := a.Auth.AuthenticateLogin(body.Username, body.Name, body.Subject, body.Password)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
