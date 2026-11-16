@@ -84,9 +84,6 @@ func relaunchInDarwinTerminal(port int) bool {
 	if !strings.Contains(exePath, filepath.Join(".app", "Contents", "MacOS")) {
 		return false
 	}
-	if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
-		return false
-	}
 
 	targetBin := exePath
 	if sibling := pathutil.SafeJoin(pathutil.ExecutableDir(), "꼬미시간서버"); sibling != "" {
@@ -95,22 +92,45 @@ func relaunchInDarwinTerminal(port int) bool {
 		}
 	}
 
-	shellCmd := fmt.Sprintf("KKOMI_IN_TERMINAL=1 %s --port %d", shellQuoteSingle(targetBin), port)
-	cmd := exec.Command(
-		"osascript",
-		"-e", `on run argv`,
-		"-e", `tell application "Terminal"`,
-		"-e", `activate`,
-		"-e", `do script (item 1 of argv)`,
-		"-e", `end tell`,
-		"-e", `end run`,
-		shellCmd,
-	)
-	if runErr := cmd.Run(); runErr != nil {
+	scriptPath := filepath.Join(os.TempDir(), "kkomi-server-launch.command")
+	script := fmt.Sprintf("#!/usr/bin/env bash\nexport KKOMI_IN_TERMINAL=1\nclear\n%s --port %d\n", shellQuoteSingle(targetBin), port)
+	if wErr := os.WriteFile(scriptPath, []byte(script), 0o755); wErr != nil {
+		log.Printf("[시스템] Terminal 실행 스크립트 생성 실패: %v", wErr)
+		return false
+	}
+	if runErr := exec.Command("open", "-a", "Terminal", scriptPath).Run(); runErr != nil {
 		log.Printf("[시스템] Terminal.app 자동 실행 실패(백그라운드 계속 시도): %v", runErr)
 		return false
 	}
 	return true
+}
+
+func dbErrorHints() []string {
+	if runtime.GOOS == "windows" {
+		return []string{
+			"1) 배포 압축 파일(꼬미시간_v..._windows_portable.zip)의 전체 폴더를 압축 해제한 상태에서 실행했는지 확인하세요.",
+			"2) 실행 폴더 내 'runtime\\mariadb\\bin\\mariadbd.exe' 및 'mysqld.exe'가 모두 존재하는지 확인하세요.",
+			"3) Windows Defender·백신 프로그램이나 이전 실행 프로세스(mariadbd.exe)가 DB 파일/포트를 막고 있지 않은지 확인하세요.",
+		}
+	}
+	return []string{
+		"1) 실행 폴더 내 'runtime/mariadb/bin/mariadbd' 및 'data' 폴더가 정상 존재하는지 확인하세요.",
+		"2) 이미 실행 중인 '꼬미시간서버' 또는 백그라운드 'mariadbd' 프로세스가 DB 파일/포트(13306)를 점유하고 있는지 확인하세요.",
+		"3) 이전 실행이 비정상 종료되었다면 잠시 후 다시 실행해 주세요(좀비 DB 프로세스 자동 정리됨).",
+	}
+}
+
+func portErrorHints() []string {
+	if runtime.GOOS == "windows" {
+		return []string{
+			"1) 이미 다른 '꼬미시간서버.exe' 창이 실행 중인지 작업 관리자에서 확인하세요.",
+			"2) Windows 방화벽 또는 다른 프로그램이 해당 포트를 점유하고 있을 수 있습니다.",
+		}
+	}
+	return []string{
+		"1) 이미 다른 '꼬미시간서버' 창이 실행 중인지(또는 백그라운드 프로세스) 확인하세요.",
+		"2) 다른 프로그램이 해당 포트를 사용 중이면 '--port <번호>' 옵션으로 실행하세요.",
+	}
 }
 
 func main() {
@@ -196,10 +216,7 @@ func main() {
 	openedStore, err := database.Open()
 	if err != nil {
 		database.StopActiveDaemon()
-		failAndPause(shutdownFn, "포터블 데이터베이스(MariaDB) 초기화 또는 실행에 실패했습니다", err,
-			"1) 배포 압축 파일(꼬미시간_v..._windows_portable.zip)의 전체 폴더를 압축 해제한 상태에서 실행했는지 확인하세요.",
-			"2) 실행 폴더 내 'runtime\\mariadb\\bin\\mariadbd.exe' 및 'mysqld.exe'가 모두 존재하는지 확인하세요.",
-			"3) Windows Defender·백신 프로그램이나 이전 실행 프로세스(mariadbd.exe)가 DB 파일/포트를 막고 있지 않은지 확인하세요.")
+		failAndPause(shutdownFn, "포터블 데이터베이스(MariaDB) 초기화 또는 실행에 실패했습니다", err, dbErrorHints()...)
 	}
 	resMu.Lock()
 	store = openedStore
@@ -226,9 +243,7 @@ func main() {
 	addr := fmt.Sprintf("0.0.0.0:%d", *port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		failAndPause(shutdownFn, fmt.Sprintf("서버 포트(%d)를 열 수 없습니다", *port), err,
-			"1) 이미 다른 '꼬미시간서버.exe' 창이 실행 중인지 작업 관리자에서 확인하세요.",
-			"2) Windows 방화벽 또는 다른 프로그램이 해당 포트를 점유하고 있을 수 있습니다.")
+		failAndPause(shutdownFn, fmt.Sprintf("서버 포트(%d)를 열 수 없습니다", *port), err, portErrorHints()...)
 	}
 
 	srv := &http.Server{

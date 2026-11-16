@@ -333,6 +333,10 @@ func (m *PortableMariaDBManager) Start() (string, error) {
 		m.reused = true
 		return m.DSN("kkomi_timetable"), nil
 	}
+	if cleanupStalePidProcess(m.pidFile, m.isPortOpen) {
+		m.reused = true
+		return m.DSN("kkomi_timetable"), nil
+	}
 	if err := m.ensureTDEKeyFile(); err != nil {
 		return "", err
 	}

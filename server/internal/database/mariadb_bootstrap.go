@@ -2,13 +2,17 @@ package database
 
 import (
 	"archive/zip"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"kkomi-timetable/pkg/pathutil"
 )
@@ -196,4 +200,67 @@ func writeZipEntryToFile(f *zip.File, target string) error {
 
 	_, err = io.Copy(out, rc)
 	return err
+}
+
+func isPidAlive(pid int) (*os.Process, bool) {
+	if pid <= 0 {
+		return nil, false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return nil, false
+	}
+	if runtime.GOOS == "windows" {
+		out, qErr := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH").CombinedOutput()
+		if qErr != nil || !strings.Contains(string(out), strconv.Itoa(pid)) {
+			return nil, false
+		}
+		return proc, true
+	}
+	if sigErr := proc.Signal(syscall.Signal(0)); sigErr != nil {
+		return nil, false
+	}
+	return proc, true
+}
+
+// cleanupStalePidProcess는 이전 실행의 mariadbd PID가 아직 살아 있다면 최대 5초간 포트 응답을 기다려 재사용하고,
+// 포트 없이 aria_log_control 잠금만 쥔 좀비 프로세스라면 안전하게 종료해 error: 35 잠금 충돌을 방지합니다.
+func cleanupStalePidProcess(pidFile string, checkPort func() bool) bool {
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if convErr != nil || pid <= 0 {
+		_ = os.Remove(pidFile)
+		return false
+	}
+	proc, alive := isPidAlive(pid)
+	if !alive {
+		_ = os.Remove(pidFile)
+		return false
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if checkPort != nil && checkPort() {
+			return true
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	log.Printf("[DB] 포트 응답 없이 잠금만 유지 중인 기존 mariadbd 프로세스(PID %d)를 정리합니다...", pid)
+	if runtime.GOOS == "windows" {
+		_ = proc.Kill()
+		time.Sleep(1 * time.Second)
+	} else {
+		_ = proc.Signal(syscall.SIGTERM)
+		time.Sleep(1 * time.Second)
+		if _, still := isPidAlive(pid); still {
+			_ = proc.Kill()
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	_ = os.Remove(pidFile)
+	return false
 }
