@@ -6,8 +6,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/client/internal/netclient"
+	"kkomi-timetable/pkg/protocol"
 )
 
 // AppBridge는 React 프론트엔드와 Wails v3 데스크톱 제어(트레이, 사이드 도킹 위젯, OS 알림, 서버 접속 설정)를 연결합니다.

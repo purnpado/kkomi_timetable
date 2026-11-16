@@ -22,8 +22,8 @@ type DomainEvent struct {
 	Type       EventType   `json:"type"`
 	Title      string      `json:"title"`
 	Message    string      `json:"message"`
-	Urgent     bool        `json:"urgent"`     // true면 수업 중 방해 금지 모드를 무시하고 즉시 최상단 토스트 표시
-	TargetIDs  []string    `json:"targetIds"`  // 비어 있으면 전 교원 브로드캐스트, 지정 시 해당 교사 ID 대상
+	Urgent     bool        `json:"urgent"`    // true면 수업 중 방해 금지 모드를 무시하고 즉시 최상단 토스트 표시
+	TargetIDs  []string    `json:"targetIds"` // 비어 있으면 전 교원 브로드캐스트, 지정 시 해당 교사 ID 대상
 	Payload    interface{} `json:"payload"`
 	ActorID    string      `json:"actorId"`
 	ActorName  string      `json:"actorName"`

@@ -292,13 +292,13 @@ func TestCrossWeekSwapAndMidWeekAbsencePlan(t *testing.T) {
 	}
 }
 
-// TestInternalExamAnnualEqualizationAndExemption은 특수반·보건실 제외 대상의 0건 배제와
+// TestInternalExamAnnualEqualizationAndExemption은 특수반 제외(0건 배제), 별도고사실 선택 개설(일반교사 1인 순환),
 // 정감독 단독 및 정·부감독 동시 운영 시 전교원 연간 감독 시수 균등 배정을 검증합니다.
 func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
 	store, bus := setupTestEnv(t)
 	svc := internal_exam.NewService(store, bus)
 
-	// 기실시 누적 0회 초기화 후 6개 교시 편성안 준비
+	// 기실시 누적 0회 초기화 후 별도고사실 없는 6개 교시 편성안 준비
 	if _, err := svc.UpdateTeacherExamPolicy(internal_exam.TeacherExamPolicyUpdate{ResetAllBaseCounts: true}); err != nil {
 		t.Fatalf("기실시 0회 초기화 실패: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
 		{Period: 6, Grade: 3, Subject: "역사", StartTime: "15:00", EndTime: "15:40", DurationMinutes: 40, ClassRooms: []string{"3-1", "3-2"}},
 	}
 
-	// 1. 정감독 1인 단독 운영 (DeputyMode: false)
+	// 1. 별도고사실 미개설 + 정감독 1인 단독 운영 (DeputyMode: false)
 	singleSlots, err := svc.GenerateAndSave(protocol.ExamConfig{
 		ID: "exam-eq-single", Title: "정감독 단독 균등 검증", ExamDate: "2026-11-21", DeputyMode: false, HonoraryParentOn: false,
 	}, specs)
@@ -319,30 +319,45 @@ func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
 		t.Fatalf("정감독 단독 배정 실패: %v", err)
 	}
 	for _, sl := range singleSlots {
-		if sl.TeacherID == "t15" || sl.TeacherID == "t16" {
-			t.Fatalf("특수반/보건실 제외 교사(%s)가 단독 운영 감독에 배정되었습니다", sl.TeacherName)
+		if sl.TeacherID == "t15" {
+			t.Fatalf("특수반 제외 교사(%s)가 단독 운영 감독에 배정되었습니다", sl.TeacherName)
+		}
+		if strings.Contains(sl.RoomName, "별도") {
+			t.Fatalf("미개설 상태에서 별도고사실 슬롯이 생성되었습니다: %+v", sl)
 		}
 	}
 	singleSum, err := svc.CalculateFairnessSummary()
 	if err != nil {
 		t.Fatalf("균등 현황 산출 실패: %v", err)
 	}
-	if singleSum.ExemptCount != 2 || singleSum.MaxGap > 1 {
+	if singleSum.ExemptCount != 1 || singleSum.MaxGap > 1 {
 		t.Fatalf("정감독 단독 연간 총 시수 불균형 또는 제외수 오류: exempt=%d, gap=%d (%d~%d)",
 			singleSum.ExemptCount, singleSum.MaxGap, singleSum.MinTotal, singleSum.MaxTotal)
 	}
 
-	// 2. 정·부감독 2인 공동 운영 (DeputyMode: true)
+	// 2. 1교시에 별도고사실(독감·감염병) 선택 개설 + 정·부감독 2인 공동 운영 (DeputyMode: true)
+	specsWithIso := append([]internal_exam.ExamPeriodSpec{}, specs...)
+	specsWithIso[0].ClassRooms = []string{"1-1", "1-2", "별도고사실(독감·감염병)"}
 	deputySlots, err := svc.GenerateAndSave(protocol.ExamConfig{
-		ID: "exam-eq-deputy", Title: "정·부감독 공동 균등 검증", ExamDate: "2026-11-22", DeputyMode: true, HonoraryParentOn: false, BalanceMode: "TOTAL_AND_ROLE",
-	}, specs)
+		ID: "exam-eq-deputy", Title: "정·부감독 공동+별도고사실 검증", ExamDate: "2026-11-22", DeputyMode: true, HonoraryParentOn: false, BalanceMode: "TOTAL_AND_ROLE",
+	}, specsWithIso)
 	if err != nil || len(deputySlots) == 0 {
 		t.Fatalf("정·부감독 배정 실패: %v", err)
 	}
+	isoCount := 0
 	for _, sl := range deputySlots {
-		if sl.TeacherID == "t15" || sl.TeacherID == "t16" {
-			t.Fatalf("특수반/보건실 제외 교사(%s)가 정·부감독에 배정되었습니다", sl.TeacherName)
+		if sl.TeacherID == "t15" {
+			t.Fatalf("특수반 제외 교사(%s)가 정·부감독에 배정되었습니다", sl.TeacherName)
 		}
+		if strings.Contains(sl.RoomName, "별도고사실") {
+			isoCount++
+			if sl.SlotRole != "MAIN" {
+				t.Fatalf("별도고사실은 1인 정감독만 배정되어야 합니다: %+v", sl)
+			}
+		}
+	}
+	if isoCount != 1 {
+		t.Fatalf("개설된 별도고사실 정감독 배정 수 오류: got=%d, want=1", isoCount)
 	}
 	deputySum, err := svc.CalculateFairnessSummary()
 	if err != nil {

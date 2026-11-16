@@ -132,8 +132,8 @@ func (s *Service) AutoGenerateBaseTimetable(grades []int, classesPerGrade int, c
 		existing = nil
 	}
 
-	occupiedSlot := make(map[string]bool)    // "class-day-period"
-	teacherBusy := make(map[string]bool)     // "teacherID-day-period"
+	occupiedSlot := make(map[string]bool) // "class-day-period"
+	teacherBusy := make(map[string]bool)  // "teacherID-day-period"
 	teacherDayStreak := make(map[string]map[int]bool)
 	teacherLoad := make(map[string]int)
 

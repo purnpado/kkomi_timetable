@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"kkomi-timetable/pkg/pathutil"
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/database"
 	"kkomi-timetable/server/internal/eventbus"
-	"kkomi-timetable/pkg/pathutil"
 )
 
 // ServerVersion은 현재 서버 바이너리의 릴리즈 버전입니다.

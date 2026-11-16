@@ -164,6 +164,25 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
                   학부모 명예감독 투입 (자녀 학년/반 자동 배제)
                 </label>
                 <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={specs.some((sp) => Array.isArray(sp.classRooms) && sp.classRooms.includes("별도고사실(독감·감염병)"))}
+                    onChange={(e) => {
+                      const tag = "별도고사실(독감·감염병)";
+                      setSpecs((prev) =>
+                        prev.map((sp) => {
+                          const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
+                          return {
+                            ...sp,
+                            classRooms: e.target.checked ? Array.from(new Set([...cur, tag])) : cur.filter((r) => r !== tag),
+                          };
+                        })
+                      );
+                    }}
+                  />
+                  별도 고사실(독감·감염병) 개설 (없으면 해제 · 일반교사 순환)
+                </label>
+                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={!config.instantRevealMode} onChange={(e) => setConfig({ ...config, instantRevealMode: !e.target.checked, isSealed: !e.target.checked })} />
                   사전 봉인 후 당일 아침 발표
                 </label>

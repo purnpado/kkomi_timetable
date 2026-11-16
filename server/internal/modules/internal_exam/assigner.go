@@ -38,13 +38,14 @@ func (l *roleLoad) add(role string, delta int) {
 	l.Total = l.Main + l.Sub + l.Corridor
 }
 
-// IsEffectiveExamExempt는 교사가 특수반·별도 고사실(독감·감염병 등) 등 교내 시험감독 제외 대상인지 판정합니다.
+// IsEffectiveExamExempt는 교사가 특수반 전담 또는 학교가 명시 지정한 감독 제외 대상인지 판정합니다.
+// 참고: 별도 고사실(독감·감염병)은 전담 제외 보직이 아니라 개설 시 일반 교사가 순환 감독합니다.
 func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
 	if t.InternalExamExempt {
 		if strings.TrimSpace(t.InternalExamExemptReason) != "" {
 			return true, strings.TrimSpace(t.InternalExamExemptReason)
 		}
-		return true, "특수보직·별도 운영 교내 감독 제외"
+		return true, "특수보직·학교 지정 교내 감독 제외"
 	}
 	joined := strings.Join([]string{t.Position, t.Subject, t.InternalExamExemptReason}, " ")
 	for _, kw := range []string{"특수반", "특수학급", "특수교육", "특수"} {
@@ -52,12 +53,16 @@ func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
 			return true, "특수반(개별고사장 전담)"
 		}
 	}
-	for _, kw := range []string{"별도 고사실", "별도고사실", "별독 고사실", "별독고사실", "독감", "감염병"} {
-		if strings.Contains(joined, kw) {
-			return true, "별도 고사실(독감·감염병 등 분리시험)"
+	return false, ""
+}
+
+func isIsolatedExamRoom(roomLabel string) bool {
+	for _, kw := range []string{"별도고사실", "별도 고사실", "별독고사실", "별독 고사실", "독감", "감염병"} {
+		if strings.Contains(roomLabel, kw) {
+			return true
 		}
 	}
-	return false, ""
+	return false
 }
 
 func extractRoomBaseClass(roomLabel string) string {
@@ -184,8 +189,11 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 			}
 		}
 
-		// 3단계: 학부모 명예감독 또는 부감독(SUB) 배정 (DeputyMode=true일 때만 교원 부감독 배치)
+		// 3단계: 학부모 명예감독 또는 부감독(SUB) 배정 (단, 별도고사실은 1인 정감독만 배정)
 		for _, room := range spec.ClassRooms {
+			if isIsolatedExamRoom(room) {
+				continue
+			}
 			if cfg.HonoraryParentOn {
 				if parent := pickHonoraryParent(honoraryParents, usedInPeriod, room, spec.Grade); parent != nil {
 					usedInPeriod[parent.ID] = true
@@ -213,7 +221,7 @@ func buildExamSlot(cfg protocol.ExamConfig, spec ExamPeriodSpec, role, roomName 
 	suffix := strings.ToLower(role)
 	if role == "CORRIDOR" {
 		return protocol.ExamSlot{
-			ID: fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, t.ID),
+			ID:     fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, t.ID),
 			ExamID: cfg.ID, ExamDate: cfg.ExamDate, Period: spec.Period, StartTime: spec.StartTime,
 			EndTime: spec.EndTime, DurationMinutes: spec.DurationMinutes, Grade: spec.Grade, Subject: spec.Subject,
 			SlotRole: role, RoomName: roomName, TeacherID: t.ID, TeacherName: t.Name, Note: note,
@@ -221,7 +229,7 @@ func buildExamSlot(cfg protocol.ExamConfig, spec ExamPeriodSpec, role, roomName 
 	}
 	roomCode := strings.TrimSuffix(roomName, " 고사장")
 	return protocol.ExamSlot{
-		ID: fmt.Sprintf("slot-%s-p%d-%s-%s", cfg.ID, spec.Period, roomCode, suffix),
+		ID:     fmt.Sprintf("slot-%s-p%d-%s-%s", cfg.ID, spec.Period, roomCode, suffix),
 		ExamID: cfg.ID, ExamDate: cfg.ExamDate, Period: spec.Period, StartTime: spec.StartTime,
 		EndTime: spec.EndTime, DurationMinutes: spec.DurationMinutes, Grade: spec.Grade, Subject: spec.Subject,
 		SlotRole: role, RoomName: roomName, TeacherID: t.ID, TeacherName: t.Name, Note: note,

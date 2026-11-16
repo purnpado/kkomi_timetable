@@ -248,7 +248,7 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 		t.Fatalf("과목별 시험시간 배정 실패: status=%d, body=%s", code, string(raw))
 	}
 	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/internal-exam/teacher-policy", "t03", map[string]interface{}{
-		"teacherId": "t16", "internalExamExempt": true, "internalExamExemptReason": "별도 고사실(독감·감염병 등 분리시험)",
+		"teacherId": "t15", "internalExamExempt": true, "internalExamExemptReason": "특수반(개별고사장 전담)",
 	})
 	if code != http.StatusOK || !strings.Contains(string(raw), `"maxGap"`) {
 		t.Fatalf("교내 감독 제외 정책 API 실패: status=%d, body=%s", code, string(raw))
