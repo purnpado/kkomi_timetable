@@ -21,6 +21,12 @@ import (
 	"kkomi-timetable/server/internal/modules/timetable"
 )
 
+func TestMain(m *testing.M) {
+	code := m.Run()
+	database.StopTestDaemons()
+	os.Exit(code)
+}
+
 func setupTestEnv(t *testing.T) (*database.Store, *eventbus.Bus) {
 	t.Helper()
 	tmpDir := t.TempDir()

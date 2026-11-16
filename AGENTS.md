@@ -3,7 +3,8 @@
 이 문서는 저장소 작업을 이어받는 모든 개발자와 AI 에이전트가 반드시 준수해야 하는 절대 수칙입니다.
 
 ## 1. 핵심 개발 원칙 (추측 구현 절대 금지)
-* **선(先) 로컬 테스트 후(後) 빌드:** 기능을 추측으로 작성하고 끝내지 않습니다. 코드 변경 후에는 반드시 로컬에서 `go vet ./...`, `go test -v ./...`(단위 + API/WebSocket E2E 테스트), 프론트엔드 `npm run build`를 실제로 실행해 통과한 뒤에만 `./scripts/build_all.sh`로 `bin/` 빌드를 생성합니다.
+* **선(先) 로컬 테스트 후(後) 빌드:** 기능을 추측으로 작성하고 끝내지 않습니다. 코드 변경 후에는 반드시 로컬에서 `go vet ./...`, `go test -v ./...`(실제 포터블 MariaDB 기반 단위 + API/WebSocket E2E 테스트), 프론트엔드 `npm run build`를 실제로 실행해 통과한 뒤에만 `./scripts/build_all.sh`로 `bin/` 빌드를 생성합니다.
+* **단일 DB 엔진(포터블 MariaDB):** SQLite 폴백을 사용하지 않으며, macOS(`bin/darwin/runtime/mariadb`)와 Windows(`bin/windows/runtime/mariadb`) 모두 무설치 포터블 MariaDB(`127.0.0.1:13306`, AES-256 암호화)로만 구동합니다.
 * **릴리즈 보류 원칙:** 현재 목표 버전은 **`v0.1.0`**입니다. 사용자가 명시적으로 **"릴리즈 해달라"고 지시하기 전에는 절대 정식 릴리즈(`--release`, Gitea Releases 업로드, 릴리즈 태그 푸시)를 실행하지 않습니다.**
 
 ## 2. 5대 절대 개발 수칙

@@ -16,6 +16,8 @@ updates/
 runtime/mariadb/data/
 runtime/mariadb/bin/
 runtime/mariadb/lib/
+runtime/mariadb/share/
+build/cache/
 server-data/
 client-data/
 

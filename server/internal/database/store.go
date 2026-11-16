@@ -1,97 +1,119 @@
 package database
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
 
-	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/pkg/pathutil"
+	"kkomi-timetable/pkg/protocol"
 )
 
-// Store는 포터블 MariaDB(TDE) 우선 연결 및 내장 AES-256 암호화 폴백 DB를 통합 관리합니다.
+// Store는 무설치 포터블 MariaDB(TDE) 연결 및 AES-256 암호화 백업을 통합 관리합니다.
 type Store struct {
 	mu          sync.RWMutex
 	db          *sql.DB
-	driver      string // "mysql" 또는 "sqlite"
+	dbName      string
+	dropOnClose bool
+	ownsDaemon  bool
 	modeLabel   string
 	mariaMgr    *PortableMariaDBManager
 	masterKey   []byte
 }
 
-// Open은 포터블 MariaDB 기동을 먼저 시도하고, 바이너리가 없는 환경에서는 내장 SQLite(WAL)로 자동 폴백합니다.
+// Open은 포터블 MariaDB(127.0.0.1)를 기동하고 도메인 스키마에 연결합니다.
 func Open() (*Store, error) {
 	masterKey, err := loadOrCreateMasterKey()
 	if err != nil {
 		return nil, err
 	}
 
-	s := &Store{
-		masterKey: masterKey,
+	var mgr *PortableMariaDBManager
+	dbName := "kkomi_timetable"
+	dropOnClose := false
+	ownsDaemon := false
+
+	if isRunningTests() {
+		mgr, err = acquireTestDaemon()
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256([]byte(pathutil.BaseDir()))
+		dbName = "kkomi_test_" + hex.EncodeToString(sum[:5])
+		dropOnClose = true
+	} else {
+		mgr, err = NewPortableMariaDBManager(0)
+		if err != nil {
+			return nil, err
+		}
+		if _, startErr := mgr.Start(); startErr != nil {
+			return nil, fmt.Errorf("포터블 MariaDB 기동 실패: %w", startErr)
+		}
+		ownsDaemon = !mgr.reused
 	}
 
-	// 1. 포터블 MariaDB(mariadbd.exe) 기동 시도 (Windows 교무실 공용 서버)
-	mgr, mgrErr := NewPortableMariaDBManager(13306)
-	if mgrErr == nil && mgr.HasBinary() {
-		if dsn, startErr := mgr.Start(); startErr == nil {
-			// 데이터베이스 생성 보장 후 연결
-			baseDSN := strings.Replace(dsn, "/kkomi_timetable?", "/?", 1)
-			if bootstrapDB, bErr := sql.Open("mysql", baseDSN); bErr == nil {
-				_, _ = bootstrapDB.Exec("CREATE DATABASE IF NOT EXISTS kkomi_timetable CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-				_ = bootstrapDB.Close()
-			}
-			if mariaDB, openErr := sql.Open("mysql", dsn); openErr == nil {
-				if pingErr := mariaDB.Ping(); pingErr == nil {
-					mariaDB.SetMaxOpenConns(30)
-					mariaDB.SetMaxIdleConns(10)
-					s.db = mariaDB
-					s.driver = "mysql"
-					s.modeLabel = "포터블 MariaDB (AES-256 TDE · Row-level Lock)"
-					s.mariaMgr = mgr
-					if err := s.initSchema(); err != nil {
-						return nil, err
-					}
-					log.Printf("[DB] %s 연결 성공", s.modeLabel)
-					return s, nil
-				}
-				_ = mariaDB.Close()
-			}
+	cleanupOnFail := func() {
+		if ownsDaemon && mgr != nil {
 			_ = mgr.Stop()
-		} else {
-			log.Printf("[DB] 포터블 MariaDB 기동 생략 (%v) -> 내장 보안 저장소로 전환", startErr)
 		}
 	}
 
-	// 2. 내장 SQLite + AES-256 암호화 백업 폴백 (macOS 개발 검증 및 즉시 실행용)
-	dataDir, err := pathutil.DataDir()
+	bootstrapDB, err := sql.Open("mysql", mgr.DSN(""))
 	if err != nil {
-		return nil, err
+		cleanupOnFail()
+		return nil, fmt.Errorf("MariaDB 부트스트랩 연결 실패: %w", err)
 	}
-	dbFile := pathutil.SafeJoin(dataDir, "kkomi_timetable.db")
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbFile)
-	sqliteDB, err := sql.Open("sqlite", dsn)
+	createSQL := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", dbName)
+	if _, execErr := bootstrapDB.Exec(createSQL); execErr != nil {
+		_ = bootstrapDB.Close()
+		cleanupOnFail()
+		return nil, fmt.Errorf("데이터베이스(%s) 생성 실패: %w", dbName, execErr)
+	}
+	_ = bootstrapDB.Close()
+
+	mariaDB, err := sql.Open("mysql", mgr.DSN(dbName))
 	if err != nil {
-		return nil, fmt.Errorf("내장 SQLite 열기 실패: %w", err)
+		cleanupOnFail()
+		return nil, fmt.Errorf("MariaDB 연결 열기 실패: %w", err)
 	}
-	sqliteDB.SetMaxOpenConns(1) // SQLite 쓰기 경합 방지
-	s.db = sqliteDB
-	s.driver = "sqlite"
-	s.modeLabel = "내장 SQLite WAL (AES-256 암호화 백업 지원)"
+	if err := mariaDB.Ping(); err != nil {
+		_ = mariaDB.Close()
+		cleanupOnFail()
+		return nil, fmt.Errorf("MariaDB 응답 확인 실패: %w", err)
+	}
+
+	mariaDB.SetMaxOpenConns(30)
+	mariaDB.SetMaxIdleConns(10)
+
+	label := fmt.Sprintf("포터블 MariaDB (127.0.0.1:%d · AES-256 암호화)", mgr.port)
+	if mgr.hasTDE {
+		label = fmt.Sprintf("포터블 MariaDB (127.0.0.1:%d · AES-256 TDE)", mgr.port)
+	}
+
+	s := &Store{
+		db:          mariaDB,
+		dbName:      dbName,
+		dropOnClose: dropOnClose,
+		ownsDaemon:  ownsDaemon,
+		modeLabel:   label,
+		mariaMgr:    mgr,
+		masterKey:   masterKey,
+	}
 	if err := s.initSchema(); err != nil {
-		_ = sqliteDB.Close()
+		_ = s.Close()
 		return nil, err
 	}
-	log.Printf("[DB] %s 연결 성공 (%s)", s.modeLabel, dbFile)
+	log.Printf("[DB] %s 연결 성공 (스키마: %s)", s.modeLabel, s.dbName)
 	return s, nil
 }
 
@@ -100,29 +122,33 @@ func (s *Store) ModeLabel() string {
 	return s.modeLabel
 }
 
-// Close는 DB 커넥션과 포터블 MariaDB 자식 프로세스를 안전하게 종료합니다.
+// Close는 DB 커넥션과 직접 기동한 포터블 MariaDB 자식 프로세스를 안전하게 종료합니다.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db != nil {
+		if s.dropOnClose && s.dbName != "kkomi_timetable" {
+			_, _ = s.db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", s.dbName))
+		}
 		_ = s.db.Close()
+		s.db = nil
 	}
-	if s.mariaMgr != nil {
+	if s.ownsDaemon && s.mariaMgr != nil {
 		return s.mariaMgr.Stop()
 	}
 	return nil
 }
 
-// initSchema는 MariaDB 및 SQLite 모두와 호환되는 도메인 스키마를 생성합니다.
+// initSchema는 InnoDB 기반의 UTF8MB4 도메인 스키마를 생성합니다.
 func (s *Store) initSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS kv_records (
 			collection VARCHAR(64) NOT NULL,
 			id VARCHAR(128) NOT NULL,
-			payload TEXT NOT NULL,
+			payload LONGTEXT NOT NULL,
 			updated_at VARCHAR(32) NOT NULL,
 			PRIMARY KEY (collection, id)
-		)`,
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`CREATE TABLE IF NOT EXISTS audit_logs (
 			id VARCHAR(128) PRIMARY KEY,
 			event_type VARCHAR(64) NOT NULL,
@@ -131,17 +157,17 @@ func (s *Store) initSchema() error {
 			title VARCHAR(255) NOT NULL,
 			message TEXT NOT NULL,
 			occurred_at VARCHAR(32) NOT NULL
-		)`,
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("스키마 초기화 실패: %w", err)
+			return fmt.Errorf("MariaDB 스키마 초기화 실패: %w", err)
 		}
 	}
 	return nil
 }
 
-// SaveRecord는 컬렉션과 ID 단위로 도메인 객체를 저장(행 단위 갱신)합니다.
+// SaveRecord는 컬렉션과 ID 단위로 도메인 객체를 행 단위 잠금(InnoDB)으로 저장합니다.
 func (s *Store) SaveRecord(collection, id string, value interface{}) error {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -152,18 +178,11 @@ func (s *Store) SaveRecord(collection, id string, value interface{}) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.driver == "mysql" {
-		_, err = s.db.Exec(
-			`INSERT INTO kv_records (collection, id, payload, updated_at) VALUES (?, ?, ?, ?)
-			 ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)`,
-			collection, id, string(raw), now,
-		)
-	} else {
-		_, err = s.db.Exec(
-			`INSERT OR REPLACE INTO kv_records (collection, id, payload, updated_at) VALUES (?, ?, ?, ?)`,
-			collection, id, string(raw), now,
-		)
-	}
+	_, err = s.db.Exec(
+		`INSERT INTO kv_records (collection, id, payload, updated_at) VALUES (?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)`,
+		collection, id, string(raw), now,
+	)
 	return err
 }
 

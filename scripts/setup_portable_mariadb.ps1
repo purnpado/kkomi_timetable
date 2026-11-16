@@ -44,7 +44,7 @@ try {
     Write-Host ">>> 이제 꼬미시간서버.exe를 실행하면 127.0.0.1:13306 로컬 전용 및 AES-256 TDE가 자동 구동됩니다." -ForegroundColor Yellow
 } catch {
     Write-Host ">>> 자동 다운로드 실패 (폐쇄망 환경일 수 있습니다): $_" -ForegroundColor Yellow
-    Write-Host ">>> 안내: 1) 꼬미시간서버.exe는 MariaDB가 없어도 내장 보안 저장소(SQLite WAL)로 즉시 작동합니다." -ForegroundColor Cyan
-    Write-Host ">>>       2) 포터블 MariaDB를 쓰시려면 외부 PC에서 mariadb-winx64.zip의 bin/lib/share 폴더를" -ForegroundColor Cyan
-    Write-Host ">>>          $targetDir 폴더에 복사해 넣으시면 자동 인식됩니다." -ForegroundColor Cyan
+    Write-Host ">>> 안내: 꼬미시간서버.exe는 포터블 MariaDB 전용으로 구동됩니다." -ForegroundColor Cyan
+    Write-Host ">>>       외부 PC에서 mariadb-winx64.zip의 bin/lib/share 폴더를" -ForegroundColor Cyan
+    Write-Host ">>>       $targetDir 폴더에 복사해 넣으시면 자동 인식됩니다." -ForegroundColor Cyan
 }

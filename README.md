@@ -38,8 +38,8 @@
 
 ## 3. 핵심 아키텍처 및 도메인 기능
 
-### 3.1. 포터블 하이브리드 DB 및 이벤트 기반 아키텍처 (EDA)
-* **포터블 MariaDB(`mariadbd.exe` + AES-256 TDE):** `1_교무실_공용서버/runtime/mariadb/bin/`에 포터블 MariaDB가 배치되어 있으면 `127.0.0.1:13306` 로컬 루프백 전용으로 자동 기동·종료 제어합니다. 미배치 환경(단독 실행·macOS 개발 검증)에서는 내장 SQLite WAL + AES-256-GCM 암호화 백업 저장소로 자동 폴백합니다.
+### 3.1. 포터블 MariaDB(TDE) 단일 DB 및 이벤트 기반 아키텍처 (EDA)
+* **무설치 포터블 MariaDB(`mariadbd` / `mariadbd.exe` + AES-256 암호화):** macOS(`bin/darwin/runtime/mariadb/`) 및 Windows(`bin/windows/runtime/mariadb/`) 모두 포터블 MariaDB 바이너리가 번들되어 `127.0.0.1:13306` 로컬 루프백 전용으로 자동 초기화·기동·종료 제어됩니다. (행 단위 잠금 Row-level Locking 및 UTF8MB4 완벽 지원)
 * **중앙 도메인 이벤트 버스 (`server/internal/eventbus`):** `TimetableApproved`, `ExamUnsealed`, `ExternalExamConfirmed`, `SchoolEventPublished`, `BellScheduleChanged` 이벤트를 발행하여 모듈 간 느슨한 결합(Zero-Coupling)과 WebSocket 실시간 브로드캐스트를 구현합니다.
 
 ### 3.2. 주요 업무 모듈
@@ -76,7 +76,7 @@ kkomi-timetable/
 │   ├── cmd/server/main.go              # 꼬미시간서버 진입점 및 내장 웹 에셋 서빙
 │   └── internal/
 │       ├── api/                        # REST API & WebSocket 라우터/핸들러
-│       ├── database/                   # 포터블 MariaDB(TDE) 제어, 암호화 백업, SQLite 폴백, 시드
+│       ├── database/                   # 포터블 MariaDB(TDE) 단일 엔진 제어, 암호화 백업, 초기화, 시드
 │       ├── eventbus/                   # 중앙 도메인 이벤트 버스 (Pub/Sub)
 │       ├── exporter/                   # .hwpx, .xlsx, 고대비 인쇄 HTML 생성기
 │       ├── modules/                    # auth, timetable, internal_exam, external_exam, event_calendar
@@ -88,7 +88,8 @@ kkomi-timetable/
 ├── build/                              # Wails v3 macOS/Windows 아이콘 및 매니페스트
 └── scripts/
     ├── build_all.sh                    # macOS + Windows 동시 빌드 및 Windows 전용 릴리즈 패키징
-    └── setup_portable_mariadb.ps1      # Windows 공용 PC 포터블 MariaDB 자동 배치 도우미
+    ├── prepare_mariadb_runtime.sh      # macOS/Windows 포터블 MariaDB 바이너리 런타임 자동 구성
+    └── setup_portable_mariadb.ps1      # Windows 공용 PC 포터블 MariaDB 수동/재설치 도우미
 ```
 
 ---

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,12 @@ import (
 	"kkomi-timetable/server/internal/api"
 	"kkomi-timetable/server/internal/database"
 )
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	database.StopTestDaemons()
+	os.Exit(code)
+}
 
 func newTestServerApp(t *testing.T) (*api.ServerApp, http.Handler) {
 	t.Helper()

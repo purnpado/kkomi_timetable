@@ -15,8 +15,11 @@ echo "============================================================"
 echo "🐾 꼬미시간 v${VERSION} 로컬 검증 및 멀티 OS 빌드 (릴리즈: ${DO_RELEASE})"
 echo "============================================================"
 
-# 0. 선(先) 로컬 테스트 통과 강제 게이트 (테스트 미통과 시 빌드 중단)
-echo ">>> [0/5] 정적 분석(go vet) 및 전체 단위·E2E 테스트 검증..."
+# 0. 선(先) 포터블 MariaDB 런타임 준비 및 정적 분석·테스트 통과 강제 게이트
+echo ">>> [0/5] 포터블 MariaDB 런타임 확인, 정적 분석(go vet) 및 전체 단위·E2E 테스트 검증..."
+if [ ! -x "bin/darwin/runtime/mariadb/bin/mariadbd" ] || [ ! -f "bin/windows/runtime/mariadb/bin/mariadbd.exe" ]; then
+  ./scripts/prepare_mariadb_runtime.sh
+fi
 go vet ./...
 go test -v ./...
 
@@ -101,6 +104,11 @@ rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb" "$STAGE_DIR/1_교무실_공용서버/templates" "$STAGE_DIR/2_교사용_클라이언트"
 
 cp "bin/windows/꼬미시간서버.exe" "$STAGE_DIR/1_교무실_공용서버/꼬미시간서버.exe"
+if [ -d "bin/windows/runtime/mariadb/bin" ]; then
+  cp -R bin/windows/runtime/mariadb/bin "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb/"
+  [ -d "bin/windows/runtime/mariadb/lib" ] && cp -R bin/windows/runtime/mariadb/lib "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb/"
+  [ -d "bin/windows/runtime/mariadb/share" ] && cp -R bin/windows/runtime/mariadb/share "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb/"
+fi
 cp "scripts/setup_portable_mariadb.ps1" "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb/README_포터블_MariaDB_안내_및_자동설치.ps1"
 cp "bin/windows/꼬미시간.exe" "$STAGE_DIR/2_교사용_클라이언트/꼬미시간.exe"
 
@@ -112,7 +120,7 @@ cat << TXT > "$STAGE_DIR/사용설명서_빠른시작.txt"
 
 1. 교무실 공용 PC (메인 서버)
    - "1_교무실_공용서버" 폴더를 공용 PC 원하는 위치(예: D:\꼬미시간서버)에 통째로 복사하세요.
-   - (선택) 포터블 MariaDB 사용 시 runtime\mariadb\README_포터블_MariaDB_안내_및_자동설치.ps1을 실행하거나 MariaDB winx64 bin 폴더를 배치하세요. (미설치 시에도 내장 AES-256 보안 DB로 즉시 작동합니다.)
+   - 포터블 MariaDB(runtime\mariadb)가 기본 포함되어 별도 DB 설치 없이 꼬미시간서버.exe 실행 시 127.0.0.1:13306으로 자동 구동됩니다.
    - 꼬미시간서버.exe 를 실행하면 콘솔에 업무망 고정 IP 접속 주소(예: 192.168.x.x:18090)가 안내됩니다.
 
 2. 교사 개인 PC (클라이언트)
