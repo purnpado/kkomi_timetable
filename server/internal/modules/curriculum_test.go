@@ -352,4 +352,26 @@ func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
 		t.Fatalf("정·부감독 연간 시수 불균형: totalGap=%d (%d~%d), mainGap=%d (%d~%d)",
 			deputySum.MaxGap, deputySum.MinTotal, deputySum.MaxTotal, deputySum.MainGap, deputySum.MinMain, deputySum.MaxMain)
 	}
+
+	// 3. 고교선택과목·교과교실·별도고사실(독감·감염병) 카탈로그 수집 및 고사실별 과목·담임 배제 검증
+	cat := svc.BuildRoomCatalog()
+	if len(cat.SpecialRooms) == 0 || len(cat.ElectiveRooms) == 0 || len(cat.IsolatedRooms) == 0 {
+		t.Fatalf("고교선택과목/교과교실/별도고사실 카탈로그가 비어 있습니다: %+v", cat)
+	}
+	elecSlots, err := svc.GenerateAndSave(protocol.ExamConfig{
+		ID: "exam-elective-room", Title: "선택과목·별도고사실 시험", ExamDate: "2026-11-23", DeputyMode: false,
+	}, []internal_exam.ExamPeriodSpec{
+		{Period: 1, Grade: 2, Subject: "심화수학, 영어", ClassRooms: []string{"세미나실A(국어)", "2-1(영어)", "별도고사실(독감·감염병)"}},
+	})
+	if err != nil || len(elecSlots) < 3 {
+		t.Fatalf("선택과목·별도고사실 감독 배정 실패: len=%d, err=%v", len(elecSlots), err)
+	}
+	for _, sl := range elecSlots {
+		if sl.SlotRole == "MAIN" && strings.HasPrefix(sl.RoomName, "세미나실A(국어)") && (sl.TeacherID == "t01" || sl.TeacherID == "t06") {
+			t.Fatalf("국어 교과 담당(%s)이 세미나실A(국어) 선택과목 정감독에 배정되었습니다", sl.TeacherName)
+		}
+		if sl.SlotRole == "MAIN" && strings.HasPrefix(sl.RoomName, "2-1(영어)") && (sl.TeacherID == "t02" || sl.TeacherID == "t03" || sl.TeacherID == "t08") {
+			t.Fatalf("2-1 담임 또는 영어 담당(%s)이 2-1(영어) 정감독에 배정되었습니다", sl.TeacherName)
+		}
+	}
 }

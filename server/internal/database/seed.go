@@ -189,12 +189,12 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 			ExemptReasons: []string{"특수반전담"},
 		},
 		{
-			ID: "t16", Username: "t16", PasswordHash: pwHash, Name: "김보건", Position: "보건교사",
-			Subject: "보건", ShortSubject: "보건", DefaultRoom: "보건실", HomeroomClass: "", Phone: "010-2100-0016",
+			ID: "t16", Username: "t16", PasswordHash: pwHash, Name: "박별도", Position: "별도고사실 전담교사",
+			Subject: "별도고사실", ShortSubject: "별도", HomeroomClass: "", Phone: "010-2100-0016",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2023-03-01", ExternalExamCount: 0, InternalExamCount: 0,
-			InternalExamExempt: true, InternalExamExemptReason: "보건실(응급대기 상주)",
-			ExemptReasons: []string{"보건교사"},
+			InternalExamExempt: true, InternalExamExemptReason: "별도 고사실(독감·감염병 등 분리시험)",
+			ExemptReasons: []string{"별도고사실전담"},
 		},
 		{
 			ID: "p01", Username: "parent1", PasswordHash: pwHash, Name: "김학부모(명예)", Position: "학부모 명예감독",

@@ -18,6 +18,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
   const [slots, setSlots] = useState([]);
   const [specs, setSpecs] = useState([]);
   const [fairness, setFairness] = useState(null);
+  const [roomCatalog, setRoomCatalog] = useState(null);
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [subCandidates, setSubCandidates] = useState([]);
   const [newSubId, setNewSubId] = useState("");
@@ -31,6 +32,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
       setSlots(res.slots || []);
       setSpecs(res.specs || []);
       setFairness(res.fairness || null);
+      setRoomCatalog(res.roomCatalog || null);
     } catch (err) {
       onNotify("시험감독 조회 오류", err.message, true);
     }
@@ -180,20 +182,42 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
               </div>
 
               <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <b style={{ fontSize: 13 }}><Clock size={14} style={{ verticalAlign: "middle" }} /> 교시·과목별 시험시간 편성표 (과목별 35/40/45/50분 개별 설정 가능)</b>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() =>
-                      setSpecs((prev) => [
-                        ...prev,
-                        { period: prev.length + 1, grade: 1, subject: "과학", startTime: "11:45", endTime: "12:25", durationMinutes: 40, classRooms: ["1-1", "1-2"] },
-                      ])
-                    }
-                  >
-                    <Plus size={13} /> 시험 교시 추가
-                  </button>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                  <b style={{ fontSize: 13 }}><Clock size={14} style={{ verticalAlign: "middle" }} /> 교시·과목별 시험시간 및 고사실 편성 (선택과목·교과교실·별도고사실 지원)</b>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => {
+                        const electives = roomCatalog?.electiveRooms || [];
+                        const firstG = electives[0]?.grade || 2;
+                        const roomList = electives.length > 0
+                          ? electives.slice(0, 3).map((e) => e.label)
+                          : ["세미나실A(심화수학)", "수학전용1실(심화수학)"];
+                        const subjList = electives.length > 0
+                          ? Array.from(new Set(electives.slice(0, 3).map((e) => e.subject))).join(", ")
+                          : "심화수학";
+                        setSpecs((prev) => [
+                          ...prev,
+                          { period: prev.length + 1, grade: firstG, subject: subjList, startTime: "13:10", endTime: "14:00", durationMinutes: 50, classRooms: roomList },
+                        ]);
+                      }}
+                    >
+                      <Plus size={13} /> 고교선택과목·교과교실 교시 추가
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() =>
+                        setSpecs((prev) => [
+                          ...prev,
+                          { period: prev.length + 1, grade: 1, subject: "과학", startTime: "11:45", endTime: "12:25", durationMinutes: 40, classRooms: ["1-1", "1-2"] },
+                        ])
+                      }
+                    >
+                      <Plus size={13} /> 일반 교시 추가
+                    </button>
+                  </div>
                 </div>
                 <table className="table">
                   <thead>
@@ -214,6 +238,59 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
                             value={Array.isArray(sp.classRooms) ? sp.classRooms.join(",") : sp.classRooms}
                             onChange={(e) => updateSpec(idx, "classRooms", e.target.value.split(",").map((s) => s.trim()))}
                           />
+                          <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
+                            <select
+                              className="select"
+                              style={{ fontSize: 11, padding: "2px 6px", height: 24, maxWidth: 210 }}
+                              value=""
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (!v) return;
+                                const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
+                                if (v === "__FILL_GRADE__") {
+                                  const clsList = roomCatalog?.gradeClassRooms?.[Number(sp.grade)] || [];
+                                  updateSpec(idx, "classRooms", Array.from(new Set([...cur, ...clsList])));
+                                } else {
+                                  updateSpec(idx, "classRooms", Array.from(new Set([...cur, v])));
+                                }
+                              }}
+                            >
+                              <option value="">+ 고사실 빠른 추가 (선택·교과·별도)...</option>
+                              <option value="__FILL_GRADE__">{sp.grade}학년 전체 정규반 일괄 추가</option>
+                              {(roomCatalog?.electiveRooms || []).length > 0 && (
+                                <optgroup label="고교선택과목 · 이동수업 분반">
+                                  {(roomCatalog.electiveRooms || []).map((el) => (
+                                    <option key={el.label} value={el.label}>{el.label}</option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {(roomCatalog?.specialRooms || []).length > 0 && (
+                                <optgroup label="교과교실 · 특별실">
+                                  {(roomCatalog.specialRooms || []).map((rm) => (
+                                    <option key={rm} value={rm}>{rm}</option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="특수 · 분리 고사실">
+                                {(roomCatalog?.isolatedRooms || ["별도고사실(독감·감염병)", "특수학급고사실"]).map((ir) => (
+                                  <option key={ir} value={ir}>{ir}</option>
+                                ))}
+                              </optgroup>
+                            </select>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              style={{ fontSize: 11, padding: "2px 6px", height: 24 }}
+                              onClick={() => {
+                                const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
+                                const tag = "별도고사실(독감·감염병)";
+                                const next = cur.includes(tag) ? cur.filter((r) => r !== tag) : [...cur, tag];
+                                updateSpec(idx, "classRooms", next);
+                              }}
+                            >
+                              + 별도고사실
+                            </button>
+                          </div>
                         </td>
                         <td>
                           <button type="button" className="btn btn-sm btn-danger" onClick={() => setSpecs((prev) => prev.filter((_, i) => i !== idx))}>

@@ -52,16 +52,16 @@ func equalizeAnnualLoads(
 				return false
 			}
 			// 교과 질문 담당 복도감독일 때는 동일 과목 교사에게만 이관
-			if curT, ok := tByID[sl.TeacherID]; ok && strings.EqualFold(strings.TrimSpace(curT.Subject), strings.TrimSpace(sl.Subject)) {
-				return strings.EqualFold(strings.TrimSpace(t.Subject), strings.TrimSpace(sl.Subject))
+			if curT, ok := tByID[sl.TeacherID]; ok && roomOrSpecMatchesTeacherSubject("", sl.Subject, curT.Subject) {
+				return roomOrSpecMatchesTeacherSubject("", sl.Subject, t.Subject)
 			}
 			return true
 		}
-		roomClass := strings.TrimSpace(strings.TrimSuffix(sl.RoomName, " 고사장"))
+		roomClass := extractRoomBaseClass(sl.RoomName)
 		if roomClass != "" && strings.EqualFold(strings.TrimSpace(t.HomeroomClass), roomClass) {
 			return false
 		}
-		if strings.EqualFold(strings.TrimSpace(t.Subject), strings.TrimSpace(sl.Subject)) {
+		if roomOrSpecMatchesTeacherSubject(sl.RoomName, sl.Subject, t.Subject) {
 			return false
 		}
 		return true

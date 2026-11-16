@@ -38,13 +38,13 @@ func (l *roleLoad) add(role string, delta int) {
 	l.Total = l.Main + l.Sub + l.Corridor
 }
 
-// IsEffectiveExamExempt는 교사가 특수반·보건실 등 교내 시험감독 제외 대상인지 판정합니다.
+// IsEffectiveExamExempt는 교사가 특수반·별도 고사실(독감·감염병 등) 등 교내 시험감독 제외 대상인지 판정합니다.
 func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
 	if t.InternalExamExempt {
 		if strings.TrimSpace(t.InternalExamExemptReason) != "" {
 			return true, strings.TrimSpace(t.InternalExamExemptReason)
 		}
-		return true, "특수보직·기타 교내 감독 제외"
+		return true, "특수보직·별도 운영 교내 감독 제외"
 	}
 	joined := strings.Join([]string{t.Position, t.Subject, t.InternalExamExemptReason}, " ")
 	for _, kw := range []string{"특수반", "특수학급", "특수교육", "특수"} {
@@ -52,12 +52,51 @@ func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
 			return true, "특수반(개별고사장 전담)"
 		}
 	}
-	for _, kw := range []string{"보건실", "보건"} {
+	for _, kw := range []string{"별도 고사실", "별도고사실", "별독 고사실", "별독고사실", "독감", "감염병"} {
 		if strings.Contains(joined, kw) {
-			return true, "보건실(응급대기 상주)"
+			return true, "별도 고사실(독감·감염병 등 분리시험)"
 		}
 	}
 	return false, ""
+}
+
+func extractRoomBaseClass(roomLabel string) string {
+	s := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(roomLabel), " 고사장"))
+	if idx := strings.Index(s, "("); idx >= 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	return s
+}
+
+func roomOrSpecMatchesTeacherSubject(roomLabel, specSubject, teacherSubject string) bool {
+	ts := strings.TrimSpace(teacherSubject)
+	if ts == "" {
+		return false
+	}
+	tokens := splitSubjectTokens(specSubject)
+	if start := strings.Index(roomLabel, "("); start >= 0 {
+		if end := strings.LastIndex(roomLabel, ")"); end > start {
+			tokens = append(tokens, splitSubjectTokens(roomLabel[start+1:end])...)
+		}
+	}
+	for _, tok := range tokens {
+		if strings.EqualFold(tok, ts) || (len([]rune(ts)) >= 2 && strings.Contains(tok, ts)) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitSubjectTokens(raw string) []string {
+	f := func(r rune) bool { return r == ',' || r == '/' || r == ':' || r == ';' }
+	var out []string
+	for _, part := range strings.FieldsFunc(raw, f) {
+		p := strings.TrimSpace(part)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // EffectiveBaseCounts는 교사의 1년 기실시(이전 시험 완료) 역할별 감독 횟수를 반환합니다.
@@ -106,7 +145,7 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 		if cfg.SubjectTeacherPolicy == "" || cfg.SubjectTeacherPolicy == protocol.SubjectModeCorridorFirst {
 			var subjCands []protocol.Teacher
 			for _, t := range regularTeachers {
-				if strings.EqualFold(strings.TrimSpace(t.Subject), strings.TrimSpace(spec.Subject)) && !usedInPeriod[t.ID] {
+				if roomOrSpecMatchesTeacherSubject("", spec.Subject, t.Subject) && !usedInPeriod[t.ID] {
 					subjCands = append(subjCands, t)
 				}
 			}
@@ -193,21 +232,22 @@ func pickBestTeacherForRole(
 	teachers []protocol.Teacher,
 	used map[string]bool,
 	load map[string]*roleLoad,
-	forbiddenHomeroom string,
+	roomLabel string,
 	forbiddenSubject string,
 	allowSubject bool,
 	targetRole string,
 	balanceMode string,
 ) *protocol.Teacher {
+	baseClass := extractRoomBaseClass(roomLabel)
 	var candidates []protocol.Teacher
 	for _, t := range teachers {
 		if used[t.ID] {
 			continue
 		}
-		if forbiddenHomeroom != "" && strings.EqualFold(strings.TrimSpace(t.HomeroomClass), strings.TrimSpace(forbiddenHomeroom)) {
+		if baseClass != "" && strings.EqualFold(strings.TrimSpace(t.HomeroomClass), baseClass) {
 			continue
 		}
-		if !allowSubject && strings.EqualFold(strings.TrimSpace(t.Subject), strings.TrimSpace(forbiddenSubject)) {
+		if !allowSubject && roomOrSpecMatchesTeacherSubject(roomLabel, forbiddenSubject, t.Subject) {
 			continue
 		}
 		candidates = append(candidates, t)
