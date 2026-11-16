@@ -175,7 +175,7 @@ export default function App() {
           <div className="brand-logo">🐾</div>
           <div>
             <div style={{ fontWeight: 800, fontSize: 15 }}>꼬미시간</div>
-            <div style={{ fontSize: 11, color: "#94a3b8" }}>v{summary?.serverVersion || "1.0.0"} · 교무 통합</div>
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>v{summary?.serverVersion || "0.1.0"} · 교무 통합</div>
           </div>
         </div>
 

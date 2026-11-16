@@ -66,7 +66,7 @@ func BuildHWPXBytes(data HWPXDocumentData) ([]byte, error) {
 		return writeErr
 	}
 
-	if err := writeZipFile("version.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" tagetApplication="WORDPROCESSOR" major="5" minor="1" micro="0" buildNumber="1" os="1" xmlVersion="1.5" application="KkomiTimetable" appVersion="1.0.0"/>`); err != nil {
+	if err := writeZipFile("version.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" tagetApplication="WORDPROCESSOR" major="5" minor="1" micro="0" buildNumber="1" os="1" xmlVersion="1.5" application="KkomiTimetable" appVersion="0.1.0"/>`); err != nil {
 		return nil, err
 	}
 	if err := writeZipFile("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container"><ocf:rootfiles><ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/></ocf:rootfiles></ocf:container>`); err != nil {

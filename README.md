@@ -13,7 +13,9 @@
 * **Windows 릴리즈 전용 (`dist/release/`):**
   * **메인 서버:** `꼬미시간서버.exe` (교무실 공용 PC 1대에 배치, 실행 시 백그라운드 포터블 MariaDB 자동 구동·종료 제어)
   * **교사 클라이언트:** `꼬미시간.exe` (교사 개인 PC에 배치, Wails v3 트레이 상주 및 260px 사이드 도킹 위젯 지원)
-  * **통합 포터블 배포판:** `꼬미시간_v1.0.0_windows_portable.zip` (영문 호환본 `kkomi-timetable_v1.0.0.zip`)
+  * **통합 포터블 배포판:** `꼬미시간_v0.1.0_windows_portable.zip` (영문 호환본 `kkomi-timetable_v0.1.0.zip`)
+
+> **운영 원칙 (릴리즈 보류):** 현재 목표 버전은 **`v0.1.0`**이며, 사용자가 명시적으로 **"릴리즈 해달라"고 요청하기 전에는 절대 정식 릴리즈(Gitea Releases 업로드 및 릴리즈 태그 발행)를 수행하지 않고 빌드(`bin/`)까지만 실행**합니다.
 * **macOS 개발/검증 빌드 (`bin/darwin/`):**
   * `꼬미시간서버`, `꼬미시간서버.app`, `꼬미시간`, `꼬미시간.app` (Apple `codesign` 호환을 위해 `.app/Contents/MacOS/` 내부 실행 파일은 `kkomi-timetable-server`, `kkomi-timetable` 영문 식별자 사용)
 
@@ -95,14 +97,21 @@ kkomi-timetable/
 go test -v ./...
 ```
 
-### 5.2. macOS · Windows 동시 빌드 및 Windows 전용 릴리즈 생성
+### 5.2. macOS · Windows 동시 빌드 및 테스트 실행
 ```bash
+# 릴리즈 없이 macOS / Windows 테스트 빌드만 수행 (기본값)
 ./scripts/build_all.sh
+
+# 사용자가 릴리즈를 명시적으로 요청했을 때만 Windows 전용 릴리즈 패키지 생성
+./scripts/build_all.sh --release
 ```
-* 산출물 확인:
+* **테스트 빌드 산출물 (`bin/`):**
   * macOS: `bin/darwin/꼬미시간서버.app`, `bin/darwin/꼬미시간.app`
   * Windows: `bin/windows/꼬미시간서버.exe`, `bin/windows/꼬미시간.exe`
-  * Windows 릴리즈: `dist/release/꼬미시간서버.exe`, `dist/release/꼬미시간.exe`, `dist/release/꼬미시간_v1.0.0_windows_portable.zip`
+* **로컬/현장 테스트 시 파일 이동 안내:**
+  * 본 프로그램은 `os.Executable()` 기준 절대 경로를 사용하는 **완전 포터블** 구조이므로, `bin/` 폴더 안의 실행 파일(`꼬미시간서버.exe`, `꼬미시간.exe` 또는 `꼬미시간서버.app`, `꼬미시간.app`)을 **다른 테스트 폴더(예: `바탕화면\테스트서버`, `바탕화면\테스트클라이언트`)로 그대로 복사하여 실행**하면 소스 폴더를 오염시키지 않고 깔끔하게 테스트할 수 있습니다. (단, macOS에서 `꼬미시간서버.app` / `꼬미시간.app`은 번들이므로 내부 파일만 빼지 말고 `.app` 폴더 전체를 복사해야 합니다.)
+* **Windows 정식 릴리즈 산출물 (`dist/release/`, `--release` 실행 시 생성):**
+  * `dist/release/꼬미시간서버.exe`, `dist/release/꼬미시간.exe`, `dist/release/꼬미시간_v0.1.0_windows_portable.zip`
 
 ### 5.3. 빠른 체험 계정 (초기 비밀번호: `1234`)
 | 아이디 | 이름 | 담당 권한 (RBAC) |

@@ -3,12 +3,16 @@ set -euo pipefail
 
 export PATH="/Users/kkomi/homebrew/bin:/Users/kkomi/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-0.1.0}"
+DO_RELEASE="${RELEASE:-0}"
+if [ "${1:-}" = "--release" ]; then
+  DO_RELEASE="1"
+fi
 
 cd "$ROOT_DIR"
 
 echo "============================================================"
-echo "🐾 꼬미시간 v${VERSION} 멀티 OS 빌드 및 Windows 릴리즈 생성"
+echo "🐾 꼬미시간 v${VERSION} 멀티 OS 빌드 (Windows 릴리즈 생성: ${DO_RELEASE})"
 echo "============================================================"
 
 # 1. 프론트엔드 프로덕션 빌드 및 서버 내장 웹 자산 동기화
@@ -74,8 +78,18 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production -trimpath -bui
 
 rm -f client/*.syso server/cmd/server/*.syso
 
-# 5. Windows 전용 릴리즈 패키지 생성 (dist/release/)
+if [ "$DO_RELEASE" != "1" ]; then
+  echo "============================================================"
+  echo "✅ macOS & Windows 테스트 빌드 완료! (릴리즈 패키징 생략됨)"
+  echo "   릴리즈 생성 시: RELEASE=1 ./scripts/build_all.sh 또는 ./scripts/build_all.sh --release"
+  ls -lh bin/darwin/ bin/windows/
+  echo "============================================================"
+  exit 0
+fi
+
+# 5. Windows 전용 릴리즈 패키지 생성 (dist/release/) — 사용자 승인 후 실행
 echo ">>> [5/5] Windows 전용 릴리즈 패키징 (dist/release/)..."
+mkdir -p dist/release
 rm -rf dist/release/*
 STAGE_DIR="/tmp/kkomi_release_stage_$$"
 rm -rf "$STAGE_DIR"
@@ -88,8 +102,8 @@ cp "bin/windows/꼬미시간.exe" "$STAGE_DIR/2_교사용_클라이언트/꼬미
 # 기본 .hwpx 템플릿 생성 후 릴리즈에 포함
 KKOMI_BASE_DIR="$STAGE_DIR/1_교무실_공용서버" "bin/darwin/꼬미시간서버" --init-template
 
-cat << 'TXT' > "$STAGE_DIR/사용설명서_빠른시작.txt"
-[꼬미시간 v1.0.0 Windows 포터블 빠른 시작 안내]
+cat << TXT > "$STAGE_DIR/사용설명서_빠른시작.txt"
+[꼬미시간 v${VERSION} Windows 포터블 빠른 시작 안내]
 
 1. 교무실 공용 PC (메인 서버)
    - "1_교무실_공용서버" 폴더를 공용 PC 원하는 위치(예: D:\꼬미시간서버)에 통째로 복사하세요.

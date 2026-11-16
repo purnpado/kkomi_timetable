@@ -436,7 +436,7 @@ func (a *ServerApp) handleClientPatch(w http.ResponseWriter, r *http.Request) {
 		defer file.Close()
 		ver := r.FormValue("version")
 		if ver == "" {
-			ver = "1.0.1"
+			ver = "0.1.1"
 		}
 		saved, err := ws.SaveClientPatch(ver, hdr.Filename, file, a.Bus)
 		if err != nil {

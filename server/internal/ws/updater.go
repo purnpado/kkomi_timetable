@@ -19,7 +19,7 @@ import (
 )
 
 // ServerVersion은 현재 서버 바이너리의 릴리즈 버전입니다.
-const ServerVersion = "1.0.0"
+const ServerVersion = "0.1.0"
 
 // CleanupOldBinaries는 자가 업데이트 직후 남은 .old 백업 바이너리를 정리합니다.
 func CleanupOldBinaries() {
