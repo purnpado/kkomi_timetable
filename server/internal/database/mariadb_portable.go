@@ -291,7 +291,7 @@ func (m *PortableMariaDBManager) ensureTDEKeyFile() error {
 	if _, err := rand.Read(rawKey); err != nil {
 		return fmt.Errorf("TDE 키 생성 실패: %w", err)
 	}
-	return os.WriteFile(m.tdeKeyFile, []byte(fmt.Sprintf("1;%s\n", hex.EncodeToString(rawKey))), 0o600)
+	return os.WriteFile(m.tdeKeyFile, fmt.Appendf(nil, "1;%s\n", hex.EncodeToString(rawKey)), 0o600)
 }
 
 func (m *PortableMariaDBManager) ensureDataInitialized() error {
