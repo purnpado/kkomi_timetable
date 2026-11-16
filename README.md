@@ -45,7 +45,8 @@
 
 ### 3.2. 주요 업무 모듈
 1. **업무분장 기반 6종 RBAC 권한 분리 (`server/internal/modules/auth`):**
-   * `시스템 총괄(MASTER)`, `시간표 담당(TIMETABLE_ADMIN)`, `교내감독 담당(INTERNAL_EXAM_ADMIN)`, `외부감독 담당(EXTERNAL_EXAM_ADMIN)`, `행사 담당(EVENT_ADMIN)`, `일반 교사(TEACHER)`. 1인 다중 겸임 및 학년도 업무분장 인계(승계) 지원.
+   * `최고관리자(MASTER)`, `시간표 담당(TIMETABLE_ADMIN)`, `교내감독 담당(INTERNAL_EXAM_ADMIN)`, `외부감독 담당(EXTERNAL_EXAM_ADMIN)`, `행사 담당(EVENT_ADMIN)`, `일반 교사(TEACHER)`. 1인 다중 겸임 및 학년도 업무분장 인계(승계) 지원.
+   * 서버 최초 기동·초기화용 기본 `admin`(`최고관리자`) 계정은 수업 및 내·외부 시험감독 자동 배정에서 제외되며 삭제·권한해제로부터 보호됩니다. 실제 담당교사에게도 `최고관리자` 권한을 부여·겸임·인계할 수 있습니다.
 2. **시수표·교과교실제 기반 정규·일일 시간표 & 대기열(STAGING) → 최종 선택(Commit) (`timetable`):**
    * **학교 기본사항·요일별 기준시수·교사별 시수표 매트릭스(`curriculum.go`):** 1~3학년 학급수(가상반 포함), 요일별 기준 시수, 교사별·학급별 주당 배당 시수 일치성 검사(`일치/부족/초과`), 동시수업·연속수업·교과교실(특별실) 동시간대 중복 차단 기반 자동 시간표 편성.
    * **엑셀(`.xlsx`) 일괄 입출력(`xlsx_io.go`):** 교사 명렬표 및 컴시간 표준 형식 교사별 시수표 엑셀 다운로드·일괄 업로드 지원.
@@ -75,18 +76,19 @@
 
 ```text
 kkomi-timetable/
+├── ROADMAP.md                          # 구현 완료 · 진행 중 · 향후 구현 로드맵
 ├── pkg/
 │   ├── pathutil/paths.go               # os.Executable() 절대 경로 및 UTF-8 NFC 안전 결합
 │   └── protocol/                       # 공용 DTO(models.go) 및 이벤트(events.go)
 ├── server/
-│   ├── cmd/server/main.go              # 꼬미시간서버 진입점 및 내장 웹 에셋 서빙
+│   ├── cmd/server/main.go              # 꼬미시간서버 진입점, macOS 터미널/Windows CMD 안내 및 웹 서빙
 │   └── internal/
 │       ├── api/                        # REST API & WebSocket 라우터/핸들러
-│       ├── database/                   # 포터블 MariaDB(TDE) 단일 엔진 제어, 암호화 백업, 초기화, 시드
+│       ├── database/                   # 포터블 MariaDB(TDE) 단일 엔진 제어, 자동 복원, 백업, 초기화, 시드
 │       ├── eventbus/                   # 중앙 도메인 이벤트 버스 (Pub/Sub)
 │       ├── exporter/                   # .hwpx, .xlsx, 고대비 인쇄 HTML 생성기
 │       ├── modules/                    # auth, timetable, internal_exam, external_exam, event_calendar
-│       └── ws/                         # WebSocket 허브 및 무중단 자가 업데이트
+│       └── ws/                         # WebSocket 허브, GitHub Releases 업데이트 및 OS 헤더 검증
 ├── client/
 │   ├── main.go                         # 꼬미시간 Wails v3 앱, 트레이, 멀티 윈도우 제어
 │   ├── internal/                       # bridge(데스크톱 제어), netclient(WS 자동재연결/자가패치)
@@ -126,7 +128,8 @@ go test -v ./...
 ### 5.3. 빠른 체험 계정 (초기 비밀번호: `1234`, 최초 로그인 시 즉시 변경 가능)
 | 아이디 | 이름 | 담당 권한 (RBAC) |
 | :--- | :--- | :--- |
-| `admin` | 김교무 | 시스템 총괄 (마스터) + 전체 권한 |
+| `admin` | 최고관리자 | 최고관리자 (시스템 전용 · 수업/시험감독 배정 제외) + 전체 권한 |
+| `kim` | 김교무 | 교무부장 · 최고관리자 겸임 + 시간표 담당 (`국어`) |
 | `timetable` | 이수업 | 시간표 담당교사 (수업계) |
 | `internal` | 박평가 | 교내 시험감독 담당교사 (평가계) |
 | `external` | 최외부 | 외부 시험감독 담당교사 (대외계) |
@@ -135,10 +138,13 @@ go test -v ./...
 
 ---
 
-## 6. 현재 개발 상태
-* [x] **1단계:** 프로젝트 초기화, 절대경로 유틸(`os.Executable()`), 공용 프로토콜 정의
-* [x] **2단계:** 포터블 MariaDB 제어기 + AES-256 백업 + 이벤트 버스 + WebSocket 허브 + 자가 업데이트 구현
-* [x] **3단계:** 5대 도메인 모듈(시간표, 교내감독 복도우선/봉인, 외부감독 다단계 차출, 행사 연동) 및 `.hwpx`/`.xlsx` 출력 구현
-* [x] **4단계:** Wails v3 트레이/260px 사이드 위젯 + React/Radix/HTML5 Canvas 7대 화면 완성
-* [x] **5단계:** 500줄 제한 전수 검사 및 도메인 통합 테스트 통과
-* [x] **6단계:** macOS/Windows 동시 빌드 및 Windows 전용 릴리즈 패키지 생성
+## 6. 현재 개발 상태 · 로드맵 ([ROADMAP.md](ROADMAP.md))
+
+* **✅ 구현 완료 (`v0.1.01`):**
+  * [x] 1~6단계 코어 인프라, 포터블 MariaDB(TDE), 6종 RBAC(`최고관리자` 기본 계정 분리·권한 위임), 정규·다주간 시간표 & 1~4단계 연쇄교환, 교내·외부 시험감독, 행사 4종 연동, `.hwpx`/`.xlsx`/고대비 출력 완성
+  * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.1.01` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화, 18개 전체 단위·E2E 테스트 통과
+* **🔄 진행 중 (`v0.1.x`):**
+  * [ ] Windows 교무실 서버/클라이언트 및 macOS 실환경 교차 검증, 실데이터 엑셀 양식 예외 보강, GitHub 자동 패치 실운영 점검
+* **📋 앞으로 구현해야 할 항목 (상세 목록: [ROADMAP.md](ROADMAP.md)):**
+  * [ ] `v0.2.x` 단기: 시간표 다중 시나리오(A/B/C안)·Undo/Redo, 교사별 회피교시·공강 제약기, 다중일(3~5일) 지필고사 통합 감독 및 연강 감독 방지, 월별/학기별 정산 출력
+  * [ ] `v0.3.x` ~ `v1.0` 중·장기: 고교학점제 학생 이동수업 시간표, 나이스 양방향 검증 확대, 교무실 TV 전광판 모드, macOS GitHub 릴리즈 자동 업데이트 및 신학년도 이관 마법사
