@@ -24,6 +24,7 @@ func (a *ServerApp) handleInternalExamSlots(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config": cfg,
 		"slots":  slots,
+		"specs":  a.InternalExam.ListSpecs(),
 	})
 }
 
@@ -278,15 +279,6 @@ func (a *ServerApp) handleCommitCalendarEvent(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, committed)
-}
-
-func (a *ServerApp) handleBellSchedule(w http.ResponseWriter, r *http.Request) {
-	bells, err := a.Calendar.ListBellSchedule()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, bells)
 }
 
 func (a *ServerApp) handleExportHWPX(w http.ResponseWriter, r *http.Request) {

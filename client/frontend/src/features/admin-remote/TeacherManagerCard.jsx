@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { Trash2, UserPlus } from "lucide-react";
-import { apiFetch } from "../../events/eventStore";
+import { KeyRound, Trash2, UserPlus } from "lucide-react";
+import { apiFetch, hasRole } from "../../events/eventStore";
 
 // TeacherManagerCard는 마스터 또는 시간표 담당교사가 서버에 직접 접속하지 않고도
 // 클라이언트에서 신규 교사를 등록하거나 담임/과목/전입일/순회요일을 수정하는 관리 카드입니다.
@@ -59,6 +59,18 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
     }
   };
 
+  const handleResetPassword = async (tid, tname) => {
+    try {
+      await apiFetch(serverUrl, "/api/auth/reset-password", user.id, {
+        method: "POST",
+        body: JSON.stringify({ teacherId: tid }),
+      });
+      onNotify("비밀번호 초기화 완료", `${tname} 선생님의 비밀번호가 '1234'로 초기화되었습니다 (다음 로그인 시 변경 안내).`);
+    } catch (err) {
+      onNotify("비밀번호 초기화 실패", err.message, true);
+    }
+  };
+
   return (
     <div className="card">
       <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
@@ -88,8 +100,13 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
                 <td>{t.homeroomClass || "-"}</td>
                 <td>{t.transferDate || "-"}</td>
                 <td>{t.itinerantDays?.length ? t.itinerantDays.join(",") : "전일"}</td>
-                <td>
-                  {t.id !== user.id && (
+                <td style={{ display: "flex", gap: 6 }}>
+                  {hasRole(user, "MASTER") && (
+                    <button className="btn btn-sm" onClick={() => handleResetPassword(t.id, t.name)} title="초기 비밀번호(1234)로 되돌리기">
+                      <KeyRound size={12} /> 비번초기화
+                    </button>
+                  )}
+                  {t.id !== user.id && hasRole(user, "MASTER") && (
                     <button className="btn btn-sm btn-danger" onClick={() => handleDeleteTeacher(t.id, t.name)}>
                       <Trash2 size={12} /> 삭제
                     </button>

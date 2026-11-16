@@ -8,12 +8,15 @@ import (
 	"kkomi-timetable/pkg/protocol"
 )
 
-// ExamPeriodSpec은 지필고사 교시별 시험 과목 및 고사실 정의입니다.
+// ExamPeriodSpec은 지필고사 교시별 시험 과목, 과목별 시험시간 및 고사실 정의입니다.
 type ExamPeriodSpec struct {
-	Period     int      `json:"period"`
-	Grade      int      `json:"grade"`
-	Subject    string   `json:"subject"`
-	ClassRooms []string `json:"classRooms"` // 예: ["1-1", "1-2"]
+	Period          int      `json:"period"`
+	Grade           int      `json:"grade"`
+	Subject         string   `json:"subject"`
+	StartTime       string   `json:"startTime"`       // 예: "08:50"
+	EndTime         string   `json:"endTime"`         // 예: "09:35"
+	DurationMinutes int      `json:"durationMinutes"` // 예: 45
+	ClassRooms      []string `json:"classRooms"`      // 예: ["1-1", "1-2"]
 }
 
 // AssignSlots는 핵심 배제 규칙을 적용해 지필고사 감독 배정표(정/부감독, 복도감독, 학부모 명예감독)를 생성합니다.
@@ -50,17 +53,20 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 					usedInPeriod[t.ID] = true
 					loadCount[t.ID]++
 					slots = append(slots, protocol.ExamSlot{
-						ID:          fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, t.ID),
-						ExamID:      cfg.ID,
-						ExamDate:    cfg.ExamDate,
-						Period:      spec.Period,
-						Grade:       spec.Grade,
-						Subject:     spec.Subject,
-						SlotRole:    "CORRIDOR",
-						RoomName:    fmt.Sprintf("%d학년 층 복도감독 (%s 과목 질의응답)", spec.Grade, spec.Subject),
-						TeacherID:   t.ID,
-						TeacherName: t.Name,
-						Note:        "담당과목 시험 교시 복도감독 우선배치",
+						ID:              fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, t.ID),
+						ExamID:          cfg.ID,
+						ExamDate:        cfg.ExamDate,
+						Period:          spec.Period,
+						StartTime:       spec.StartTime,
+						EndTime:         spec.EndTime,
+						DurationMinutes: spec.DurationMinutes,
+						Grade:           spec.Grade,
+						Subject:         spec.Subject,
+						SlotRole:        "CORRIDOR",
+						RoomName:        fmt.Sprintf("%d학년 층 복도감독 (%s 과목 질의응답)", spec.Grade, spec.Subject),
+						TeacherID:       t.ID,
+						TeacherName:     t.Name,
+						Note:            "담당과목 시험 교시 복도감독 우선배치",
 					})
 					corridorAssigned = true
 					break // 학년별 핵심 복도감독 1인 우선 배치 후 나머지 과목교사도 고사실 배제 유지
@@ -74,17 +80,20 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 				usedInPeriod[cand.ID] = true
 				loadCount[cand.ID]++
 				slots = append(slots, protocol.ExamSlot{
-					ID:          fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, cand.ID),
-					ExamID:      cfg.ID,
-					ExamDate:    cfg.ExamDate,
-					Period:      spec.Period,
-					Grade:       spec.Grade,
-					Subject:     spec.Subject,
-					SlotRole:    "CORRIDOR",
-					RoomName:    fmt.Sprintf("%d학년 층 복도감독", spec.Grade),
-					TeacherID:   cand.ID,
-					TeacherName: cand.Name,
-					Note:        "복도감독 배치",
+					ID:              fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, cand.ID),
+					ExamID:          cfg.ID,
+					ExamDate:        cfg.ExamDate,
+					Period:          spec.Period,
+					StartTime:       spec.StartTime,
+					EndTime:         spec.EndTime,
+					DurationMinutes: spec.DurationMinutes,
+					Grade:           spec.Grade,
+					Subject:         spec.Subject,
+					SlotRole:        "CORRIDOR",
+					RoomName:        fmt.Sprintf("%d학년 층 복도감독", spec.Grade),
+					TeacherID:       cand.ID,
+					TeacherName:     cand.Name,
+					Note:            "복도감독 배치",
 				})
 			}
 		}
@@ -96,16 +105,19 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 				usedInPeriod[mainT.ID] = true
 				loadCount[mainT.ID]++
 				slots = append(slots, protocol.ExamSlot{
-					ID:          fmt.Sprintf("slot-%s-p%d-%s-main", cfg.ID, spec.Period, room),
-					ExamID:      cfg.ID,
-					ExamDate:    cfg.ExamDate,
-					Period:      spec.Period,
-					Grade:       spec.Grade,
-					Subject:     spec.Subject,
-					SlotRole:    "MAIN",
-					RoomName:    room + " 고사장",
-					TeacherID:   mainT.ID,
-					TeacherName: mainT.Name,
+					ID:              fmt.Sprintf("slot-%s-p%d-%s-main", cfg.ID, spec.Period, room),
+					ExamID:          cfg.ID,
+					ExamDate:        cfg.ExamDate,
+					Period:          spec.Period,
+					StartTime:       spec.StartTime,
+					EndTime:         spec.EndTime,
+					DurationMinutes: spec.DurationMinutes,
+					Grade:           spec.Grade,
+					Subject:         spec.Subject,
+					SlotRole:        "MAIN",
+					RoomName:        room + " 고사장",
+					TeacherID:       mainT.ID,
+					TeacherName:     mainT.Name,
 				})
 			}
 
@@ -114,17 +126,20 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 				if parent := pickHonoraryParent(honoraryParents, usedInPeriod, room, spec.Grade); parent != nil {
 					usedInPeriod[parent.ID] = true
 					slots = append(slots, protocol.ExamSlot{
-						ID:          fmt.Sprintf("slot-%s-p%d-%s-hon", cfg.ID, spec.Period, room),
-						ExamID:      cfg.ID,
-						ExamDate:    cfg.ExamDate,
-						Period:      spec.Period,
-						Grade:       spec.Grade,
-						Subject:     spec.Subject,
-						SlotRole:    "HONORARY",
-						RoomName:    room + " 고사장",
-						TeacherID:   parent.ID,
-						TeacherName: parent.Name,
-						Note:        "학부모 명예감독 (자녀 학년/반 자동 배제)",
+						ID:              fmt.Sprintf("slot-%s-p%d-%s-hon", cfg.ID, spec.Period, room),
+						ExamID:          cfg.ID,
+						ExamDate:        cfg.ExamDate,
+						Period:          spec.Period,
+						StartTime:       spec.StartTime,
+						EndTime:         spec.EndTime,
+						DurationMinutes: spec.DurationMinutes,
+						Grade:           spec.Grade,
+						Subject:         spec.Subject,
+						SlotRole:        "HONORARY",
+						RoomName:        room + " 고사장",
+						TeacherID:       parent.ID,
+						TeacherName:     parent.Name,
+						Note:            "학부모 명예감독 (자녀 학년/반 자동 배제)",
 					})
 					continue
 				}
@@ -134,16 +149,19 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 					usedInPeriod[subT.ID] = true
 					loadCount[subT.ID]++
 					slots = append(slots, protocol.ExamSlot{
-						ID:          fmt.Sprintf("slot-%s-p%d-%s-sub", cfg.ID, spec.Period, room),
-						ExamID:      cfg.ID,
-						ExamDate:    cfg.ExamDate,
-						Period:      spec.Period,
-						Grade:       spec.Grade,
-						Subject:     spec.Subject,
-						SlotRole:    "SUB",
-						RoomName:    room + " 고사장",
-						TeacherID:   subT.ID,
-						TeacherName: subT.Name,
+						ID:              fmt.Sprintf("slot-%s-p%d-%s-sub", cfg.ID, spec.Period, room),
+						ExamID:          cfg.ID,
+						ExamDate:        cfg.ExamDate,
+						Period:          spec.Period,
+						StartTime:       spec.StartTime,
+						EndTime:         spec.EndTime,
+						DurationMinutes: spec.DurationMinutes,
+						Grade:           spec.Grade,
+						Subject:         spec.Subject,
+						SlotRole:        "SUB",
+						RoomName:        room + " 고사장",
+						TeacherID:       subT.ID,
+						TeacherName:     subT.Name,
 					})
 				}
 			}

@@ -81,6 +81,9 @@ func (s *Service) SaveTeacher(t protocol.Teacher, rawPassword string) (protocol.
 		if pw == "" {
 			pw = "1234"
 		}
+		if pw == "1234" {
+			t.MustChangePassword = true
+		}
 		hashed, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 		if err != nil {
 			return t, err
@@ -93,6 +96,47 @@ func (s *Service) SaveTeacher(t protocol.Teacher, rawPassword string) (protocol.
 	}
 	t.PasswordHash = ""
 	return t, nil
+}
+
+// ChangePassword는 교사 본인의 현재 비밀번호를 검증한 뒤 새 비밀번호로 변경하고 최초 변경 플래그를 해제합니다.
+func (s *Service) ChangePassword(teacherID, currentPassword, newPassword string) (*protocol.Teacher, error) {
+	newPW := strings.TrimSpace(newPassword)
+	if len(newPW) < 4 {
+		return nil, errors.New("새 비밀번호는 최소 4자 이상이어야 합니다")
+	}
+	t, err := s.GetTeacher(teacherID)
+	if err != nil {
+		return nil, err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(t.PasswordHash), []byte(currentPassword)); err != nil {
+		return nil, errors.New("현재 비밀번호가 일치하지 않습니다")
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPW), bcrypt.MinCost)
+	if err != nil {
+		return nil, err
+	}
+	t.PasswordHash = string(hashed)
+	t.MustChangePassword = false
+	if err := s.store.SaveRecord("teachers", t.ID, *t); err != nil {
+		return nil, err
+	}
+	t.PasswordHash = ""
+	return t, nil
+}
+
+// ResetTeacherPassword는 마스터가 특정 교사의 비밀번호를 초기값("1234")으로 되돌리고 다음 로그인 시 변경을 강제합니다.
+func (s *Service) ResetTeacherPassword(teacherID string) error {
+	t, err := s.GetTeacher(teacherID)
+	if err != nil {
+		return err
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte("1234"), bcrypt.MinCost)
+	if err != nil {
+		return err
+	}
+	t.PasswordHash = string(hashed)
+	t.MustChangePassword = true
+	return s.store.SaveRecord("teachers", t.ID, *t)
 }
 
 // DeleteTeacher는 교사 레코드를 삭제합니다. (시스템 총괄 전용)

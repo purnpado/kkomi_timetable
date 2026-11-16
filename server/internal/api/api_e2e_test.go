@@ -79,10 +79,24 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 		t.Fatalf("잘못된 비밀번호가 차단되지 않음 (status=%d)", code)
 	}
 	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/auth/login", "", map[string]string{
-		"username": "master", "password": "1234",
+		"username": "admin", "password": "1234",
 	})
-	if code != http.StatusOK || strings.Contains(string(raw), "passwordHash") {
-		t.Fatalf("로그인 실패 또는 해시 노출 (status=%d)", code)
+	if code != http.StatusOK || strings.Contains(string(raw), "passwordHash") || !strings.Contains(string(raw), `"mustChangePassword":true`) {
+		t.Fatalf("admin 로그인 실패 또는 해시/초기변경 플래그 오류 (status=%d, body=%s)", code, string(raw))
+	}
+
+	// 비밀번호 변경 및 새 비밀번호 로그인 확인 (t06)
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/auth/change-password", "t06", map[string]string{
+		"currentPassword": "1234", "newPassword": "newpass99",
+	})
+	if code != http.StatusOK || !strings.Contains(string(raw), `"mustChangePassword":false`) {
+		t.Fatalf("비밀번호 변경 실패 (status=%d, body=%s)", code, string(raw))
+	}
+	code, _ = doRecorderReq(t, h, http.MethodPost, "/api/auth/login", "", map[string]string{
+		"username": "t06", "password": "newpass99",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("변경된 비밀번호로 로그인 실패 (status=%d)", code)
 	}
 
 	// 3. 교내 지필고사 봉인 마스킹 -> 권한 없는 교사 차단 -> 관리자 개봉 및 이벤트 발행
@@ -173,6 +187,36 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 	})
 	if code != http.StatusOK {
 		t.Fatalf("학년·학급별 기초 시간표 자동 편성 실패: status=%d", code)
+	}
+
+	// 8. 정규 일과시간 설정, 과목별 상이 시험시간 배정 및 시스템 전체 초기화 검증
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/calendar/bells", "t02", []protocol.BellPeriod{
+		{Period: 1, Label: "1교시", StartTime: "08:50", EndTime: "09:35"},
+		{Period: 2, Label: "2교시", StartTime: "09:45", EndTime: "10:30"},
+	})
+	if code != http.StatusOK || !strings.Contains(string(raw), "08:50") {
+		t.Fatalf("정규 일과시간 설정 실패: status=%d, body=%s", code, string(raw))
+	}
+
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/internal-exam/generate", "t03", map[string]interface{}{
+		"config": map[string]interface{}{"id": "exam-custom-time", "title": "맞춤 시험", "examDate": "2026-11-25", "isSealed": false, "instantRevealMode": true, "subjectTeacherPolicy": "CORRIDOR_FIRST"},
+		"specs":  []map[string]interface{}{{"period": 1, "grade": 1, "subject": "국어", "startTime": "09:00", "endTime": "09:40", "durationMinutes": 40, "classRooms": []string{"1-1", "1-2"}}},
+	})
+	if code != http.StatusOK || !strings.Contains(string(raw), `"durationMinutes":40`) {
+		t.Fatalf("과목별 시험시간 배정 실패: status=%d, body=%s", code, string(raw))
+	}
+
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/system/reset", "t01", map[string]string{"mode": "FULL_FACTORY_RESET"})
+	if code != http.StatusOK {
+		t.Fatalf("전체 완전 초기화 실패: status=%d, body=%s", code, string(raw))
+	}
+	code, _ = doRecorderReq(t, h, http.MethodPost, "/api/auth/login", "", map[string]string{"username": "admin", "password": "1234"})
+	if code != http.StatusOK {
+		t.Fatalf("완전 초기화 후 기본 admin/1234 로그인 실패: status=%d", code)
+	}
+	code, _ = doRecorderReq(t, h, http.MethodPost, "/api/auth/login", "", map[string]string{"username": "t06", "password": "newpass99"})
+	if code != http.StatusUnauthorized {
+		t.Fatalf("완전 초기화 후 기존 교사 계정이 삭제되지 않았습니다: status=%d", code)
 	}
 
 	// 비동기 이벤트 버스 발행 검증

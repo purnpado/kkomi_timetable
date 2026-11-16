@@ -49,6 +49,39 @@ func (s *Service) ListBellSchedule() ([]protocol.BellPeriod, error) {
 	return bells, nil
 }
 
+// SaveBellSchedule은 마스터 또는 시간표 담당교사가 정규 일과시간(1~7교시 시작·종료 시각)을 저장합니다.
+func (s *Service) SaveBellSchedule(bells []protocol.BellPeriod, actorName string) ([]protocol.BellPeriod, error) {
+	if len(bells) == 0 {
+		return nil, fmt.Errorf("저장할 일과시간 데이터가 비어 있습니다")
+	}
+	_ = s.store.ClearCollections("bell_schedule")
+	for _, b := range bells {
+		if b.Period <= 0 {
+			continue
+		}
+		if b.Label == "" {
+			b.Label = fmt.Sprintf("%d교시", b.Period)
+		}
+		if err := s.store.SaveRecord("bell_schedule", fmt.Sprintf("period-%d", b.Period), b); err != nil {
+			return nil, err
+		}
+	}
+	saved, err := s.ListBellSchedule()
+	if err != nil {
+		return nil, err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:      protocol.EventBellScheduleChanged,
+			Title:     "⏰ 정규 일과시간표(시종시간) 변경 반영",
+			Message:   "1~7교시 일과시간 설정이 갱신되어 전 교원 시간표 및 방해 금지 타이머에 적용되었습니다.",
+			ActorName: actorName,
+			Payload:   saved,
+		})
+	}
+	return saved, nil
+}
+
 // ProposeEvent는 부서별로 행사를 등록(STAGING 대기열)합니다.
 func (s *Service) ProposeEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, error) {
 	if ev.ID == "" {

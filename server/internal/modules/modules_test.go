@@ -370,3 +370,54 @@ func TestBaseTimetableBuilderAndAutoGenerate(t *testing.T) {
 		t.Fatalf("기초 시간표 엑셀 업로드 실패: imported=%d, err=%v", imported, err)
 	}
 }
+
+// TestSystemResetAndPasswordChangeAndExamDuration은 admin/1234 최초 비밀번호 변경,
+// 전체/학기 초기화, 교내 지필고사 과목별 시험시간 배정을 검증합니다.
+func TestSystemResetAndPasswordChangeAndExamDuration(t *testing.T) {
+	store, bus := setupTestEnv(t)
+	authSvc := auth.NewService(store)
+	examSvc := internal_exam.NewService(store, bus)
+
+	// 1. admin / 1234 로그인 시 MustChangePassword=true 확인 후 변경 -> false 확인
+	admin, err := authSvc.Authenticate("admin", "1234")
+	if err != nil || !admin.MustChangePassword {
+		t.Fatalf("초기 admin 로그인 또는 비밀번호 변경 플래그 오류: err=%v, admin=%+v", err, admin)
+	}
+	updated, err := authSvc.ChangePassword(admin.ID, "1234", "kkomi2026")
+	if err != nil || updated.MustChangePassword {
+		t.Fatalf("비밀번호 변경 실패: err=%v", err)
+	}
+	if err := authSvc.ResetTeacherPassword(admin.ID); err != nil {
+		t.Fatalf("비밀번호 초기화 실패: %v", err)
+	}
+
+	// 2. 과목별 상이 시험시간(35분/50분) 반영 검증
+	slots, err := examSvc.GenerateAndSave(protocol.ExamConfig{
+		ID: "exam-dur-test", Title: "시험시간 테스트", ExamDate: "2026-11-26", InstantRevealMode: true,
+	}, []internal_exam.ExamPeriodSpec{
+		{Period: 1, Grade: 1, Subject: "국어", StartTime: "08:50", EndTime: "09:25", DurationMinutes: 35, ClassRooms: []string{"1-1"}},
+		{Period: 2, Grade: 2, Subject: "수학", StartTime: "09:40", EndTime: "10:30", DurationMinutes: 50, ClassRooms: []string{"2-1"}},
+	})
+	if err != nil || len(slots) < 2 {
+		t.Fatalf("과목별 시험시간 배정 실패: %v", err)
+	}
+	if slots[0].DurationMinutes != 35 || slots[0].StartTime != "08:50" {
+		t.Fatalf("1교시 시험시간 미반영: %+v", slots[0])
+	}
+
+	// 3. 학기 초기화 -> 교사 유지 + 시간표 삭제, 완전 초기화 -> admin만 남음
+	if _, err := store.ResetSystem(database.ResetModeAcademicTerm); err != nil {
+		t.Fatalf("학기 초기화 실패: %v", err)
+	}
+	teachersAfterTerm, _ := authSvc.ListTeachers()
+	if len(teachersAfterTerm) <= 1 {
+		t.Fatalf("학기 초기화 후 교사가 유지되지 않았습니다: %d", len(teachersAfterTerm))
+	}
+	if _, err := store.ResetSystem(database.ResetModeFullFactory); err != nil {
+		t.Fatalf("완전 초기화 실패: %v", err)
+	}
+	teachersAfterFull, _ := authSvc.ListTeachers()
+	if len(teachersAfterFull) != 1 || teachersAfterFull[0].Username != "admin" {
+		t.Fatalf("완전 초기화 후 admin 단독 계정 상태가 아닙니다: %+v", teachersAfterFull)
+	}
+}

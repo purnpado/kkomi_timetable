@@ -7,7 +7,7 @@ import TeacherManagerCard from "../admin-remote/TeacherManagerCard";
 
 // TimetableView는 60fps HTML5 Canvas 시간표 조정, 교사 간 수업교환 신청,
 // 마스터/담당교사의 학년·학급별 기초 시간표 작성 및 나이스(NEIS) 입력 도우미를 제공합니다.
-export default function TimetableView({ serverUrl, user, cells, teachers, requests, onRefresh, onOpenApproval, onNotify }) {
+export default function TimetableView({ serverUrl, user, cells, teachers, requests, bellSchedule, onRefresh, onOpenApproval, onNotify }) {
   const [subTab, setSubTab] = useState("board"); // "board" | "builder" | "teachers"
   const [filterClass, setFilterClass] = useState("2-1");
   const [reason, setReason] = useState("학년 협의 및 수업 교환");
@@ -113,7 +113,7 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
       )}
 
       {isAdmin && subTab === "builder" ? (
-        <BaseTimetableBuilder serverUrl={serverUrl} user={user} cells={cells} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+        <BaseTimetableBuilder serverUrl={serverUrl} user={user} cells={cells} teachers={teachers} bellSchedule={bellSchedule} onRefresh={onRefresh} onNotify={onNotify} />
       ) : isAdmin && subTab === "teachers" ? (
         <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
       ) : (
@@ -146,6 +146,7 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
         <TimetableCanvas
           cells={cells}
           teachersMap={teachersMap}
+          bellSchedule={bellSchedule}
           filterClass={filterClass}
           onEvaluateDrop={handleEvaluateDrop}
           onRequestCommit={handleRequestFromCanvas}

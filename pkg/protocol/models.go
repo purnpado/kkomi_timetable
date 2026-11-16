@@ -27,6 +27,7 @@ type Teacher struct {
 	ID                   string   `json:"id"`
 	Username             string   `json:"username"`
 	PasswordHash         string   `json:"passwordHash,omitempty"`
+	MustChangePassword   bool     `json:"mustChangePassword"`
 	Name                 string   `json:"name"`
 	Position             string   `json:"position"`               // 직위 (예: 교무부장, 연구부장, 평교사)
 	IsDepartmentHead     bool     `json:"isDepartmentHead"`       // 부장교사 여부
@@ -126,6 +127,9 @@ type ExamSlot struct {
 	ExamID           string `json:"examId"`
 	ExamDate         string `json:"examDate"`
 	Period           int    `json:"period"`
+	StartTime        string `json:"startTime"`       // 예: "08:50" (과목별 시작 시각)
+	EndTime          string `json:"endTime"`         // 예: "09:35" (과목별 종료 시각)
+	DurationMinutes  int    `json:"durationMinutes"` // 예: 45 (과목별 시험 시간 분)
 	Grade            int    `json:"grade"`
 	Subject          string `json:"subject"`
 	SlotRole         string `json:"slotRole"`         // "MAIN"(정감독), "SUB"(부감독), "CORRIDOR"(복도감독), "HONORARY"(학부모명예)

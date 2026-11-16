@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  CalendarDays, ClipboardList, Columns, Globe, LayoutDashboard,
+  CalendarDays, ClipboardList, Columns, Globe, KeyRound, LayoutDashboard,
   LogOut, Search, ServerCog, ShieldCheck, TableProperties,
 } from "lucide-react";
 import {
@@ -11,6 +11,7 @@ import ToastHub from "./components/ui/ToastHub";
 import ApprovalModal from "./components/ui/ApprovalModal";
 import CommandPalette from "./components/ui/CommandPalette";
 import SideDockWidget from "./components/ui/SideDockWidget";
+import PasswordChangeModal from "./components/ui/PasswordChangeModal";
 import LoginView from "./features/login/LoginView";
 import DashboardView from "./features/dashboard/DashboardView";
 import TimetableView from "./features/timetable/TimetableView";
@@ -25,7 +26,7 @@ const NAV_ITEMS = [
   { id: "internal-exam", label: "교내 시험감독", icon: ShieldCheck },
   { id: "external-exam", label: "외부 시험감독", icon: Globe },
   { id: "calendar", label: "주중·월중 행사", icon: CalendarDays },
-  { id: "admin-remote", label: "시스템·권한 관리", icon: ServerCog, adminOnly: true },
+  { id: "admin-remote", label: "시스템·초기화·권한", icon: ServerCog, adminOnly: true },
 ];
 
 export default function App() {
@@ -36,6 +37,8 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalIndex, setApprovalIndex] = useState(0);
+  const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [clockText, setClockText] = useState(() => new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
 
   const [summary, setSummary] = useState(null);
   const [teachers, setTeachers] = useState([]);
@@ -48,9 +51,12 @@ export default function App() {
 
   useEffect(() => {
     resolveServerUrl().then(setServerUrl);
+    const timer = setInterval(() => {
+      setClockText(new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
+    }, 15000);
+    return () => clearInterval(timer);
   }, []);
 
-  // Ctrl+K 커맨드 팔레트 단축키 바인딩
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -62,7 +68,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const inClassStatus = useMemo(() => checkInClassNow(summary?.bellSchedule || []), [summary?.bellSchedule]);
+  const inClassStatus = useMemo(() => checkInClassNow(summary?.bellSchedule || []), [summary?.bellSchedule, clockText]);
 
   const pushToast = (title, message, urgent = false) => {
     const item = { id: `t-${Date.now()}-${Math.random()}`, title, message, urgent };
@@ -97,7 +103,6 @@ export default function App() {
     if (!user) return;
     refreshAll(serverUrl, user);
 
-    // Wails 네이티브 이벤트 및 WebSocket 이중 실시간 수신
     const unsubDesktop = subscribeDesktopEvents(
       (evt) => {
         pushToast(evt.title, evt.message, evt.urgent);
@@ -146,6 +151,7 @@ export default function App() {
         onLoginSuccess={(srv, usr) => {
           setServerUrl(srv);
           setUser(usr);
+          if (usr.mustChangePassword) setPwModalOpen(true);
         }}
       />
     );
@@ -174,8 +180,8 @@ export default function App() {
         <div className="brand-box">
           <div className="brand-logo">🐾</div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 15 }}>꼬미시간</div>
-            <div style={{ fontSize: 11, color: "#94a3b8" }}>v{summary?.serverVersion || "0.1.0"} · 교무 통합</div>
+            <div style={{ fontWeight: 800, fontSize: 16 }}>꼬미시간</div>
+            <div style={{ fontSize: 11, color: "#93c5fd" }}>v{summary?.serverVersion || "0.1.0"} · 교무 통합</div>
           </div>
         </div>
 
@@ -196,11 +202,16 @@ export default function App() {
           );
         })}
 
-        <div style={{ marginTop: "auto", padding: "10px 6px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: 12 }}>
-          <div style={{ fontWeight: 700 }}>{user.name} 선생님</div>
-          <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 8 }}>
-            {(user.roles || []).map((r) => ROLE_LABELS[r] || r).join(" · ")}
+        <div style={{ marginTop: "auto", padding: "12px 6px 4px", borderTop: "1px solid rgba(255,255,255,0.12)", fontSize: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{user.name} 선생님</div>
+            <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 2 }}>
+              {(user.roles || []).map((r) => ROLE_LABELS[r] || r).join(" · ")}
+            </div>
           </div>
+          <button className="btn btn-sm" style={{ width: "100%", justifyContent: "center" }} onClick={() => setPwModalOpen(true)}>
+            <KeyRound size={13} /> 비밀번호 변경
+          </button>
           <button className="btn btn-sm" style={{ width: "100%", justifyContent: "center" }} onClick={() => setUser(null)}>
             <LogOut size={13} /> 로그아웃 / 계정 전환
           </button>
@@ -217,7 +228,8 @@ export default function App() {
               {inClassStatus.inClass ? `🔕 수업 중 방해금지 (${inClassStatus.periodLabel})` : "🔔 쉬는시간 실시간 알림"}
             </span>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <span className="badge badge-blue">🕒 {clockText}</span>
             <button
               className="btn btn-sm"
               onClick={() => {
@@ -225,7 +237,7 @@ export default function App() {
                 toggleSideDockBridge(true);
               }}
             >
-              <Columns size={14} /> 사이드 위젯 모드 (260px)
+              <Columns size={14} /> 사이드 위젯 (260px)
             </button>
           </div>
         </header>
@@ -265,6 +277,7 @@ export default function App() {
               cells={cells}
               teachers={teachers}
               requests={requests}
+              bellSchedule={summary?.bellSchedule || []}
               onRefresh={() => refreshAll()}
               onOpenApproval={() => { setApprovalIndex(0); setApprovalOpen(true); }}
               onNotify={pushToast}
@@ -280,11 +293,32 @@ export default function App() {
             <CalendarView serverUrl={serverUrl} user={user} events={events} teachers={teachers} onRefresh={() => refreshAll()} onNotify={pushToast} />
           )}
           {activeTab === "admin-remote" && (
-            <AdminRemoteView serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={() => refreshAll()} onNotify={pushToast} />
+            <AdminRemoteView
+              serverUrl={serverUrl}
+              user={user}
+              teachers={teachers}
+              onRefresh={() => refreshAll()}
+              onResetComplete={() => {
+                setUser(null);
+                setActiveTab("dashboard");
+              }}
+              onNotify={pushToast}
+            />
           )}
         </main>
       </div>
 
+      <PasswordChangeModal
+        open={pwModalOpen}
+        onOpenChange={setPwModalOpen}
+        serverUrl={serverUrl}
+        user={user}
+        forced={Boolean(user?.mustChangePassword)}
+        onChanged={(updated) => {
+          setUser(updated);
+          pushToast("비밀번호 변경 완료", "새 비밀번호가 안전하게 저장되었습니다.");
+        }}
+      />
       <ApprovalModal
         open={approvalOpen}
         onOpenChange={setApprovalOpen}

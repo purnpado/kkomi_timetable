@@ -104,6 +104,112 @@ func (a *ServerApp) handleImportTimetableXLSX(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]int{"importedCount": cnt})
 }
 
+func (a *ServerApp) handleBellSchedule(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		bells, err := a.Calendar.ListBellSchedule()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, bells)
+		return
+	}
+	if r.Method == http.MethodPost {
+		actor, ok := a.requireRole(w, r, protocol.RoleTimetableAdmin, protocol.RoleEventAdmin)
+		if !ok {
+			return
+		}
+		var bells []protocol.BellPeriod
+		if err := json.NewDecoder(r.Body).Decode(&bells); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		saved, err := a.Calendar.SaveBellSchedule(bells, actor.Name)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+	writeError(w, http.StatusMethodNotAllowed, "지원하지 않는 메서드입니다")
+}
+
+func (a *ServerApp) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	actor := a.currentActor(r)
+	if actor == nil {
+		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+		return
+	}
+	var body struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := a.Auth.ChangePassword(actor.ID, body.CurrentPassword, body.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (a *ServerApp) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
+		return
+	}
+	var body struct {
+		TeacherID string `json:"teacherId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.Auth.ResetTeacherPassword(body.TeacherID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "비밀번호가 초기값(1234)으로 재설정되었습니다"})
+}
+
+func (a *ServerApp) handleSystemReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	backupPath, err := a.Store.ResetSystem(body.Mode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":     "시스템 초기화가 완료되었습니다",
+		"mode":       body.Mode,
+		"backupFile": backupPath,
+	})
+}
+
 func writeBaseTemplateXLSX(w http.ResponseWriter) {
 	raw, err := timetable.BuildBaseTemplateXLSX()
 	if err != nil {

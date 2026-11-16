@@ -1,18 +1,19 @@
 import React, { useEffect, useState } from "react";
-import { Database, RefreshCw, Shield, UploadCloud, UserCog } from "lucide-react";
+import { AlertTriangle, Database, RefreshCw, Shield, UploadCloud, UserCog } from "lucide-react";
 import { apiFetch, applySelfUpdateBridge, ROLE_LABELS } from "../../events/eventStore";
 import TeacherManagerCard from "./TeacherManagerCard";
 
 const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
 
-// AdminRemoteView는 시스템 총괄(마스터)의 교사 권한 겸임 배정, 원격 DB 암호화 백업 및
-// 꼬미시간서버.exe / 꼬미시간.exe 무중단 자가 업데이트 업로드를 담당합니다.
-export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, onNotify }) {
+// AdminRemoteView는 시스템 총괄(마스터)의 교사 관리, RBAC 권한 배정,
+// 전체 시스템 초기화, 원격 DB 암호화 백업 및 무중단 자가 업데이트를 담당합니다.
+export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, onResetComplete, onNotify }) {
   const [backups, setBackups] = useState([]);
-  const [selectedTeacherId, setSelectedTeacherId] = useState(teachers?.[0]?.id || "t02");
+  const [selectedTeacherId, setSelectedTeacherId] = useState(teachers?.[0]?.id || "t01");
   const [handoverFrom, setHandoverFrom] = useState("t02");
   const [handoverTo, setHandoverTo] = useState("t06");
   const [handoverRole, setHandoverRole] = useState("TIMETABLE_ADMIN");
+  const [confirmResetMode, setConfirmResetMode] = useState("");
 
   const loadBackups = async () => {
     try {
@@ -66,6 +67,25 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
     }
   };
 
+  const handleSystemReset = async (mode) => {
+    try {
+      const res = await apiFetch(serverUrl, "/api/system/reset", user.id, {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      });
+      setConfirmResetMode("");
+      loadBackups();
+      onNotify("시스템 초기화 완료", `초기화 전 자동 백업이 저장되었습니다 (${res.backupFile || "완료"}).`, true);
+      if (mode === "FULL_FACTORY_RESET" && onResetComplete) {
+        onResetComplete();
+      } else {
+        onRefresh();
+      }
+    } catch (err) {
+      onNotify("초기화 실패", err.message, true);
+    }
+  };
+
   const handleUploadBinary = async (endpoint, file) => {
     if (!file) return;
     const form = new FormData();
@@ -82,6 +102,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+
       <div className="grid-2">
         <div className="card">
           <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
@@ -89,7 +110,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           </h3>
           <select className="select" value={selectedTeacherId} onChange={(e) => setSelectedTeacherId(e.target.value)} style={{ marginBottom: 12 }}>
             {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => (
-              <option key={t.id} value={t.id}>{t.name} ({t.position} · 전입 {t.transferDate})</option>
+              <option key={t.id} value={t.id}>{t.name} ({t.username} · {t.position})</option>
             ))}
           </select>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -125,6 +146,39 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
         </div>
       </div>
 
+      <div className="card" style={{ borderColor: "#ffa8a8", background: "#fff8f8" }}>
+        <h3 style={{ margin: "0 0 8px", fontSize: 15, color: "#c92a2a" }}>
+          <AlertTriangle size={16} style={{ verticalAlign: "middle" }} /> 시스템 데이터 전체 초기화 (자동 암호화 백업 후 실행)
+        </h3>
+        <div style={{ fontSize: 12.5, color: "#475569", marginBottom: 12 }}>
+          모든 초기화 작업은 실행 직전 <code>backups/</code> 폴더에 AES-256 암호화 백업본을 자동 생성한 뒤 안전하게 실행됩니다.
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="btn btn-sm" onClick={() => setConfirmResetMode("ACADEMIC_TERM_RESET")}>
+            1. 학기 초기화 (교사 유지 · 시간표/시험/행사 비우기)
+          </button>
+          <button className="btn btn-sm btn-danger" onClick={() => setConfirmResetMode("FULL_FACTORY_RESET")}>
+            2. 전체 완전 초기화 (admin / 1234 계정만 남기고 모두 삭제)
+          </button>
+          <button className="btn btn-sm" onClick={() => setConfirmResetMode("DEMO_SEED_RESET")}>
+            3. 시연용 샘플 데이터로 복원
+          </button>
+        </div>
+        {confirmResetMode && (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "#fff", border: "1.5px solid #e03131", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#c92a2a" }}>
+              선택한 초기화({confirmResetMode})를 정말 실행하시겠습니까?
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-sm" onClick={() => setConfirmResetMode("")}>취소</button>
+              <button className="btn btn-sm btn-danger" onClick={() => handleSystemReset(confirmResetMode)}>
+                예, 지금 초기화 실행
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="grid-2">
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -148,7 +202,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12.5 }}>
             <div>
-              <b>1. 메인 서버 교체 (`꼬미시간서버.exe`)</b>: 업로드 시 자동 DB 백업 후 2초 내 자가 재시작
+              <b>1. 메인 서버 교체 (`꼬미시간서버.exe`)</b>: 업로드 시 자동 DB 백업 후 재시작
               <input type="file" style={{ display: "block", marginTop: 4 }} onChange={(e) => handleUploadBinary("/api/system/server-update", e.target.files?.[0])} />
             </div>
             <div>

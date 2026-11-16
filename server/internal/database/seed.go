@@ -29,7 +29,7 @@ func SeedIfEmpty(s *Store) error {
 		}
 	}
 
-	for _, b := range buildSeedBellSchedule() {
+	for _, b := range DefaultBellSchedule() {
 		id := fmt.Sprintf("period-%d", b.Period)
 		if err := s.SaveRecord("bell_schedule", id, b); err != nil {
 			return err
@@ -82,37 +82,37 @@ func SeedIfEmpty(s *Store) error {
 func buildSeedTeachers(pwHash string) []protocol.Teacher {
 	return []protocol.Teacher{
 		{
-			ID: "t01", Username: "master", PasswordHash: pwHash, Name: "김교무", Position: "교무부장",
+			ID: "t01", Username: "admin", PasswordHash: pwHash, MustChangePassword: true, Name: "김교무", Position: "교무부장",
 			IsDepartmentHead: true, Subject: "국어", HomeroomClass: "", Phone: "010-2100-0001",
-			Roles: []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleTeacher},
+			Roles: []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleInternalExamAdmin, protocol.RoleExternalExamAdmin, protocol.RoleEventAdmin, protocol.RoleTeacher},
 			TransferDate: "2022-03-01", LastExternalDispatch: "2024-11-14", ExternalExamCount: 2, InternalExamCount: 3, SubstitutionCount: 2,
 		},
 		{
-			ID: "t02", Username: "timetable", PasswordHash: pwHash, Name: "이수업", Position: "교무기획(수업계)",
+			ID: "t02", Username: "timetable", PasswordHash: pwHash, MustChangePassword: true, Name: "이수업", Position: "교무기획(수업계)",
 			Subject: "수학", HomeroomClass: "2-1", Phone: "010-2100-0002",
 			Roles: []protocol.Role{protocol.RoleTimetableAdmin, protocol.RoleTeacher},
 			TransferDate: "2025-03-01", LastExternalDispatch: "", ExternalExamCount: 0, InternalExamCount: 4, SubstitutionCount: 5,
 		},
 		{
-			ID: "t03", Username: "internal", PasswordHash: pwHash, Name: "박평가", Position: "연구부장(평가계)",
+			ID: "t03", Username: "internal", PasswordHash: pwHash, MustChangePassword: true, Name: "박평가", Position: "연구부장(평가계)",
 			IsDepartmentHead: true, Subject: "영어", HomeroomClass: "", Phone: "010-2100-0003",
 			Roles: []protocol.Role{protocol.RoleInternalExamAdmin, protocol.RoleTeacher},
 			TransferDate: "2023-03-01", LastExternalDispatch: "2025-11-13", ExternalExamCount: 1, InternalExamCount: 2, SubstitutionCount: 1,
 		},
 		{
-			ID: "t04", Username: "external", PasswordHash: pwHash, Name: "최외부", Position: "교무기획(대외계)",
+			ID: "t04", Username: "external", PasswordHash: pwHash, MustChangePassword: true, Name: "최외부", Position: "교무기획(대외계)",
 			Subject: "과학", HomeroomClass: "3-1", Phone: "010-2100-0004",
 			Roles: []protocol.Role{protocol.RoleExternalExamAdmin, protocol.RoleTeacher},
 			TransferDate: "2024-03-01", LastExternalDispatch: "2024-06-04", ExternalExamCount: 2, InternalExamCount: 4, SubstitutionCount: 3,
 		},
 		{
-			ID: "t05", Username: "event", PasswordHash: pwHash, Name: "정행사", Position: "교무기획(행사계)",
+			ID: "t05", Username: "event", PasswordHash: pwHash, MustChangePassword: true, Name: "정행사", Position: "교무기획(행사계)",
 			Subject: "사회", HomeroomClass: "1-1", Phone: "010-2100-0005",
 			Roles: []protocol.Role{protocol.RoleEventAdmin, protocol.RoleTeacher},
 			TransferDate: "2026-03-01", LastExternalDispatch: "", ExternalExamCount: 0, InternalExamCount: 3, SubstitutionCount: 2,
 		},
 		{
-			ID: "t06", Username: "t06", PasswordHash: pwHash, Name: "강국어", Position: "평교사",
+			ID: "t06", Username: "t06", PasswordHash: pwHash, MustChangePassword: true, Name: "강국어", Position: "평교사",
 			Subject: "국어", HomeroomClass: "1-2", Phone: "010-2100-0006",
 			Roles: []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2026-03-01", LastExternalDispatch: "", ExternalExamCount: 0, InternalExamCount: 5, SubstitutionCount: 4,
@@ -184,7 +184,8 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 	}
 }
 
-func buildSeedBellSchedule() []protocol.BellPeriod {
+// DefaultBellSchedule은 기본 1~7교시 일과시간표를 반환합니다.
+func DefaultBellSchedule() []protocol.BellPeriod {
 	return []protocol.BellPeriod{
 		{Period: 1, Label: "1교시", StartTime: "08:40", EndTime: "09:30"},
 		{Period: 2, Label: "2교시", StartTime: "09:40", EndTime: "10:30"},

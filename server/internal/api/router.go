@@ -66,6 +66,8 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 
 	// 인증 및 교사/권한 관리
 	mux.HandleFunc("/api/auth/login", a.handleLogin)
+	mux.HandleFunc("/api/auth/change-password", a.handleChangePassword)
+	mux.HandleFunc("/api/auth/reset-password", a.handleResetPassword)
 	mux.HandleFunc("/api/teachers", a.handleTeachers)
 	mux.HandleFunc("/api/teachers/roles", a.handleUpdateRoles)
 	mux.HandleFunc("/api/teachers/handover", a.handleRoleHandover)
@@ -107,6 +109,7 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/export/xlsx", a.handleExportXLSX)
 	mux.HandleFunc("/api/export/print", a.handleExportPrint)
 	mux.HandleFunc("/api/system/backups", a.handleSystemBackups)
+	mux.HandleFunc("/api/system/reset", a.handleSystemReset)
 	mux.HandleFunc("/api/system/client-patch", a.handleClientPatch)
 	mux.HandleFunc("/api/system/server-update", a.handleServerSelfUpdate)
 

@@ -4,9 +4,19 @@ import { Copy, Download } from "lucide-react";
 const DAYS = ["월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
 
+function subjectColor(subject = "") {
+  if (subject.includes("국어")) return { bg: "#fff5f5", bar: "#fa5252" };
+  if (subject.includes("수학")) return { bg: "#edf2ff", bar: "#4c6ef5" };
+  if (subject.includes("영어")) return { bg: "#e6fcf5", bar: "#12b886" };
+  if (subject.includes("과학")) return { bg: "#f3f0ff", bar: "#7950f2" };
+  if (subject.includes("사회") || subject.includes("역사")) return { bg: "#fff9db", bar: "#fab005" };
+  if (subject.includes("정보")) return { bg: "#e3fafc", bar: "#15aabf" };
+  return { bg: "#f1f3f5", bar: "#868e96" };
+}
+
 // TimetableCanvas는 HTML5 Canvas 60fps 기반 HiDPI 시간표 그리드입니다.
-// 드래그 앤 드롭 고스트 미리보기, 초록/노랑/빨강 신호등 가이드 및 PNG 클립보드 복사를 제공합니다.
-export default function TimetableCanvas({ cells, teachersMap, filterClass, onEvaluateDrop, onRequestCommit }) {
+// 과목별 컬러 코딩, 교시별 일과시간 표시, 드래그 고스트 및 신호등 가이드를 제공합니다.
+export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [], filterClass, onEvaluateDrop, onRequestCommit }) {
   const canvasRef = useRef(null);
   const [hoverInfo, setHoverInfo] = useState(null);
   const [dragState, setDragState] = useState(null); // { sourceCell, x, y, targetDay, targetPeriod, evalResult }
@@ -30,7 +40,7 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
 
-    const headerW = 72;
+    const headerW = 96;
     const headerH = 38;
     const colW = (width - headerW) / 5;
     const rowH = (height - headerH) / 7;
@@ -41,7 +51,7 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
     // 요일 헤더
     DAYS.forEach((d, idx) => {
       const x = headerW + idx * colW;
-      ctx.fillStyle = "#eef2ff";
+      ctx.fillStyle = "#e8edff";
       ctx.fillRect(x, 0, colW, headerH);
       ctx.strokeStyle = "#cbd5e1";
       ctx.strokeRect(x, 0, colW, headerH);
@@ -51,17 +61,23 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
       ctx.fillText(`${d}요일`, x + colW / 2, 24);
     });
 
-    // 교시 헤더 및 격자 셀
+    // 교시 헤더 (일과시간 함께 표시) 및 격자 셀
     PERIODS.forEach((p, rIdx) => {
       const y = headerH + rIdx * rowH;
-      ctx.fillStyle = "#f8fafc";
+      const bell = (bellSchedule || []).find((b) => b.period === p);
+      ctx.fillStyle = "#f1f5f9";
       ctx.fillRect(0, y, headerW, rowH);
       ctx.strokeStyle = "#cbd5e1";
       ctx.strokeRect(0, y, headerW, rowH);
-      ctx.fillStyle = "#334155";
+      ctx.fillStyle = "#0f172a";
       ctx.font = "bold 12px Pretendard, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(`${p}교시`, headerW / 2, y + rowH / 2 + 4);
+      ctx.fillText(`${p}교시`, headerW / 2, y + rowH / 2 - (bell ? 3 : -4));
+      if (bell) {
+        ctx.fillStyle = "#64748b";
+        ctx.font = "10px Pretendard, sans-serif";
+        ctx.fillText(`${bell.startTime}~${bell.endTime}`, headerW / 2, y + rowH / 2 + 12);
+      }
 
       DAYS.forEach((_, dIdx) => {
         const day = dIdx + 1;
@@ -69,12 +85,13 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
         const cell = cellAt(day, p);
         const isHovered = hoverInfo && hoverInfo.day === day && hoverInfo.period === p;
         const sameTeacherHover = hoverInfo?.cell && cell && cell.teacherId === hoverInfo.cell.teacherId;
+        const sc = cell ? subjectColor(cell.subject) : null;
 
         let bg = "#ffffff";
         if (cell?.blockedBy) bg = "#fff1f2";
         else if (cell?.electiveGroup) bg = "#f3f0ff";
-        else if (sameTeacherHover) bg = "#e7f5ff";
-        else if (cell) bg = "#f8fafc";
+        else if (sameTeacherHover) bg = "#d0ebff";
+        else if (sc) bg = sc.bg;
 
         if (dragState && dragState.targetDay === day && dragState.targetPeriod === p && dragState.evalResult) {
           if (dragState.evalResult.signal === "GREEN") bg = "#d3f9d8";
@@ -84,6 +101,10 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
 
         ctx.fillStyle = bg;
         ctx.fillRect(x + 1, y + 1, colW - 2, rowH - 2);
+        if (sc && !cell?.blockedBy) {
+          ctx.fillStyle = sc.bar;
+          ctx.fillRect(x + 1, y + 1, 4, rowH - 2);
+        }
         ctx.strokeStyle = isHovered ? "#3b5bdb" : "#e2e8f0";
         ctx.lineWidth = isHovered ? 2 : 1;
         ctx.strokeRect(x, y, colW, rowH);
@@ -92,17 +113,17 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
         if (cell) {
           const tName = teachersMap[cell.teacherId]?.name || cell.teacherId;
           ctx.textAlign = "left";
-          ctx.fillStyle = cell.blockedBy ? "#c92a2a" : "#151b2c";
+          ctx.fillStyle = cell.blockedBy ? "#c92a2a" : "#0f172a";
           ctx.font = "bold 12.5px Pretendard, sans-serif";
-          ctx.fillText(`${cell.subject}`, x + 8, y + 20);
+          ctx.fillText(`${cell.subject}`, x + 10, y + 20);
           ctx.fillStyle = "#475569";
           ctx.font = "11px Pretendard, sans-serif";
           const subLine = cell.blockedBy ? `행사블록: ${cell.blockedBy}` : `${cell.className} · ${tName}`;
-          ctx.fillText(subLine.slice(0, 18), x + 8, y + 37);
+          ctx.fillText(subLine.slice(0, 17), x + 10, y + 37);
           if (cell.coTeacherId || cell.electiveGroup) {
             ctx.fillStyle = "#5f3dc4";
             ctx.font = "10.5px Pretendard, sans-serif";
-            ctx.fillText(cell.electiveGroup ? "고교학점제 블록" : "코티칭 수업", x + 8, y + 52);
+            ctx.fillText(cell.electiveGroup ? "고교학점제 블록" : "코티칭 수업", x + 10, y + 52);
           }
         }
       });
@@ -120,13 +141,13 @@ export default function TimetableCanvas({ cells, teachersMap, filterClass, onEva
       ctx.fillText(`${dragState.sourceCell.subject} (${dragState.sourceCell.className})`, dragState.x, dragState.y + 4);
       ctx.restore();
     }
-  }, [visibleCells, hoverInfo, dragState, teachersMap]);
+  }, [visibleCells, hoverInfo, dragState, teachersMap, bellSchedule]);
 
   const coordToSlot = (clientX, clientY) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    const headerW = 72;
+    const headerW = 96;
     const headerH = 38;
     const colW = (860 - headerW) / 5;
     const rowH = (470 - headerH) / 7;

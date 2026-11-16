@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
+import BellScheduleEditor from "./BellScheduleEditor";
 
 const DAYS = ["", "월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
 
 // BaseTimetableBuilder는 마스터 및 시간표 담당교사가 클라이언트에서 직접
-// 학년별·학급별 기초 시간표를 작성, 자동 편성 및 엑셀 업로드할 수 있는 작성기입니다.
-export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers, onRefresh, onNotify }) {
+// 학년별·학급별 기초 시간표 및 일과시간을 작성·자동 편성·엑셀 업로드할 수 있는 작성기입니다.
+export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers, bellSchedule = [], onRefresh, onNotify }) {
   const [grade, setGrade] = useState(1);
   const [className, setClassName] = useState("1-1");
   const [newClassInput, setNewClassInput] = useState("");
@@ -128,6 +129,7 @@ export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers,
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <BellScheduleEditor serverUrl={serverUrl} user={user} bellSchedule={bellSchedule} onRefresh={onRefresh} onNotify={onNotify} />
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -200,9 +202,14 @@ export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers,
               <tr><th>교시</th>{DAYS.slice(1).map((d) => <th key={d}>{d}요일</th>)}</tr>
             </thead>
             <tbody>
-              {PERIODS.map((p) => (
+              {PERIODS.map((p) => {
+                const bell = (bellSchedule || []).find((b) => b.period === p);
+                return (
                 <tr key={p}>
-                  <td><b>{p}교시</b></td>
+                  <td>
+                    <b>{p}교시</b>
+                    {bell && <div style={{ fontSize: 10.5, color: "#64748b" }}>{bell.startTime}~{bell.endTime}</div>}
+                  </td>
                   {[1, 2, 3, 4, 5].map((d) => {
                     const slot = findSlot(d, p);
                     const isSel = selectedDay === d && selectedPeriod === p;
@@ -229,7 +236,8 @@ export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers,
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

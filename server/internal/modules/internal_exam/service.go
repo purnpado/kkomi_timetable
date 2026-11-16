@@ -44,19 +44,37 @@ func (s *Service) ensureSeedSlots() {
 		return
 	}
 	specs := DefaultPeriodSpecs()
+	for i, sp := range specs {
+		_ = s.store.SaveRecord("exam_specs", fmt.Sprintf("spec-%d", i+1), sp)
+	}
 	slots := AssignSlots(cfgs[0], specs, teachers)
 	for _, slot := range slots {
 		_ = s.store.SaveRecord("exam_slots", slot.ID, slot)
 	}
 }
 
-// DefaultPeriodSpecs는 기본 지필고사 시간표 편성안을 반환합니다.
+// DefaultPeriodSpecs는 과목별로 상이한 시험시간이 반영된 기본 지필고사 편성안을 반환합니다.
 func DefaultPeriodSpecs() []ExamPeriodSpec {
 	return []ExamPeriodSpec{
-		{Period: 1, Grade: 1, Subject: "국어", ClassRooms: []string{"1-1", "1-2"}},
-		{Period: 2, Grade: 2, Subject: "수학", ClassRooms: []string{"2-1", "2-2"}},
-		{Period: 3, Grade: 3, Subject: "영어", ClassRooms: []string{"3-1", "3-2"}},
+		{Period: 1, Grade: 1, Subject: "국어", StartTime: "08:50", EndTime: "09:35", DurationMinutes: 45, ClassRooms: []string{"1-1", "1-2"}},
+		{Period: 2, Grade: 2, Subject: "수학", StartTime: "09:50", EndTime: "10:40", DurationMinutes: 50, ClassRooms: []string{"2-1", "2-2"}},
+		{Period: 3, Grade: 3, Subject: "영어", StartTime: "10:55", EndTime: "11:35", DurationMinutes: 40, ClassRooms: []string{"3-1", "3-2"}},
 	}
+}
+
+// ListSpecs는 저장된 교시·과목별 시험시간 편성안을 반환합니다.
+func (s *Service) ListSpecs() []ExamPeriodSpec {
+	specs, err := database.LoadCollection[ExamPeriodSpec](s.store, "exam_specs")
+	if err != nil || len(specs) == 0 {
+		return DefaultPeriodSpecs()
+	}
+	sort.Slice(specs, func(i, j int) bool {
+		if specs[i].Period != specs[j].Period {
+			return specs[i].Period < specs[j].Period
+		}
+		return specs[i].Grade < specs[j].Grade
+	})
+	return specs
 }
 
 // StartScheduler는 시험 당일 지정 시각(기본 08:20) 도래 시 봉인된 고사장을 자동 일괄 공개하는 백그라운드 워커를 시작합니다.
@@ -118,10 +136,14 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 		cfg.IsSealed = false
 	}
 	if len(specs) == 0 {
-		specs = DefaultPeriodSpecs()
+		specs = s.ListSpecs()
 	}
 
-	// 기존 슬롯 정리 후 재생성
+	// 기존 시험 시간 편성안 및 슬롯 정리 후 재생성
+	_ = s.store.ClearCollections("exam_specs")
+	for i, sp := range specs {
+		_ = s.store.SaveRecord("exam_specs", fmt.Sprintf("spec-%d", i+1), sp)
+	}
 	oldSlots, _ := database.LoadCollection[protocol.ExamSlot](s.store, "exam_slots")
 	for _, old := range oldSlots {
 		if old.ExamID == cfg.ID {
