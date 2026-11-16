@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Clock, Lock, Plus, RefreshCw, Shield, Trash2, Unlock, UserCheck } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
+import ExamFairnessPanel from "./ExamFairnessPanel";
 
 function calcMinutes(start, end) {
   if (!start || !end) return 45;
@@ -16,6 +17,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
   const [config, setConfig] = useState(null);
   const [slots, setSlots] = useState([]);
   const [specs, setSpecs] = useState([]);
+  const [fairness, setFairness] = useState(null);
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [subCandidates, setSubCandidates] = useState([]);
   const [newSubId, setNewSubId] = useState("");
@@ -28,6 +30,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
       setConfig(res.config);
       setSlots(res.slots || []);
       setSpecs(res.specs || []);
+      setFairness(res.fairness || null);
     } catch (err) {
       onNotify("시험감독 조회 오류", err.message, true);
     }
@@ -136,10 +139,24 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
           {isExamAdmin && (
             <>
               <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center" }}>
-                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={config.deputyMode} onChange={(e) => setConfig({ ...config, deputyMode: e.target.checked })} />
-                  정·부감독 2인 운영 (해제 시 1인 단독)
-                </label>
+                <select
+                  className="select"
+                  style={{ width: 215 }}
+                  value={config.deputyMode ? "DEPUTY" : "SINGLE"}
+                  onChange={(e) => setConfig({ ...config, deputyMode: e.target.value === "DEPUTY" })}
+                >
+                  <option value="SINGLE">운영 방식: 정감독 1인 단독</option>
+                  <option value="DEPUTY">운영 방식: 정·부감독 2인 공동</option>
+                </select>
+                <select
+                  className="select"
+                  style={{ width: 245 }}
+                  value={config.balanceMode || "TOTAL_AND_ROLE"}
+                  onChange={(e) => setConfig({ ...config, balanceMode: e.target.value })}
+                >
+                  <option value="TOTAL_AND_ROLE">균등 기준: 1년 총 횟수 + 정·부 교차</option>
+                  <option value="STRICT_ROLE">균등 기준: 정감독·부감독 각각 균등</option>
+                </select>
                 <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={config.honoraryParentOn} onChange={(e) => setConfig({ ...config, honoraryParentOn: e.target.checked })} />
                   학부모 명예감독 투입 (자녀 학년/반 자동 배제)
@@ -272,6 +289,15 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
           </tbody>
         </table>
       </div>
+
+      <ExamFairnessPanel
+        serverUrl={serverUrl}
+        user={user}
+        fairness={fairness}
+        isExamAdmin={isExamAdmin}
+        onRefresh={loadData}
+        onNotify={onNotify}
+      />
     </div>
   );
 }

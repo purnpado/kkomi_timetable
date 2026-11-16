@@ -21,10 +21,12 @@ func (a *ServerApp) handleInternalExamSlots(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	fairness, _ := a.InternalExam.CalculateFairnessSummary()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"config": cfg,
-		"slots":  slots,
-		"specs":  a.InternalExam.ListSpecs(),
+		"config":   cfg,
+		"slots":    slots,
+		"specs":    a.InternalExam.ListSpecs(),
+		"fairness": fairness,
 	})
 }
 

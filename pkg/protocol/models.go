@@ -40,8 +40,13 @@ type Teacher struct {
 	TransferDate         string   `json:"transferDate"`           // 현임교 전입일 (YYYY-MM-DD)
 	LastExternalDispatch string   `json:"lastExternalDispatch"`   // 마지막 외부감독 파견일 (YYYY-MM-DD, 미파견 시 "")
 	ExternalExamCount    int      `json:"externalExamCount"`      // 최근 1~3년 외부감독 누적 파견 횟수
-	InternalExamCount    int      `json:"internalExamCount"`      // 올해 교내 시험감독 누적 횟수
-	SubstitutionCount    int      `json:"substitutionCount"`      // 올해 결보강/대타 횟수
+	InternalExamCount        int      `json:"internalExamCount"`                 // 올해 교내 시험감독 누적 횟수
+	InternalExamExempt       bool     `json:"internalExamExempt"`                // 특수반·보건실 등 교내 감독 제외 여부
+	InternalExamExemptReason string   `json:"internalExamExemptReason,omitempty"` // 교내 감독 제외 사유
+	AnnualMainCount          int      `json:"annualMainCount"`                   // 1년 기실시 정감독 누적 횟수
+	AnnualSubCount           int      `json:"annualSubCount"`                    // 1년 기실시 부감독 누적 횟수
+	AnnualCorridorCount      int      `json:"annualCorridorCount"`               // 1년 기실시 복도감독 누적 횟수
+	SubstitutionCount        int      `json:"substitutionCount"`                 // 올해 결보강/대타 횟수
 	ExemptReasons        []string `json:"exemptReasons"`          // 외부감독 면제 사유 (예: 임산부, 수험생 자녀, 원로교사)
 	ItinerantDays        []int    `json:"itinerantDays"`          // 순회교사 출강 가능 요일 (1=월 ~ 5=금, 빈 슬라이스면 전일 근무)
 	ParentOfStudentClass string   `json:"parentOfStudentClass"`   // 학부모 명예감독일 경우 자녀 학년-반 (예: "1-2")
@@ -180,6 +185,7 @@ type ExamConfig struct {
 	IsSealed             bool                `json:"isSealed"`             // 사전 봉인 여부 (true면 고사장 비공개)
 	InstantRevealMode    bool                `json:"instantRevealMode"`    // 학교 설정: 즉시 공개 모드 여부
 	DeputyMode           bool                `json:"deputyMode"`           // 정·부감독 2인 선택 운영 (false면 1인 단독)
+	BalanceMode          string              `json:"balanceMode,omitempty"` // "TOTAL_AND_ROLE"(연간총계+역할균형) | "STRICT_ROLE"(정·부 각각 균등)
 	HonoraryParentOn     bool                `json:"honoraryParentOn"`     // 학부모 명예감독 선택적(On/Off) 투입
 	SubjectTeacherPolicy SubjectHandlingMode `json:"subjectTeacherPolicy"` // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
 }
@@ -334,4 +340,42 @@ type AbsenceApplyRequest struct {
 	RequesterName string             `json:"requesterName"`
 	Items         []AbsenceApplyItem `json:"items"`
 	AutoApprove   bool               `json:"autoApprove"` // 담당자/마스터 권한일 경우 즉시 확정 여부
+}
+
+// ExamFairnessStat은 교사 1명의 1년간 시험감독 역할별 누적·이번 시험·연간 합계 시수 현황입니다.
+type ExamFairnessStat struct {
+	TeacherID         string `json:"teacherId"`
+	TeacherName       string `json:"teacherName"`
+	Subject           string `json:"subject"`
+	Position          string `json:"position"`
+	HomeroomClass     string `json:"homeroomClass"`
+	IsExempt          bool   `json:"isExempt"`
+	ExemptReason      string `json:"exemptReason"`
+	BaseMain          int    `json:"baseMain"`
+	BaseSub           int    `json:"baseSub"`
+	BaseCorridor      int    `json:"baseCorridor"`
+	BaseTotal         int    `json:"baseTotal"`
+	CurrentMain       int    `json:"currentMain"`
+	CurrentSub        int    `json:"currentSub"`
+	CurrentCorridor   int    `json:"currentCorridor"`
+	CurrentTotal      int    `json:"currentTotal"`
+	ProjectedMain     int    `json:"projectedMain"`
+	ProjectedSub      int    `json:"projectedSub"`
+	ProjectedCorridor int    `json:"projectedCorridor"`
+	ProjectedTotal    int    `json:"projectedTotal"`
+}
+
+// ExamFairnessSummary는 1년간 전교원 감독 횟수 균등 배정 통계 및 교사별 시수표입니다.
+type ExamFairnessSummary struct {
+	EligibleCount int                `json:"eligibleCount"`
+	ExemptCount   int                `json:"exemptCount"`
+	DeputyMode    bool               `json:"deputyMode"`
+	BalanceMode   string             `json:"balanceMode"`
+	MinTotal      int                `json:"minTotal"`
+	MaxTotal      int                `json:"maxTotal"`
+	MaxGap        int                `json:"maxGap"`
+	MinMain       int                `json:"minMain"`
+	MaxMain       int                `json:"maxMain"`
+	MainGap       int                `json:"mainGap"`
+	Stats         []ExamFairnessStat `json:"stats"`
 }

@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"kkomi-timetable/pkg/protocol"
+	"kkomi-timetable/server/internal/modules/internal_exam"
 	"kkomi-timetable/server/internal/modules/timetable"
 )
 
@@ -229,4 +230,25 @@ func writeBaseTemplateXLSX(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape("기초시간표_업로드양식.xlsx")))
 	_, _ = w.Write(raw)
+}
+
+func (a *ServerApp) handleInternalExamTeacherPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if _, ok := a.requireRole(w, r, protocol.RoleInternalExamAdmin); !ok {
+		return
+	}
+	var req internal_exam.TeacherExamPolicyUpdate
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, err := a.InternalExam.UpdateTeacherExamPolicy(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	fairness, _ := a.InternalExam.CalculateFairnessSummary()
+	writeJSON(w, http.StatusOK, fairness)
 }

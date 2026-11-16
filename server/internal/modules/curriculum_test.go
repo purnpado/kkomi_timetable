@@ -8,6 +8,7 @@ import (
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/auth"
+	"kkomi-timetable/server/internal/modules/internal_exam"
 	"kkomi-timetable/server/internal/modules/timetable"
 )
 
@@ -288,5 +289,67 @@ func TestCrossWeekSwapAndMidWeekAbsencePlan(t *testing.T) {
 		if c.ID == "c-3-4-31" && c.TeacherID != "t06" {
 			t.Fatalf("일일 보강이 다음 주 시간표까지 침범했습니다: %+v", c)
 		}
+	}
+}
+
+// TestInternalExamAnnualEqualizationAndExemption은 특수반·보건실 제외 대상의 0건 배제와
+// 정감독 단독 및 정·부감독 동시 운영 시 전교원 연간 감독 시수 균등 배정을 검증합니다.
+func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
+	store, bus := setupTestEnv(t)
+	svc := internal_exam.NewService(store, bus)
+
+	// 기실시 누적 0회 초기화 후 6개 교시 편성안 준비
+	if _, err := svc.UpdateTeacherExamPolicy(internal_exam.TeacherExamPolicyUpdate{ResetAllBaseCounts: true}); err != nil {
+		t.Fatalf("기실시 0회 초기화 실패: %v", err)
+	}
+	specs := []internal_exam.ExamPeriodSpec{
+		{Period: 1, Grade: 1, Subject: "국어", StartTime: "08:50", EndTime: "09:35", DurationMinutes: 45, ClassRooms: []string{"1-1", "1-2"}},
+		{Period: 2, Grade: 2, Subject: "수학", StartTime: "09:50", EndTime: "10:40", DurationMinutes: 50, ClassRooms: []string{"2-1", "2-2"}},
+		{Period: 3, Grade: 3, Subject: "영어", StartTime: "10:55", EndTime: "11:35", DurationMinutes: 40, ClassRooms: []string{"3-1", "3-2"}},
+		{Period: 4, Grade: 1, Subject: "사회", StartTime: "13:00", EndTime: "13:45", DurationMinutes: 45, ClassRooms: []string{"1-1", "1-2"}},
+		{Period: 5, Grade: 2, Subject: "과학", StartTime: "14:00", EndTime: "14:45", DurationMinutes: 45, ClassRooms: []string{"2-1", "2-2"}},
+		{Period: 6, Grade: 3, Subject: "역사", StartTime: "15:00", EndTime: "15:40", DurationMinutes: 40, ClassRooms: []string{"3-1", "3-2"}},
+	}
+
+	// 1. 정감독 1인 단독 운영 (DeputyMode: false)
+	singleSlots, err := svc.GenerateAndSave(protocol.ExamConfig{
+		ID: "exam-eq-single", Title: "정감독 단독 균등 검증", ExamDate: "2026-11-21", DeputyMode: false, HonoraryParentOn: false,
+	}, specs)
+	if err != nil || len(singleSlots) == 0 {
+		t.Fatalf("정감독 단독 배정 실패: %v", err)
+	}
+	for _, sl := range singleSlots {
+		if sl.TeacherID == "t15" || sl.TeacherID == "t16" {
+			t.Fatalf("특수반/보건실 제외 교사(%s)가 단독 운영 감독에 배정되었습니다", sl.TeacherName)
+		}
+	}
+	singleSum, err := svc.CalculateFairnessSummary()
+	if err != nil {
+		t.Fatalf("균등 현황 산출 실패: %v", err)
+	}
+	if singleSum.ExemptCount != 2 || singleSum.MaxGap > 1 {
+		t.Fatalf("정감독 단독 연간 총 시수 불균형 또는 제외수 오류: exempt=%d, gap=%d (%d~%d)",
+			singleSum.ExemptCount, singleSum.MaxGap, singleSum.MinTotal, singleSum.MaxTotal)
+	}
+
+	// 2. 정·부감독 2인 공동 운영 (DeputyMode: true)
+	deputySlots, err := svc.GenerateAndSave(protocol.ExamConfig{
+		ID: "exam-eq-deputy", Title: "정·부감독 공동 균등 검증", ExamDate: "2026-11-22", DeputyMode: true, HonoraryParentOn: false, BalanceMode: "TOTAL_AND_ROLE",
+	}, specs)
+	if err != nil || len(deputySlots) == 0 {
+		t.Fatalf("정·부감독 배정 실패: %v", err)
+	}
+	for _, sl := range deputySlots {
+		if sl.TeacherID == "t15" || sl.TeacherID == "t16" {
+			t.Fatalf("특수반/보건실 제외 교사(%s)가 정·부감독에 배정되었습니다", sl.TeacherName)
+		}
+	}
+	deputySum, err := svc.CalculateFairnessSummary()
+	if err != nil {
+		t.Fatalf("정·부감독 균등 현황 산출 실패: %v", err)
+	}
+	if deputySum.MaxGap > 1 || deputySum.MainGap > 1 {
+		t.Fatalf("정·부감독 연간 시수 불균형: totalGap=%d (%d~%d), mainGap=%d (%d~%d)",
+			deputySum.MaxGap, deputySum.MinTotal, deputySum.MaxTotal, deputySum.MainGap, deputySum.MinMain, deputySum.MaxMain)
 	}
 }

@@ -139,16 +139,10 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 		specs = s.ListSpecs()
 	}
 
-	// 기존 시험 시간 편성안 및 슬롯 정리 후 재생성
-	_ = s.store.ClearCollections("exam_specs")
+	// 기존 시험 설정·시간 편성안 및 슬롯 정리 후 재생성
+	_ = s.store.ClearCollections("exam_specs", "exam_configs", "exam_slots")
 	for i, sp := range specs {
 		_ = s.store.SaveRecord("exam_specs", fmt.Sprintf("spec-%d", i+1), sp)
-	}
-	oldSlots, _ := database.LoadCollection[protocol.ExamSlot](s.store, "exam_slots")
-	for _, old := range oldSlots {
-		if old.ExamID == cfg.ID {
-			_ = s.store.DeleteRecord("exam_slots", old.ID)
-		}
 	}
 
 	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
@@ -259,6 +253,9 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 	var recs []protocol.Teacher
 	for _, t := range teachers {
 		if t.IsParentHonorary || busyTeachers[t.ID] {
+			continue
+		}
+		if exempt, _ := IsEffectiveExamExempt(t); exempt {
 			continue
 		}
 		if t.HomeroomClass != "" && strings.EqualFold(t.HomeroomClass, roomPrefix) {

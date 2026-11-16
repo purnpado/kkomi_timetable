@@ -99,6 +99,7 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/internal-exam/unseal", a.handleUnsealInternalExam)
 	mux.HandleFunc("/api/internal-exam/substitute/recommend", a.handleRecommendSubstitute)
 	mux.HandleFunc("/api/internal-exam/substitute/apply", a.handleApplySubstitute)
+	mux.HandleFunc("/api/internal-exam/teacher-policy", a.handleInternalExamTeacherPolicy)
 
 	// 외부 시험감독 (수능·모평·검정고시 다단계 차출)
 	mux.HandleFunc("/api/external-exam/notices", a.handleExternalExamNotices)

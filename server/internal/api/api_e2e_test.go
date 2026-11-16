@@ -247,6 +247,12 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(string(raw), `"durationMinutes":40`) {
 		t.Fatalf("과목별 시험시간 배정 실패: status=%d, body=%s", code, string(raw))
 	}
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/internal-exam/teacher-policy", "t03", map[string]interface{}{
+		"teacherId": "t15", "internalExamExempt": true, "internalExamExemptReason": "특수반(개별고사장 전담)",
+	})
+	if code != http.StatusOK || !strings.Contains(string(raw), `"maxGap"`) {
+		t.Fatalf("교내 감독 제외 정책 API 실패: status=%d, body=%s", code, string(raw))
+	}
 
 	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/system/reset", "t01", map[string]string{"mode": "FULL_FACTORY_RESET"})
 	if code != http.StatusOK {
