@@ -56,7 +56,7 @@ export CGO_CFLAGS="-mmacosx-version-min=12.0"
 export CGO_LDFLAGS="-mmacosx-version-min=12.0"
 export MACOSX_DEPLOYMENT_TARGET="12.0"
 
-go build -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간서버" ./server/cmd/server
+go build -tags production -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간서버" ./server/cmd/server
 go build -tags production -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간" ./client
 
 # macOS codesign 호환을 위해 .app 내부 실행 바이너리는 영문 식별자로 유지
@@ -76,9 +76,9 @@ cp build/darwin/icons.icns "bin/darwin/꼬미시간서버.app/Contents/Resources
 xattr -cr "bin/darwin/꼬미시간서버.app" || true
 codesign --force --deep --sign - "bin/darwin/꼬미시간서버.app"
 
-# 4. Windows 교차 빌드 (릴리즈 타겟: 꼬미시간서버.exe, 꼬미시간.exe)
-echo ">>> [4/5] Windows x86_64 실행 파일 크로스 컴파일..."
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-w -s" -o "bin/windows/꼬미시간서버.exe" ./server/cmd/server
+# 4. Windows 교차 빌드 (릴리즈 타겟: 꼬미시간서버.exe, 꼬미시간.exe — 검은 CMD 창 숨김 -H windowsgui 적용)
+echo ">>> [4/5] Windows x86_64 GUI 실행 파일 크로스 컴파일..."
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o "bin/windows/꼬미시간서버.exe" ./server/cmd/server
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o "bin/windows/꼬미시간.exe" ./client
 
 rm -f client/*.syso server/cmd/server/*.syso
