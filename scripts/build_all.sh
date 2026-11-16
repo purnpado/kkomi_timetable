@@ -130,6 +130,8 @@ TXT
 
 cp "bin/windows/꼬미시간서버.exe" "dist/release/꼬미시간서버.exe"
 cp "bin/windows/꼬미시간.exe" "dist/release/꼬미시간.exe"
+cp "bin/windows/꼬미시간서버.exe" "dist/release/kkomi-timetable-server.exe"
+cp "bin/windows/꼬미시간.exe" "dist/release/kkomi-timetable-client.exe"
 
 python3 - <<PYEOF
 import os, unicodedata, zipfile

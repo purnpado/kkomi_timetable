@@ -249,6 +249,7 @@ func openGitHubClientAsset(httpCli *http.Client) (io.ReadCloser, error) {
 		TagName string `json:"tag_name"`
 		Assets  []struct {
 			Name               string `json:"name"`
+			Label              string `json:"label"`
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
@@ -259,7 +260,9 @@ func openGitHubClientAsset(httpCli *http.Client) (io.ReadCloser, error) {
 	var assetName, assetURL string
 	for _, a := range rel.Assets {
 		low := strings.ToLower(a.Name)
-		if strings.Contains(a.Name, "꼬미시간") && !strings.Contains(a.Name, "서버") && strings.HasSuffix(low, ".exe") {
+		isServer := strings.Contains(a.Name, "서버") || strings.Contains(a.Label, "서버") || strings.Contains(low, "server")
+		isClient := strings.Contains(a.Name, "꼬미시간") || strings.Contains(a.Label, "꼬미시간") || strings.Contains(low, "client") || strings.Contains(low, "kkomi-timetable")
+		if strings.HasSuffix(low, ".exe") && !isServer && isClient {
 			assetName = a.Name
 			assetURL = a.BrowserDownloadURL
 			break

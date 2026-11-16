@@ -49,6 +49,7 @@ type ghReleasePayload struct {
 	PublishedAt string `json:"published_at"`
 	Assets      []struct {
 		Name               string `json:"name"`
+		Label              string `json:"label"`
 		BrowserDownloadURL string `json:"browser_download_url"`
 	} `json:"assets"`
 }
@@ -144,14 +145,16 @@ func FetchLatestGitHubReleaseFrom(apiURL, currentVer string) (*GitHubReleaseInfo
 	}
 	for _, a := range raw.Assets {
 		low := strings.ToLower(a.Name)
+		isServer := strings.Contains(a.Name, "서버") || strings.Contains(a.Label, "서버") || strings.Contains(low, "server")
+		isClient := strings.Contains(a.Name, "꼬미시간") || strings.Contains(a.Label, "꼬미시간") || strings.Contains(low, "client") || strings.Contains(low, "kkomi-timetable")
 		switch {
 		case strings.HasSuffix(low, ".zip") && (strings.Contains(low, "portable") || strings.Contains(low, "kkomi-timetable")):
 			info.PortableZipName = a.Name
 			info.PortableZipURL = a.BrowserDownloadURL
-		case strings.Contains(a.Name, "서버") && strings.HasSuffix(low, ".exe"):
+		case strings.HasSuffix(low, ".exe") && isServer:
 			info.ServerAssetName = a.Name
 			info.ServerAssetURL = a.BrowserDownloadURL
-		case strings.Contains(a.Name, "꼬미시간") && !strings.Contains(a.Name, "서버") && strings.HasSuffix(low, ".exe"):
+		case strings.HasSuffix(low, ".exe") && !isServer && isClient:
 			info.ClientAssetName = a.Name
 			info.ClientAssetURL = a.BrowserDownloadURL
 		}
