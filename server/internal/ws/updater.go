@@ -137,9 +137,14 @@ func SelfReplaceServerAndRestart(src io.Reader, store *database.Store, onShutdow
 	}
 	if _, err := io.Copy(out, src); err != nil {
 		_ = out.Close()
+		_ = os.Remove(newPath)
 		return fmt.Errorf("임시 바이너리 쓰기 실패: %w", err)
 	}
 	_ = out.Close()
+
+	if valErr := validateServerBinaryForOS(newPath); valErr != nil {
+		return valErr
+	}
 
 	oldPath := exePath + ".old"
 	_ = os.Remove(oldPath)
@@ -166,5 +171,42 @@ func SelfReplaceServerAndRestart(src io.Reader, store *database.Store, onShutdow
 		os.Exit(0)
 	}()
 
+	return nil
+}
+
+func validateServerBinaryForOS(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	var hdr [4]byte
+	n, rErr := io.ReadFull(f, hdr[:])
+	_ = f.Close()
+	if rErr != nil || n < 4 {
+		_ = os.Remove(path)
+		return fmt.Errorf("손상되었거나 올바르지 않은 서버 바이너리 파일입니다")
+	}
+	isPE := hdr[0] == 'M' && hdr[1] == 'Z'
+	isMachO := (hdr[0] == 0xCF && hdr[1] == 0xFA && hdr[2] == 0xED && hdr[3] == 0xFE) ||
+		(hdr[0] == 0xFE && hdr[1] == 0xED && hdr[2] == 0xFA && hdr[3] == 0xCF) ||
+		(hdr[0] == 0xCA && hdr[1] == 0xFE && hdr[2] == 0xBA && hdr[3] == 0xBE) ||
+		(hdr[0] == 0xBE && hdr[1] == 0xBA && hdr[2] == 0xFE && hdr[3] == 0xCA)
+	switch runtime.GOOS {
+	case "windows":
+		if !isPE {
+			_ = os.Remove(path)
+			return fmt.Errorf("현재 OS(Windows)와 호환되지 않는 서버 실행 파일(.exe 아님)입니다")
+		}
+	case "darwin":
+		if isPE {
+			_ = os.Remove(path)
+			return fmt.Errorf("배포된 서버 파일이 Windows 전용(.exe)이므로 macOS 서버에 적용할 수 없습니다")
+		}
+		if !isMachO {
+			_ = os.Remove(path)
+			return fmt.Errorf("올바른 macOS 실행 파일(Mach-O) 형식이 아닙니다")
+		}
+	}
 	return nil
 }
