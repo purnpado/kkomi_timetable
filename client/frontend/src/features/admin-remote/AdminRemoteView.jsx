@@ -5,7 +5,7 @@ import TeacherManagerCard from "./TeacherManagerCard";
 
 const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
 
-// AdminRemoteView는 시스템 총괄(마스터)의 교사 관리, RBAC 권한 배정,
+// AdminRemoteView는 최고관리자(MASTER)의 교사 관리, RBAC 권한 배정,
 // 전체 시스템 초기화, 원격 DB 암호화 백업 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
 export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, onResetComplete, onNotify }) {
   const [backups, setBackups] = useState([]);
@@ -33,13 +33,18 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
   const toggleRole = async (role) => {
     if (!selectedTeacher) return;
     const current = selectedTeacher.roles || ["TEACHER"];
+    if (selectedTeacher.username === "admin" && role === "MASTER" && current.includes("MASTER")) {
+      onNotify("변경 불가", "시스템 기본 최고관리자(admin) 계정의 최고관리자 권한은 해제할 수 없습니다.", true);
+      return;
+    }
     const next = current.includes(role) ? current.filter((r) => r !== role) : [...current, role];
     try {
       await apiFetch(serverUrl, "/api/teachers/roles", user.id, {
         method: "POST",
         body: JSON.stringify({ teacherId: selectedTeacher.id, roles: next }),
       });
-      onNotify("권한 변경 완료", `${selectedTeacher.name} 선생님의 RBAC 업무분장이 업데이트되었습니다.`);
+      const targetLabel = selectedTeacher.username === "admin" ? "최고관리자" : `${selectedTeacher.name} 선생님`;
+      onNotify("권한 변경 완료", `${targetLabel}의 RBAC 업무분장이 업데이트되었습니다.`);
       onRefresh();
     } catch (err) {
       onNotify("권한 변경 실패", err.message, true);
@@ -141,11 +146,18 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
             <UserCog size={15} style={{ verticalAlign: "middle" }} /> 교사별 RBAC 권한 다중 겸임 설정
           </h3>
-          <select className="select" value={selectedTeacherId} onChange={(e) => setSelectedTeacherId(e.target.value)} style={{ marginBottom: 12 }}>
+          <select className="select" value={selectedTeacherId} onChange={(e) => setSelectedTeacherId(e.target.value)} style={{ marginBottom: 8 }}>
             {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => (
-              <option key={t.id} value={t.id}>{t.name} ({t.username} · {t.position})</option>
+              <option key={t.id} value={t.id}>
+                {t.username === "admin" ? `최고관리자 (${t.username} · 서버 시스템 계정)` : `${t.name} (${t.username} · ${t.position})`}
+              </option>
             ))}
           </select>
+          <div style={{ fontSize: 12, color: "#475569", marginBottom: 10 }}>
+            {selectedTeacher?.username === "admin"
+              ? "※ 기본 최고관리자(admin) 계정의 최고관리자 권한은 시스템 보호를 위해 해제할 수 없습니다."
+              : "※ 담당교사에게도 '최고관리자' 권한을 부여하여 일반 교사 업무와 최고관리자 기능을 함께 사용할 수 있습니다."}
+          </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {ALL_ROLES.map((role) => {
               const active = selectedTeacher?.roles?.includes(role);

@@ -319,6 +319,9 @@ func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
 		t.Fatalf("정감독 단독 배정 실패: %v", err)
 	}
 	for _, sl := range singleSlots {
+		if sl.TeacherID == "t01" {
+			t.Fatalf("시스템 기본 최고관리자(%s)가 단독 운영 감독에 배정되었습니다", sl.TeacherName)
+		}
 		if sl.TeacherID == "t15" {
 			t.Fatalf("특수반 제외 교사(%s)가 단독 운영 감독에 배정되었습니다", sl.TeacherName)
 		}
@@ -382,7 +385,7 @@ func TestInternalExamAnnualEqualizationAndExemption(t *testing.T) {
 		t.Fatalf("선택과목·별도고사실 감독 배정 실패: len=%d, err=%v", len(elecSlots), err)
 	}
 	for _, sl := range elecSlots {
-		if sl.SlotRole == "MAIN" && strings.HasPrefix(sl.RoomName, "세미나실A(국어)") && (sl.TeacherID == "t01" || sl.TeacherID == "t06") {
+		if sl.SlotRole == "MAIN" && strings.HasPrefix(sl.RoomName, "세미나실A(국어)") && (sl.TeacherID == "t17" || sl.TeacherID == "t06") {
 			t.Fatalf("국어 교과 담당(%s)이 세미나실A(국어) 선택과목 정감독에 배정되었습니다", sl.TeacherName)
 		}
 		if sl.SlotRole == "MAIN" && strings.HasPrefix(sl.RoomName, "2-1(영어)") && (sl.TeacherID == "t02" || sl.TeacherID == "t03" || sl.TeacherID == "t08") {

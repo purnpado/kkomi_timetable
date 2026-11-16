@@ -4,7 +4,7 @@ import {
   LogOut, Search, ServerCog, ShieldCheck, TableProperties,
 } from "lucide-react";
 import {
-  apiFetch, checkInClassNow, hasRole, resolveServerUrl,
+  apiFetch, checkInClassNow, formatUserDisplayName, hasRole, resolveServerUrl,
   ROLE_LABELS, subscribeDesktopEvents, toggleSideDockBridge,
 } from "./events/eventStore";
 import ToastHub from "./components/ui/ToastHub";
@@ -204,7 +204,7 @@ export default function App() {
 
         <div style={{ marginTop: "auto", padding: "12px 6px 4px", borderTop: "1px solid rgba(255,255,255,0.12)", fontSize: 12, display: "flex", flexDirection: "column", gap: 6 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{user.name} 선생님</div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{formatUserDisplayName(user)}</div>
             <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 2 }}>
               {(user.roles || []).map((r) => ROLE_LABELS[r] || r).join(" · ")}
             </div>

@@ -71,14 +71,17 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 			return backupPath, err
 		}
 		admin := protocol.Teacher{
-			ID:                 "t01",
-			Username:           "admin",
-			PasswordHash:       string(hashBytes),
-			MustChangePassword: true,
-			Name:               "시스템 관리자",
-			Position:           "교무총괄",
-			IsDepartmentHead:   true,
-			Subject:            "행정/총괄",
+			ID:                       "t01",
+			Username:                 "admin",
+			PasswordHash:             string(hashBytes),
+			MustChangePassword:       true,
+			Name:                     "최고관리자",
+			Position:                 "최고관리자",
+			IsDepartmentHead:         false,
+			Subject:                  "시스템",
+			InternalExamExempt:       true,
+			InternalExamExemptReason: "시스템 최고관리자 계정",
+			ExemptReasons:            []string{"시스템 최고관리자 계정"},
 			Roles: []protocol.Role{
 				protocol.RoleMaster,
 				protocol.RoleTimetableAdmin,

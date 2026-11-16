@@ -130,6 +130,9 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 			honoraryParents = append(honoraryParents, t)
 			continue
 		}
+		if protocol.IsSystemAdminAccount(t) {
+			continue
+		}
 		m, s, c, tot := EffectiveBaseCounts(t)
 		load[t.ID] = &roleLoad{Main: m, Sub: s, Corridor: c, Total: tot}
 		if exempt, _ := IsEffectiveExamExempt(t); !exempt {

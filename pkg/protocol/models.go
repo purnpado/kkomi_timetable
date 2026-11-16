@@ -1,10 +1,12 @@
 package protocol
 
+import "strings"
+
 // Role은 업무분장(RBAC) 권한 상수를 정의합니다. 1인의 교사가 여러 권한을 겸임할 수 있습니다.
 type Role string
 
 const (
-	RoleMaster            Role = "MASTER"              // 시스템 총괄 (마스터)
+	RoleMaster            Role = "MASTER"              // 최고관리자
 	RoleTimetableAdmin    Role = "TIMETABLE_ADMIN"     // 시간표 담당교사
 	RoleInternalExamAdmin Role = "INTERNAL_EXAM_ADMIN" // 교내 시험감독 담당교사
 	RoleExternalExamAdmin Role = "EXTERNAL_EXAM_ADMIN" // 외부 시험감독 담당교사
@@ -284,4 +286,10 @@ type BellPeriod struct {
 	Label     string `json:"label"`     // 예: "1교시", "아침조회"
 	StartTime string `json:"startTime"` // "08:40"
 	EndTime   string `json:"endTime"`   // "09:30"
+}
+
+// IsSystemAdminAccount는 실제 교원이 아닌 서버 초기 구동·비상 관리용 기본 '최고관리자(admin)' 시스템 계정인지 판별합니다.
+func IsSystemAdminAccount(t Teacher) bool {
+	return strings.EqualFold(strings.TrimSpace(t.Username), "admin") &&
+		(t.Name == "최고관리자" || t.Name == "시스템 관리자" || t.Subject == "시스템" || t.Subject == "행정/총괄")
 }

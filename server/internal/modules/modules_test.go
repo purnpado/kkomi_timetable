@@ -384,10 +384,21 @@ func TestSystemResetAndPasswordChangeAndExamDuration(t *testing.T) {
 	authSvc := auth.NewService(store)
 	examSvc := internal_exam.NewService(store, bus)
 
-	// 1. admin / 1234 로그인 시 MustChangePassword=true 확인 후 변경 -> false 확인
+	// 1. admin / 1234 로그인 시 이름('최고관리자') 및 MustChangePassword=true 확인 후 변경 -> false 확인
 	admin, err := authSvc.Authenticate("admin", "1234")
-	if err != nil || !admin.MustChangePassword {
-		t.Fatalf("초기 admin 로그인 또는 비밀번호 변경 플래그 오류: err=%v, admin=%+v", err, admin)
+	if err != nil || !admin.MustChangePassword || admin.Name != "최고관리자" {
+		t.Fatalf("초기 admin 로그인, 최고관리자 명칭 또는 비밀번호 변경 플래그 오류: err=%v, admin=%+v", err, admin)
+	}
+	if err := authSvc.DeleteTeacher("t01"); err == nil {
+		t.Fatalf("시스템 기본 최고관리자(admin) 계정 삭제가 차단되지 않았습니다")
+	}
+	keptAdmin, err := authSvc.UpdateRoles("t01", []protocol.Role{protocol.RoleTeacher})
+	if err != nil || !auth.HasRole(keptAdmin, protocol.RoleMaster) {
+		t.Fatalf("기본 admin 계정의 최고관리자 권한 보호 실패: err=%v, roles=%+v", err, keptAdmin)
+	}
+	grantedMaster, err := authSvc.UpdateRoles("t06", []protocol.Role{protocol.RoleMaster, protocol.RoleTeacher})
+	if err != nil || !auth.HasRole(grantedMaster, protocol.RoleMaster) {
+		t.Fatalf("일반 교사에게 최고관리자 권한 부여 실패: err=%v, granted=%+v", err, grantedMaster)
 	}
 	updated, err := authSvc.ChangePassword(admin.ID, "1234", "kkomi2026")
 	if err != nil || updated.MustChangePassword {

@@ -152,8 +152,8 @@ func (s *Service) CalculateCandidates(noticeID string) ([]protocol.ExternalExamC
 	var candidates []protocol.ExternalExamCandidate
 
 	for _, t := range teachers {
-		if t.IsParentHonorary {
-			continue // 학부모 명예감독은 외부 교원 파견 대상에서 제외
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) {
+			continue // 학부모 명예감독 및 시스템 기본 최고관리자(admin)는 외부 파견 대상에서 제외
 		}
 		isVol := slices.Contains(notice.VolunteerIDs, t.ID)
 		isExempt := len(t.ExemptReasons) > 0

@@ -1,5 +1,6 @@
 import React from "react";
 import { BookOpen, CalendarDays, CheckSquare, Clock, Lock, ShieldAlert, Unlock, Users } from "lucide-react";
+import { formatUserDisplayName } from "../../events/eventStore";
 
 function StatGauge({ label, value, max, color }) {
   const pct = Math.min(100, Math.round((value / Math.max(1, max)) * 100));
@@ -43,7 +44,7 @@ export default function DashboardView({ user, summary, onNavigate, onOpenApprova
             🐾 꼬미시간 v{summary?.serverVersion || "0.1.0"} · {summary?.todayDate} · {summary?.databaseMode}
           </div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
-            안녕하세요, {user?.name} 선생님 ({user?.position})
+            안녕하세요, {formatUserDisplayName(user)}{user?.position && user?.position !== user?.name ? ` (${user.position})` : ""}
           </h2>
           <div style={{ fontSize: 13, color: "#e2e8f0", marginTop: 4 }}>
             오늘의 수업·담임반·시험감독·학사일정·결재 현황을 한눈에 확인하세요.

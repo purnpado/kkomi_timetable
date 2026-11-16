@@ -281,7 +281,7 @@ func (s *Service) CalculateFairnessSummary() (protocol.ExamFairnessSummary, erro
 	}
 
 	for _, t := range teachers {
-		if t.IsParentHonorary {
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) {
 			continue
 		}
 		exempt, reason := IsEffectiveExamExempt(t)

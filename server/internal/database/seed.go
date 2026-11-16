@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -12,8 +13,11 @@ import (
 // SeedIfEmpty는 DB가 비어 있을 때 중·고등학교 교무실 시나리오에 맞는 초기 데이터를 시딩합니다.
 func SeedIfEmpty(s *Store) error {
 	cnt, err := s.CountCollection("teachers")
-	if err != nil || cnt > 0 {
+	if err != nil {
 		return err
+	}
+	if cnt > 0 {
+		return upgradeLegacyAdminIfNeeded(s)
 	}
 
 	hashBytes, err := bcrypt.GenerateFromPassword([]byte("1234"), bcrypt.MinCost)
@@ -93,10 +97,12 @@ func SeedIfEmpty(s *Store) error {
 func buildSeedTeachers(pwHash string) []protocol.Teacher {
 	return []protocol.Teacher{
 		{
-			ID: "t01", Username: "admin", PasswordHash: pwHash, MustChangePassword: true, Name: "김교무", Position: "교무부장",
-			IsDepartmentHead: true, Subject: "국어", HomeroomClass: "", Phone: "010-2100-0001",
-			Roles:        []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleInternalExamAdmin, protocol.RoleExternalExamAdmin, protocol.RoleEventAdmin, protocol.RoleTeacher},
-			TransferDate: "2022-03-01", LastExternalDispatch: "2024-11-14", ExternalExamCount: 2, InternalExamCount: 2, AnnualMainCount: 1, AnnualSubCount: 1, SubstitutionCount: 2,
+			ID: "t01", Username: "admin", PasswordHash: pwHash, MustChangePassword: true, Name: "최고관리자", Position: "최고관리자",
+			IsDepartmentHead: false, Subject: "시스템", HomeroomClass: "", Phone: "",
+			Roles:                    []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleInternalExamAdmin, protocol.RoleExternalExamAdmin, protocol.RoleEventAdmin, protocol.RoleTeacher},
+			InternalExamExempt:       true,
+			InternalExamExemptReason: "시스템 최고관리자 계정",
+			ExemptReasons:            []string{"시스템 최고관리자 계정"},
 		},
 		{
 			ID: "t02", Username: "timetable", PasswordHash: pwHash, MustChangePassword: true, Name: "이수업", Position: "교무기획(수업계)",
@@ -196,6 +202,12 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 			InternalExamExempt: false,
 		},
 		{
+			ID: "t17", Username: "kim", PasswordHash: pwHash, MustChangePassword: true, Name: "김교무", Position: "교무부장",
+			IsDepartmentHead: true, Subject: "국어", HomeroomClass: "", Phone: "010-2100-0001",
+			Roles:        []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleTeacher},
+			TransferDate: "2022-03-01", LastExternalDispatch: "2024-11-14", ExternalExamCount: 2, InternalExamCount: 2, AnnualMainCount: 1, AnnualSubCount: 1, SubstitutionCount: 2,
+		},
+		{
 			ID: "p01", Username: "parent1", PasswordHash: pwHash, Name: "김학부모(명예)", Position: "학부모 명예감독",
 			Subject: "명예감독", HomeroomClass: "", Phone: "010-3300-1001",
 			Roles:            []protocol.Role{protocol.RoleTeacher},
@@ -235,13 +247,13 @@ func buildSeedTimetable() []protocol.TimetableCell {
 
 		{ID: "c-1-1-21", DayOfWeek: 1, Period: 1, ClassName: "2-1", Grade: 2, Subject: "수학", SubjectCode: "MAT201", TeacherID: "t02", Room: "2-1교실"},
 		{ID: "c-1-2-21", DayOfWeek: 1, Period: 2, ClassName: "2-1", Grade: 2, Subject: "영어", SubjectCode: "ENG201", TeacherID: "t03", Room: "2-1교실"},
-		{ID: "c-1-3-21", DayOfWeek: 1, Period: 3, ClassName: "2-1", Grade: 2, Subject: "국어", SubjectCode: "KOR201", TeacherID: "t01", Room: "2-1교실"},
+		{ID: "c-1-3-21", DayOfWeek: 1, Period: 3, ClassName: "2-1", Grade: 2, Subject: "국어", SubjectCode: "KOR201", TeacherID: "t17", Room: "2-1교실"},
 		{ID: "c-1-4-21", DayOfWeek: 1, Period: 4, ClassName: "2-1", Grade: 2, Subject: "역사", SubjectCode: "HIS201", TeacherID: "t10", Room: "2-1교실"},
 		{ID: "c-1-5-21", DayOfWeek: 1, Period: 5, ClassName: "2-1", Grade: 2, Subject: "선택A(심화수학)", SubjectCode: "ELM201", TeacherID: "t07", Room: "세미나실A", ElectiveGroup: "G2-EL-A"},
 		{ID: "c-1-6-21", DayOfWeek: 1, Period: 6, ClassName: "2-1", Grade: 2, Subject: "체육", SubjectCode: "PHY201", TeacherID: "t12", Room: "체육관"},
 
 		// 화~금 주요 시간표
-		{ID: "c-2-1-21", DayOfWeek: 2, Period: 1, ClassName: "2-1", Grade: 2, Subject: "국어", SubjectCode: "KOR201", TeacherID: "t01", Room: "2-1교실"},
+		{ID: "c-2-1-21", DayOfWeek: 2, Period: 1, ClassName: "2-1", Grade: 2, Subject: "국어", SubjectCode: "KOR201", TeacherID: "t17", Room: "2-1교실"},
 		{ID: "c-2-2-21", DayOfWeek: 2, Period: 2, ClassName: "2-1", Grade: 2, Subject: "수학", SubjectCode: "MAT201", TeacherID: "t02", Room: "2-1교실"},
 		{ID: "c-2-3-21", DayOfWeek: 2, Period: 3, ClassName: "2-1", Grade: 2, Subject: "과학", SubjectCode: "SCI201", TeacherID: "t04", Room: "과학실2"},
 		{ID: "c-2-4-21", DayOfWeek: 2, Period: 4, ClassName: "2-1", Grade: 2, Subject: "음악", SubjectCode: "MUS201", TeacherID: "t13", Room: "음악실"},
@@ -386,9 +398,65 @@ func buildSeedTeachingLoads() []protocol.TeachingLoad {
 		{ID: "ld-1-pe", TeacherID: "t12", TeacherName: "송체육", Subject: "체육", ShortSubject: "체육", SubjectCode: "PHY101", Grade: 1, ClassHours: map[string]int{"1-1": 3, "1-2": 3}, TotalHours: 6, BlockHours: 1, DedicatedRoom: "체육관"},
 		{ID: "ld-1-mus", TeacherID: "t13", TeacherName: "배음악", Subject: "음악", ShortSubject: "음악", SubjectCode: "MUS101", Grade: 1, ClassHours: map[string]int{"1-1": 2, "1-2": 2}, TotalHours: 4, BlockHours: 1, DedicatedRoom: "음악실"},
 		{ID: "ld-1-art", TeacherID: "t14", TeacherName: "임미술", Subject: "미술", ShortSubject: "미술", SubjectCode: "ART101", Grade: 1, ClassHours: map[string]int{"1-1": 1, "1-2": 1}, TotalHours: 2, BlockHours: 1, DedicatedRoom: "미술실"},
-		{ID: "ld-2-kor", TeacherID: "t01", TeacherName: "김교무", Subject: "국어", ShortSubject: "국어", SubjectCode: "KOR201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1},
+		{ID: "ld-2-kor", TeacherID: "t17", TeacherName: "김교무", Subject: "국어", ShortSubject: "국어", SubjectCode: "KOR201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1},
 		{ID: "ld-2-mat", TeacherID: "t07", TeacherName: "조수학", Subject: "수학", ShortSubject: "수학", SubjectCode: "MAT201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1, DedicatedRoom: "수학전용1실"},
 		{ID: "ld-2-eng", TeacherID: "t03", TeacherName: "박평가", Subject: "영어", ShortSubject: "영어", SubjectCode: "ENG201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1},
 		{ID: "ld-2-sci", TeacherID: "t04", TeacherName: "최외부", Subject: "과학", ShortSubject: "과학", SubjectCode: "SCI201", Grade: 2, ClassHours: map[string]int{"2-1": 4, "2-2": 4}, TotalHours: 8, BlockHours: 1, DedicatedRoom: "과학실1"},
 	}
+}
+
+func upgradeLegacyAdminIfNeeded(s *Store) error {
+	teachers, err := LoadCollection[protocol.Teacher](s, "teachers")
+	if err != nil {
+		return err
+	}
+	adminIdx, hasKim := -1, false
+	for i := range teachers {
+		uname := strings.TrimSpace(teachers[i].Username)
+		if strings.EqualFold(uname, "admin") || teachers[i].ID == "t01" {
+			adminIdx = i
+		} else if teachers[i].ID == "t17" || strings.EqualFold(uname, "kim") || teachers[i].Name == "김교무" {
+			hasKim = true
+		}
+	}
+	if adminIdx < 0 {
+		return nil
+	}
+	adm := teachers[adminIdx]
+	if adm.Name == "김교무" && !hasKim {
+		kim := adm
+		kim.ID, kim.Username, kim.Position = "t17", "kim", "교무부장"
+		kim.IsDepartmentHead, kim.Subject = true, "국어"
+		kim.InternalExamExempt, kim.InternalExamExemptReason, kim.ExemptReasons = false, "", nil
+		kim.Roles = []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleTeacher}
+		_ = s.SaveRecord("teachers", kim.ID, kim)
+		cells, _ := LoadCollection[protocol.TimetableCell](s, "timetable_cells")
+		for _, c := range cells {
+			if c.TeacherID == adm.ID || c.CoTeacherID == adm.ID {
+				if c.TeacherID == adm.ID {
+					c.TeacherID = "t17"
+				}
+				if c.CoTeacherID == adm.ID {
+					c.CoTeacherID = "t17"
+				}
+				_ = s.SaveRecord("timetable_cells", c.ID, c)
+			}
+		}
+		loads, _ := LoadCollection[protocol.TeachingLoad](s, "teaching_loads")
+		for _, ld := range loads {
+			if ld.TeacherID == adm.ID {
+				ld.TeacherID = "t17"
+				_ = s.SaveRecord("teaching_loads", ld.ID, ld)
+			}
+		}
+	}
+	if adm.Name != "최고관리자" || adm.Subject != "시스템" || !adm.InternalExamExempt {
+		adm.Name, adm.Position, adm.IsDepartmentHead = "최고관리자", "최고관리자", false
+		adm.Subject, adm.HomeroomClass, adm.Phone = "시스템", "", ""
+		adm.InternalExamExempt, adm.InternalExamExemptReason = true, "시스템 최고관리자 계정"
+		adm.ExemptReasons = []string{"시스템 최고관리자 계정"}
+		adm.Roles = []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleInternalExamAdmin, protocol.RoleExternalExamAdmin, protocol.RoleEventAdmin, protocol.RoleTeacher}
+		return s.SaveRecord("teachers", adm.ID, adm)
+	}
+	return nil
 }

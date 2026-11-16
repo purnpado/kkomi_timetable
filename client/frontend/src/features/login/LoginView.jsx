@@ -3,7 +3,7 @@ import { KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-reac
 import { apiFetch, connectDesktopBridge } from "../../events/eventStore";
 
 const QUICK_ACCOUNTS = [
-  { label: "admin (시스템총괄·전체권한)", username: "admin", badge: "마스터" },
+  { label: "최고관리자 (admin · 서버 전체관리)", username: "admin", badge: "최고관리자" },
   { label: "이수업 (시간표 담당)", username: "timetable", badge: "수업계" },
   { label: "박평가 (교내시험감독 담당)", username: "internal", badge: "평가계" },
   { label: "최외부 (외부시험감독 담당)", username: "external", badge: "대외계" },

@@ -103,13 +103,19 @@ export function checkInClassNow(bellSchedule = []) {
 }
 
 export const ROLE_LABELS = {
-  MASTER: "시스템 총괄",
+  MASTER: "최고관리자",
   TIMETABLE_ADMIN: "시간표 담당",
   INTERNAL_EXAM_ADMIN: "교내감독 담당",
   EXTERNAL_EXAM_ADMIN: "외부감독 담당",
   EVENT_ADMIN: "행사 담당",
   TEACHER: "일반 교사",
 };
+
+export function formatUserDisplayName(user) {
+  if (!user) return "";
+  if (user.username === "admin" || user.name === "최고관리자") return "최고관리자";
+  return `${user.name} 선생님`;
+}
 
 export function hasRole(user, ...roles) {
   if (!user || !Array.isArray(user.roles)) return false;

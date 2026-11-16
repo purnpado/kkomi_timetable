@@ -252,7 +252,7 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 	roomPrefix := extractRoomBaseClass(target.RoomName)
 	var recs []protocol.Teacher
 	for _, t := range teachers {
-		if t.IsParentHonorary || busyTeachers[t.ID] {
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || busyTeachers[t.ID] {
 			continue
 		}
 		if exempt, _ := IsEffectiveExamExempt(t); exempt {

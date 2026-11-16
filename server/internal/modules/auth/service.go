@@ -211,15 +211,23 @@ func (s *Service) ResetTeacherPassword(teacherID string) error {
 	return s.store.SaveRecord("teachers", t.ID, *t)
 }
 
-// DeleteTeacher는 교사 레코드를 삭제합니다. (시스템 총괄 전용)
+// DeleteTeacher는 교사 레코드를 삭제합니다. (최고관리자 전용, 시스템 기본 admin 계정은 삭제 불가)
 func (s *Service) DeleteTeacher(id string) error {
-	if strings.TrimSpace(id) == "" {
+	cleanID := strings.TrimSpace(id)
+	if cleanID == "" {
 		return errors.New("삭제할 교사 ID가 필요합니다")
 	}
-	return s.store.DeleteRecord("teachers", id)
+	if cleanID == "t01" {
+		return errors.New("시스템 기본 최고관리자(admin) 계정은 삭제할 수 없습니다")
+	}
+	if t, err := s.GetTeacher(cleanID); err == nil && (strings.EqualFold(strings.TrimSpace(t.Username), "admin") || protocol.IsSystemAdminAccount(*t)) {
+		return errors.New("시스템 기본 최고관리자(admin) 계정은 삭제할 수 없습니다")
+	}
+	return s.store.DeleteRecord("teachers", cleanID)
 }
 
-// UpdateRoles는 시스템 총괄(MASTER)이 특정 교사의 다중 업무분장 권한을 부여/수정합니다.
+// UpdateRoles는 최고관리자(MASTER)가 특정 교사의 다중 업무분장 권한을 부여/수정합니다.
+// 일반 교사에게도 RoleMaster(최고관리자) 권한 부여/해제가 가능하며, 기본 admin 계정의 RoleMaster는 항상 유지됩니다.
 func (s *Service) UpdateRoles(teacherID string, roles []protocol.Role) (*protocol.Teacher, error) {
 	t, err := s.GetTeacher(teacherID)
 	if err != nil {
@@ -227,6 +235,9 @@ func (s *Service) UpdateRoles(teacherID string, roles []protocol.Role) (*protoco
 	}
 	if !slices.Contains(roles, protocol.RoleTeacher) {
 		roles = append(roles, protocol.RoleTeacher)
+	}
+	if (strings.EqualFold(strings.TrimSpace(t.Username), "admin") || t.ID == "t01") && !slices.Contains(roles, protocol.RoleMaster) {
+		roles = append(roles, protocol.RoleMaster)
 	}
 	t.Roles = roles
 	if err := s.store.SaveRecord("teachers", t.ID, *t); err != nil {
@@ -250,13 +261,16 @@ func (s *Service) TransferRoleHandover(fromTeacherID, toTeacherID string, role p
 		return err
 	}
 
-	filtered := make([]protocol.Role, 0, len(fromT.Roles))
-	for _, r := range fromT.Roles {
-		if r != role {
-			filtered = append(filtered, r)
+	isBaseAdminMaster := (strings.EqualFold(strings.TrimSpace(fromT.Username), "admin") || fromT.ID == "t01") && role == protocol.RoleMaster
+	if !isBaseAdminMaster {
+		filtered := make([]protocol.Role, 0, len(fromT.Roles))
+		for _, r := range fromT.Roles {
+			if r != role {
+				filtered = append(filtered, r)
+			}
 		}
+		fromT.Roles = filtered
 	}
-	fromT.Roles = filtered
 	if !slices.Contains(toT.Roles, role) {
 		toT.Roles = append(toT.Roles, role)
 	}

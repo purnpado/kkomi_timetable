@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Download, KeyRound, Trash2, Upload, UserPlus } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
 
-// TeacherManagerCard는 마스터 또는 시간표 담당교사가 클라이언트에서 신규 교사 등록,
+// TeacherManagerCard는 최고관리자 또는 시간표 담당교사가 클라이언트에서 신규 교사 등록,
 // 전용 교과교실 지정, 명렬표 엑셀 다운로드/일괄 업로드를 수행하는 관리 카드입니다.
 export default function TeacherManagerCard({ serverUrl, user, teachers, onRefresh, onNotify }) {
   const [name, setName] = useState("");
@@ -136,7 +136,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
                       <KeyRound size={12} /> 비번초기화
                     </button>
                   )}
-                  {t.id !== user.id && hasRole(user, "MASTER") && (
+                  {t.id !== user.id && t.username !== "admin" && hasRole(user, "MASTER") && (
                     <button className="btn btn-sm btn-danger" onClick={() => handleDeleteTeacher(t.id, t.name)}>
                       <Trash2 size={12} /> 삭제
                     </button>
