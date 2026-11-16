@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -77,6 +78,51 @@ func tryExtractPortableRuntimeFromZip(binName string) string {
 				log.Printf("[DB] 포터블 MariaDB 런타임 자동 복원 완료: %s", destRoot)
 				return destRoot
 			}
+		}
+	}
+	if prepared := tryRunDarwinRuntimePrepareScript(binName); prepared != "" {
+		return prepared
+	}
+	return ""
+}
+
+func tryRunDarwinRuntimePrepareScript(binName string) string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	starts := []string{pathutil.ExecutableDir(), pathutil.BaseDir(), mustGetwd()}
+	seenScripts := make(map[string]struct{})
+	for _, start := range starts {
+		cur := start
+		for i := 0; i < 6 && cur != "" && cur != string(filepath.Separator); i++ {
+			scriptPath := pathutil.SafeJoin(cur, "scripts", "prepare_mariadb_runtime.sh")
+			if _, seen := seenScripts[scriptPath]; !seen {
+				seenScripts[scriptPath] = struct{}{}
+				if info, err := os.Stat(scriptPath); err == nil && !info.IsDir() {
+					log.Printf("[DB] macOS 포터블 MariaDB 런타임이 없어 %s 실행으로 자동 복원을 시도합니다...", scriptPath)
+					cmd := exec.Command("bash", scriptPath)
+					cmd.Dir = cur
+					if out, runErr := cmd.CombinedOutput(); runErr != nil {
+						log.Printf("[DB] macOS 런타임 자동 복원 실패: %v (%s)", runErr, strings.TrimSpace(string(out)))
+					} else {
+						candidates := []string{
+							pathutil.SafeJoin(cur, "bin", "darwin", "runtime", "mariadb"),
+							pathutil.SafeJoin(pathutil.BaseDir(), "runtime", "mariadb"),
+						}
+						for _, cand := range candidates {
+							if st, stErr := os.Stat(pathutil.SafeJoin(cand, "bin", binName)); stErr == nil && !st.IsDir() {
+								log.Printf("[DB] macOS 포터블 MariaDB 런타임 자동 복원 완료: %s", cand)
+								return cand
+							}
+						}
+					}
+				}
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
 		}
 	}
 	return ""

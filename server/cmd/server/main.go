@@ -11,7 +11,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -60,6 +64,55 @@ func failAndPause(shutdownFn func(), title string, err error, hints ...string) {
 	os.Exit(1)
 }
 
+func shellQuoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// relaunchInDarwinTerminal은 Finder 등에서 꼬미시간서버.app을 더블클릭했을 때
+// 터미널 창 없이 백그라운드 종료되는 문제를 막기 위해 Terminal.app에서 서버를 실행합니다.
+func relaunchInDarwinTerminal(port int) bool {
+	if runtime.GOOS != "darwin" || os.Getenv("KKOMI_IN_TERMINAL") == "1" {
+		return false
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	if resolved, rErr := filepath.EvalSymlinks(exePath); rErr == nil && resolved != "" {
+		exePath = resolved
+	}
+	if !strings.Contains(exePath, filepath.Join(".app", "Contents", "MacOS")) {
+		return false
+	}
+	if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+		return false
+	}
+
+	targetBin := exePath
+	if sibling := pathutil.SafeJoin(pathutil.ExecutableDir(), "꼬미시간서버"); sibling != "" {
+		if info, sErr := os.Stat(sibling); sErr == nil && !info.IsDir() {
+			targetBin = sibling
+		}
+	}
+
+	shellCmd := fmt.Sprintf("KKOMI_IN_TERMINAL=1 %s --port %d", shellQuoteSingle(targetBin), port)
+	cmd := exec.Command(
+		"osascript",
+		"-e", `on run argv`,
+		"-e", `tell application "Terminal"`,
+		"-e", `activate`,
+		"-e", `do script (item 1 of argv)`,
+		"-e", `end tell`,
+		"-e", `end run`,
+		shellCmd,
+	)
+	if runErr := cmd.Run(); runErr != nil {
+		log.Printf("[시스템] Terminal.app 자동 실행 실패(백그라운드 계속 시도): %v", runErr)
+		return false
+	}
+	return true
+}
+
 func main() {
 	port := flag.Int("port", 18090, "업무망 LAN HTTP/WebSocket 서버 포트")
 	initTemplate := flag.Bool("init-template", false, "기본 .hwpx 템플릿 파일만 생성하고 종료")
@@ -78,6 +131,10 @@ func main() {
 		if _, err := fmt.Sscanf(envPort, "%d", &p); err == nil && p > 0 {
 			*port = p
 		}
+	}
+
+	if relaunchInDarwinTerminal(*port) {
+		os.Exit(0)
 	}
 
 	// DB 기동 중 인터럽트(Ctrl+C/SIGTERM) 발생 시에도 고아 mariadbd가 남지 않도록 선행 등록
