@@ -25,13 +25,10 @@ import (
 //go:embed all:webdist
 var embeddedWebFS embed.FS
 
-//go:embed tray-icon.png
-var serverTrayIcon []byte
-
 func main() {
 	port := flag.Int("port", 18090, "업무망 LAN HTTP/WebSocket 서버 포트")
 	initTemplate := flag.Bool("init-template", false, "기본 .hwpx 템플릿 파일만 생성하고 종료")
-	headless := flag.Bool("headless", false, "GUI 창/트레이 없이 콘솔 데몬 모드로만 실행")
+	_ = flag.Bool("headless", true, "콘솔 데몬 모드 호환 플래그")
 	flag.Parse()
 
 	if *initTemplate {
@@ -52,7 +49,7 @@ func main() {
 	pathutil.CleanupOldBinaries()
 
 	log.Println("============================================================")
-	log.Printf("🐾 꼬미시간 통합 학사·시험감독 서버 v%s 시작", ws.ServerVersion)
+	log.Printf("🐾 꼬미시간 통합 학사·시험감독 서버 v%s (CMD 콘솔 서버)", ws.ServerVersion)
 	log.Printf("📁 실행 기준 절대경로: %s", pathutil.BaseDir())
 
 	store, err := database.Open()
@@ -100,11 +97,12 @@ func main() {
 
 	lanIP := ws.LocalIPAddress()
 	log.Printf("🗄️  DB 구동 모드: %s", store.ModeLabel())
-	log.Printf("🌐 업무망 고정 IP 접속 안내: http://%s:%d", lanIP, *port)
-	log.Printf("🔌 교사용 클라이언트(꼬미시간.exe) 서버 주소 입력: %s:%d", lanIP, *port)
+	log.Printf("🌐 업무망 고정 IP 웹 접속: http://%s:%d", lanIP, *port)
+	log.Printf("🔌 교사용 클라이언트(꼬미시간.exe) 서버 주소 입력: http://%s:%d", lanIP, *port)
+	log.Println("💡 교사 명렬표·학년별/학급별 기초 시간표 작성은 클라이언트(마스터/담당 권한)에서 수행하세요.")
+	log.Println("🛑 종료하려면 이 창을 닫거나 Ctrl+C를 누르세요.")
 	log.Println("============================================================")
 
-	// OS 종료 시그널(SIGINT, SIGTERM) 수신 시 안전 종료
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -115,22 +113,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	if *headless {
-		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[서버 오류] HTTP/WebSocket 리스닝 실패: %v", err)
-		}
-		return
+	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("[서버 오류] HTTP/WebSocket 리스닝 실패: %v", err)
 	}
-
-	// 백그라운드 고루틴으로 업무망 HTTP/WebSocket 서버 실행 후 Wails v3 GUI + 시스템 트레이 시작
-	go func() {
-		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Printf("[서버 오류] HTTP/WebSocket 서빙 중단: %v", err)
-		}
-	}()
-
-	runServerGUI(webSubFS, lanIP, *port, store.ModeLabel(), func() {
-		serverApp.InternalExam.StopScheduler()
-		shutdownFn()
-	})
 }

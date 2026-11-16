@@ -148,11 +148,31 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("시스템 마스터 백업 생성 실패: %d", code)
 	}
-	for _, ep := range []string{"/api/export/hwpx?kind=calendar", "/api/export/xlsx?kind=timetable", "/api/export/print"} {
+	for _, ep := range []string{"/api/export/hwpx?kind=calendar", "/api/export/xlsx?kind=timetable", "/api/export/xlsx?kind=base-template", "/api/export/print"} {
 		c, body := doRecorderReq(t, h, http.MethodGet, ep, "t01", nil)
 		if c != http.StatusOK || len(body) == 0 {
 			t.Fatalf("출력 엔드포인트 실패 (%s): status=%d", ep, c)
 		}
+	}
+
+	// 7. 클라이언트에서 마스터/시간표 담당 권한으로 기초 시간표 셀 저장·삭제·일괄 자동 편성
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/timetable/cells", "t01", protocol.TimetableCell{
+		DayOfWeek: 4, Period: 6, ClassName: "1-3", Grade: 1, Subject: "국어", TeacherID: "t06",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("기초 시간표 셀 저장 실패: status=%d, body=%s", code, string(raw))
+	}
+	var savedCell protocol.TimetableCell
+	_ = json.Unmarshal(raw, &savedCell)
+	code, _ = doRecorderReq(t, h, http.MethodDelete, "/api/timetable/cells?id="+savedCell.ID, "t01", nil)
+	if code != http.StatusOK {
+		t.Fatalf("기초 시간표 셀 삭제 실패: status=%d", code)
+	}
+	code, _ = doRecorderReq(t, h, http.MethodPost, "/api/timetable/auto-generate", "t02", map[string]interface{}{
+		"grades": []int{1, 2, 3}, "classesPerGrade": 2, "clearExisting": false,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("학년·학급별 기초 시간표 자동 편성 실패: status=%d", code)
 	}
 
 	// 비동기 이벤트 버스 발행 검증

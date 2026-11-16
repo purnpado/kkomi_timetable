@@ -95,6 +95,14 @@ func (s *Service) SaveTeacher(t protocol.Teacher, rawPassword string) (protocol.
 	return t, nil
 }
 
+// DeleteTeacher는 교사 레코드를 삭제합니다. (시스템 총괄 전용)
+func (s *Service) DeleteTeacher(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("삭제할 교사 ID가 필요합니다")
+	}
+	return s.store.DeleteRecord("teachers", id)
+}
+
 // UpdateRoles는 시스템 총괄(MASTER)이 특정 교사의 다중 업무분장 권한을 부여/수정합니다.
 func (s *Service) UpdateRoles(teacherID string, roles []protocol.Role) (*protocol.Teacher, error) {
 	t, err := s.GetTeacher(teacherID)

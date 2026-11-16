@@ -1,11 +1,14 @@
 import React, { useMemo, useState } from "react";
-import { CheckSquare, Copy, FileSpreadsheet, FileText, PlusCircle } from "lucide-react";
+import { CheckSquare, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
 import { apiFetch, hasRole } from "../../events/eventStore";
+import BaseTimetableBuilder from "./BaseTimetableBuilder";
+import TeacherManagerCard from "../admin-remote/TeacherManagerCard";
 
 // TimetableView는 60fps HTML5 Canvas 시간표 조정, 교사 간 수업교환 신청,
-// 시간표 담당교사 비교 승인 콘솔 및 나이스(NEIS) 입력 도우미를 제공합니다.
+// 마스터/담당교사의 학년·학급별 기초 시간표 작성 및 나이스(NEIS) 입력 도우미를 제공합니다.
 export default function TimetableView({ serverUrl, user, cells, teachers, requests, onRefresh, onOpenApproval, onNotify }) {
+  const [subTab, setSubTab] = useState("board"); // "board" | "builder" | "teachers"
   const [filterClass, setFilterClass] = useState("2-1");
   const [reason, setReason] = useState("학년 협의 및 수업 교환");
   const [reqType, setReqType] = useState("SWAP");
@@ -95,7 +98,27 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div className="card">
+      {isAdmin && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className={`btn ${subTab === "board" ? "btn-primary" : ""}`} onClick={() => setSubTab("board")}>
+            <TableProperties size={15} /> 주간 시간표 & 일일 결보강 조정
+          </button>
+          <button className={`btn ${subTab === "builder" ? "btn-primary" : ""}`} onClick={() => setSubTab("builder")}>
+            <Wrench size={15} /> 학년별·학급별 기초 시간표 작성
+          </button>
+          <button className={`btn ${subTab === "teachers" ? "btn-primary" : ""}`} onClick={() => setSubTab("teachers")}>
+            <Users size={15} /> 교사 기초 명렬표 관리
+          </button>
+        </div>
+      )}
+
+      {isAdmin && subTab === "builder" ? (
+        <BaseTimetableBuilder serverUrl={serverUrl} user={user} cells={cells} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+      ) : isAdmin && subTab === "teachers" ? (
+        <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+      ) : (
+        <>
+          <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h2 style={{ margin: 0, fontSize: 17 }}>정규·일일 스마트 시간표 보드 (Canvas)</h2>
@@ -191,6 +214,8 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

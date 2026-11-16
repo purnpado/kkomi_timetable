@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Database, RefreshCw, Shield, UploadCloud, UserCog } from "lucide-react";
 import { apiFetch, applySelfUpdateBridge, ROLE_LABELS } from "../../events/eventStore";
+import TeacherManagerCard from "./TeacherManagerCard";
 
 const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
 
@@ -80,6 +81,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
       <div className="grid-2">
         <div className="card">
           <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>

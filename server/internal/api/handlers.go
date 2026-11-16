@@ -43,7 +43,8 @@ func (a *ServerApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *ServerApp) handleTeachers(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		teachers, err := a.Auth.ListTeachers()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -54,9 +55,8 @@ func (a *ServerApp) handleTeachers(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, teachers)
 		return
-	}
-	if r.Method == http.MethodPost {
-		if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
+	case http.MethodPost:
+		if _, ok := a.requireRole(w, r, protocol.RoleMaster, protocol.RoleTimetableAdmin); !ok {
 			return
 		}
 		var body struct {
@@ -73,6 +73,17 @@ func (a *ServerApp) handleTeachers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, saved)
+		return
+	case http.MethodDelete:
+		if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
+			return
+		}
+		tid := r.URL.Query().Get("id")
+		if err := a.Auth.DeleteTeacher(tid); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": tid})
 		return
 	}
 	writeError(w, http.StatusMethodNotAllowed, "지원하지 않는 메서드입니다")
@@ -226,15 +237,6 @@ func (a *ServerApp) handleRecentEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, logs)
-}
-
-func (a *ServerApp) handleTimetableCells(w http.ResponseWriter, r *http.Request) {
-	cells, err := a.Timetable.ListCells()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, cells)
 }
 
 func (a *ServerApp) handleEvaluateMove(w http.ResponseWriter, r *http.Request) {

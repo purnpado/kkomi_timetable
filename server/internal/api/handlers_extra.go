@@ -342,6 +342,9 @@ func (a *ServerApp) handleExportXLSX(w http.ResponseWriter, r *http.Request) {
 	fileName := "꼬미시간_출력.xlsx"
 
 	switch kind {
+	case "base-template":
+		writeBaseTemplateXLSX(w)
+		return
 	case "external":
 		noticeID := r.URL.Query().Get("noticeId")
 		cands, notice, cErr := a.ExternalExam.CalculateCandidates(noticeID)

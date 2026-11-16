@@ -323,3 +323,50 @@ func TestAuthLoginAndPasswordHashSafety(t *testing.T) {
 		t.Fatalf("잘못된 비밀번호 로그인이 차단되지 않았습니다")
 	}
 }
+
+// TestBaseTimetableBuilderAndAutoGenerate는 학년·학급별 기초 시간표 작성, 중복·순회교사 차단,
+// 일괄 자동 편성 및 엑셀 템플릿 임포트를 검증합니다.
+func TestBaseTimetableBuilderAndAutoGenerate(t *testing.T) {
+	store, bus := setupTestEnv(t)
+	ttSvc := timetable.NewService(store, bus)
+
+	// 1. 순회교사(t11: 월·수·금만 출강) 화요일(2) 배치 시 차단 확인
+	if _, err := ttSvc.SaveCell(protocol.TimetableCell{
+		DayOfWeek: 2, Period: 1, ClassName: "1-3", Grade: 1, Subject: "정보", TeacherID: "t11",
+	}); err == nil {
+		t.Fatalf("순회교사 비출강일 배치가 차단되지 않았습니다")
+	}
+
+	// 2. 정상 셀 저장 및 삭제
+	saved, err := ttSvc.SaveCell(protocol.TimetableCell{
+		DayOfWeek: 2, Period: 5, ClassName: "1-3", Grade: 1, Subject: "국어", TeacherID: "t06",
+	})
+	if err != nil {
+		t.Fatalf("기초 시간표 셀 저장 실패: %v", err)
+	}
+	// 같은 시간 다른 반(2-3)에 t06 중복 배치 시도 시 차단 확인
+	if _, err := ttSvc.SaveCell(protocol.TimetableCell{
+		DayOfWeek: 2, Period: 5, ClassName: "2-3", Grade: 2, Subject: "국어", TeacherID: "t06",
+	}); err == nil {
+		t.Fatalf("동시간대 교사 중복 배치가 차단되지 않았습니다")
+	}
+	if err := ttSvc.DeleteCell(saved.ID); err != nil {
+		t.Fatalf("셀 삭제 실패: %v", err)
+	}
+
+	// 3. 학년별·학급별 기초 시간표 자동 편성 검증 (1~3학년 각 2학급)
+	created, err := ttSvc.AutoGenerateBaseTimetable([]int{1, 2, 3}, 2, true)
+	if err != nil || len(created) == 0 {
+		t.Fatalf("학년·학급별 자동 편성 실패: len=%d, err=%v", len(created), err)
+	}
+
+	// 4. 기초 시간표 엑셀 템플릿 생성 및 재임포트 검증
+	tplBytes, err := timetable.BuildBaseTemplateXLSX()
+	if err != nil || len(tplBytes) == 0 {
+		t.Fatalf("기초 시간표 엑셀 양식 생성 실패: %v", err)
+	}
+	imported, err := ttSvc.ImportTimetableXLSX(bytes.NewReader(tplBytes))
+	if err != nil || imported == 0 {
+		t.Fatalf("기초 시간표 엑셀 업로드 실패: imported=%d, err=%v", imported, err)
+	}
+}

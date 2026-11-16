@@ -74,8 +74,10 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/dashboard", a.handleDashboard)
 	mux.HandleFunc("/api/events/recent", a.handleRecentEvents)
 
-	// 정규·일일 시간표 및 결보강 승인
+	// 정규·일일 시간표, 기초 시간표 작성 및 결보강 승인
 	mux.HandleFunc("/api/timetable/cells", a.handleTimetableCells)
+	mux.HandleFunc("/api/timetable/auto-generate", a.handleAutoGenerateBaseTimetable)
+	mux.HandleFunc("/api/timetable/import-xlsx", a.handleImportTimetableXLSX)
 	mux.HandleFunc("/api/timetable/evaluate", a.handleEvaluateMove)
 	mux.HandleFunc("/api/timetable/requests", a.handleTimetableRequests)
 	mux.HandleFunc("/api/timetable/commit", a.handleCommitTimetableRequest)
