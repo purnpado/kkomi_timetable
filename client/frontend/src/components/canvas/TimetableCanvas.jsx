@@ -14,9 +14,17 @@ function subjectColor(subject = "") {
   return { bg: "#f1f3f5", bar: "#868e96" };
 }
 
+function formatHeaderMD(weekStart, dayIdx) {
+  if (!weekStart) return "";
+  const d = new Date(`${weekStart}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() + dayIdx);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 // TimetableCanvas는 HTML5 Canvas 60fps 기반 HiDPI 시간표 그리드입니다.
-// 과목별 컬러 코딩, 교시별 일과시간 표시, 드래그 고스트 및 신호등 가이드를 제공합니다.
-export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [], filterClass, onEvaluateDrop, onRequestCommit }) {
+// 과목별 컬러 코딩, 교시별 일과시간·주차별 날짜 표시, 드래그 고스트 및 신호등 가이드를 제공합니다.
+export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [], filterClass, weekStart = "", onEvaluateDrop, onRequestCommit }) {
   const canvasRef = useRef(null);
   const [hoverInfo, setHoverInfo] = useState(null);
   const [dragState, setDragState] = useState(null); // { sourceCell, x, y, targetDay, targetPeriod, evalResult }
@@ -58,7 +66,8 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
       ctx.fillStyle = "#1e293b";
       ctx.font = "bold 13px Pretendard, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(`${d}요일`, x + colW / 2, 24);
+      const md = weekStart ? ` (${formatHeaderMD(weekStart, idx)})` : "";
+      ctx.fillText(`${d}요일${md}`, x + colW / 2, 24);
     });
 
     // 교시 헤더 (일과시간 함께 표시) 및 격자 셀
@@ -89,6 +98,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
 
         let bg = "#ffffff";
         if (cell?.blockedBy) bg = "#fff1f2";
+        else if (cell?.changeNote) bg = "#fff9db";
         else if (cell?.electiveGroup) bg = "#f3f0ff";
         else if (sameTeacherHover) bg = "#d0ebff";
         else if (sc) bg = sc.bg;
@@ -123,7 +133,11 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
             ? `행사블록: ${cell.blockedBy}`
             : `${cell.className} · ${tName}${isSpecialRoom ? ` (${cell.room})` : ""}`;
           ctx.fillText(subLine.slice(0, 21), x + 10, y + 37);
-          if (cell.coTeacherId || cell.electiveGroup) {
+          if (cell.changeNote) {
+            ctx.fillStyle = "#b86e00";
+            ctx.font = "bold 10px Pretendard, sans-serif";
+            ctx.fillText(cell.changeNote.slice(0, 24), x + 10, y + 52);
+          } else if (cell.coTeacherId || cell.electiveGroup) {
             ctx.fillStyle = "#5f3dc4";
             ctx.font = "10.5px Pretendard, sans-serif";
             ctx.fillText(cell.electiveGroup ? `선택블록: ${cell.electiveGroup}` : "코티칭 수업", x + 10, y + 52);
@@ -144,7 +158,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
       ctx.fillText(`${dragState.sourceCell.subject} (${dragState.sourceCell.className})`, dragState.x, dragState.y + 4);
       ctx.restore();
     }
-  }, [visibleCells, hoverInfo, dragState, teachersMap, bellSchedule]);
+  }, [visibleCells, hoverInfo, dragState, teachersMap, bellSchedule, weekStart]);
 
   const coordToSlot = (clientX, clientY) => {
     const rect = canvasRef.current.getBoundingClientRect();

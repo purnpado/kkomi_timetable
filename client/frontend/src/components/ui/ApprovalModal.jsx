@@ -28,9 +28,12 @@ export default function ApprovalModal({ open, onOpenChange, queue, currentIndex,
             <span className="badge badge-amber">대기열(STAGING) · 담당자 최종 선택 전</span>
           </div>
 
-          <div style={{ fontSize: 13, color: "#475569", marginBottom: 14 }}>
-            적용일 <b>{item.targetDate}</b> · 요청자 <b>{item.requesterName}</b> · 유형 <b>{item.requestType}</b> · 사유:{" "}
-            {item.reason}
+          <div style={{ fontSize: 13, color: "#475569", marginBottom: 14, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+            {item.scope === "DATE_ONLY" && <span className="badge badge-blue">해당 일자·주차 한정</span>}
+            <span>
+              {item.sourceDate ? `원본일 ${item.sourceDate} ↔ ` : ""}적용일 <b>{item.targetDate}</b> · 요청자 <b>{item.requesterName}</b> · 유형{" "}
+              <b>{item.requestType}</b> · 사유: {item.reason}
+            </span>
           </div>
 
           <div className="grid-2" style={{ marginBottom: 16 }}>

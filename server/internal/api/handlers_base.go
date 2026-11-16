@@ -13,7 +13,8 @@ import (
 func (a *ServerApp) handleTimetableCells(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		cells, err := a.Timetable.ListCells()
+		weekStart := r.URL.Query().Get("weekStart")
+		cells, err := a.Timetable.ListWeekCells(weekStart)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

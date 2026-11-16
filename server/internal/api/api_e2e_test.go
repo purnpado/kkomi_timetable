@@ -199,6 +199,18 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 		t.Fatalf("시수표 기반 자동 편성 실패: status=%d", code)
 	}
 
+	// 6-2. 다주간 시간표 조회, 주차 간 맞교환 후보 및 주중 미출근 대책 수립/적용 API 검증
+	code, raw = doRecorderReq(t, h, http.MethodGet, "/api/timetable/cells?weekStart=2026-11-16", "t06", nil)
+	if code != http.StatusOK || !strings.Contains(string(raw), `"lessonDate"`) {
+		t.Fatalf("주차별 시간표 조회 실패: status=%d", code)
+	}
+	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/timetable/absence-plan", "t06", map[string]interface{}{
+		"teacherId": "t06", "startDate": "2026-11-16", "endDate": "2026-11-20", "startPeriod": 1, "endPeriod": 7, "reason": "병가 테스트",
+	})
+	if code != http.StatusOK || (!strings.Contains(string(raw), "substituteOptions") && string(raw) != "null\n") {
+		t.Fatalf("주중 미출근 대책 API 실패: status=%d, body=%s", code, string(raw))
+	}
+
 	// 7. 클라이언트에서 마스터/시간표 담당 권한으로 기초 시간표 셀 저장·삭제·일괄 자동 편성
 	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/timetable/cells", "t01", protocol.TimetableCell{
 		DayOfWeek: 4, Period: 6, ClassName: "1-3", Grade: 1, Subject: "국어", TeacherID: "t06",

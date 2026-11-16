@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"kkomi-timetable/pkg/protocol"
+	"kkomi-timetable/server/internal/modules/auth"
 )
 
 func (a *ServerApp) handleSchoolConfig(w http.ResponseWriter, r *http.Request) {
@@ -145,4 +146,86 @@ func writeCurriculumXLSX(w http.ResponseWriter, fileName string, raw []byte, err
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(fileName)))
 	_, _ = w.Write(raw)
+}
+
+func (a *ServerApp) handleCrossWeekCandidates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if actor := a.currentActor(r); actor == nil {
+		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+		return
+	}
+	var body struct {
+		SourceCellID    string `json:"sourceCellId"`
+		SourceDate      string `json:"sourceDate"`
+		TargetWeekStart string `json:"targetWeekStart"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cands, err := a.Timetable.FindCrossWeekSwapCandidates(body.SourceCellID, body.SourceDate, body.TargetWeekStart)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, cands)
+}
+
+func (a *ServerApp) handleAbsencePlan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if actor := a.currentActor(r); actor == nil {
+		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+		return
+	}
+	var req protocol.AbsencePlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	plans, err := a.Timetable.PlanTeacherAbsence(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plans)
+}
+
+func (a *ServerApp) handleAbsenceApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	actor := a.currentActor(r)
+	if actor == nil {
+		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+		return
+	}
+	var req protocol.AbsenceApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.RequesterID == "" {
+		req.RequesterID = actor.ID
+	}
+	if req.RequesterName == "" {
+		req.RequesterName = actor.Name
+	}
+	canAutoApprove := auth.HasRole(actor, protocol.RoleTimetableAdmin)
+	res, err := a.Timetable.ApplyAbsenceResolutions(req, actor.Name, canAutoApprove)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"appliedCount": len(res),
+		"autoApproved": req.AutoApprove && canAutoApprove,
+		"requests":     res,
+	})
 }

@@ -1,22 +1,45 @@
-import React, { useMemo, useState } from "react";
-import { BookOpenCheck, CheckSquare, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
 import { apiFetch, hasRole } from "../../events/eventStore";
 import BaseTimetableBuilder from "./BaseTimetableBuilder";
 import CurriculumLoadManager from "./CurriculumLoadManager";
 import ChainSwapPreview from "./ChainSwapPreview";
+import MultiWeekAbsenceView, { addDaysISO, getMondayISO } from "./MultiWeekAbsenceView";
 import TeacherManagerCard from "../admin-remote/TeacherManagerCard";
 
-// TimetableView는 60fps HTML5 Canvas 시간표 조정, 교사별 시수표/교과교실 편성,
-// 1~4단계 연쇄교환 미리보기, 학급별 기초 시간표 작성 및 나이스(NEIS) 입력 도우미를 제공합니다.
+// TimetableView는 60fps HTML5 Canvas 다주간 시간표 조정, 주중 미출근·주차간 교환,
+// 교사별 시수표/교과교실 편성, 1~4단계 연쇄교환 미리보기 및 나이스(NEIS) 입력 도우미를 제공합니다.
 export default function TimetableView({ serverUrl, user, cells, teachers, requests, bellSchedule, onRefresh, onOpenApproval, onNotify }) {
-  const [subTab, setSubTab] = useState("board"); // "board" | "curriculum" | "builder" | "teachers"
+  const [subTab, setSubTab] = useState("board"); // "board" | "multiweek" | "curriculum" | "builder" | "teachers"
+  const [selectedWeekStart, setSelectedWeekStart] = useState(() => getMondayISO());
+  const [weekCells, setWeekCells] = useState(null);
   const [filterClass, setFilterClass] = useState("2-1");
   const [activeChain, setActiveChain] = useState(null);
   const [reason, setReason] = useState("학년 협의 및 수업 교환");
   const [reqType, setReqType] = useState("SWAP");
   const [sourceId, setSourceId] = useState(cells[0]?.id || "");
   const [partnerId, setPartnerId] = useState("t03");
+
+  useEffect(() => {
+    let alive = true;
+    if (!selectedWeekStart) {
+      setWeekCells(null);
+      return;
+    }
+    apiFetch(serverUrl, `/api/timetable/cells?weekStart=${encodeURIComponent(selectedWeekStart)}`, user.id)
+      .then((res) => {
+        if (alive) setWeekCells(res || []);
+      })
+      .catch(() => {
+        if (alive) setWeekCells(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [serverUrl, user?.id, selectedWeekStart, cells]);
+
+  const activeCells = selectedWeekStart && weekCells ? weekCells : cells;
 
   const teachersMap = useMemo(() => {
     const m = {};
@@ -108,26 +131,43 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
     }
   };
 
+  const thisMonday = getMondayISO();
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {isAdmin && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className={`btn ${subTab === "board" ? "btn-primary" : ""}`} onClick={() => setSubTab("board")}>
-            <TableProperties size={15} /> 주간 시간표 & 일일 결보강·연쇄교환
-          </button>
-          <button className={`btn ${subTab === "curriculum" ? "btn-primary" : ""}`} onClick={() => setSubTab("curriculum")}>
-            <BookOpenCheck size={15} /> 시수표 등록부 · 학급수 · 교과교실
-          </button>
-          <button className={`btn ${subTab === "builder" ? "btn-primary" : ""}`} onClick={() => setSubTab("builder")}>
-            <Wrench size={15} /> 학급별 기초 시간표 수동 편집
-          </button>
-          <button className={`btn ${subTab === "teachers" ? "btn-primary" : ""}`} onClick={() => setSubTab("teachers")}>
-            <Users size={15} /> 교사 명렬표 관리 (엑셀 입출력)
-          </button>
-        </div>
-      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className={`btn ${subTab === "board" ? "btn-primary" : ""}`} onClick={() => setSubTab("board")}>
+          <TableProperties size={15} /> 주간 시간표 & 일일 결보강·연쇄교환
+        </button>
+        <button className={`btn ${subTab === "multiweek" ? "btn-primary" : ""}`} onClick={() => setSubTab("multiweek")}>
+          <AlertTriangle size={15} /> 주중 미출근 대책 · 다음주 교환
+        </button>
+        {isAdmin && (
+          <>
+            <button className={`btn ${subTab === "curriculum" ? "btn-primary" : ""}`} onClick={() => setSubTab("curriculum")}>
+              <BookOpenCheck size={15} /> 시수표 등록부 · 학급수 · 교과교실
+            </button>
+            <button className={`btn ${subTab === "builder" ? "btn-primary" : ""}`} onClick={() => setSubTab("builder")}>
+              <Wrench size={15} /> 학급별 기초 시간표 수동 편집
+            </button>
+            <button className={`btn ${subTab === "teachers" ? "btn-primary" : ""}`} onClick={() => setSubTab("teachers")}>
+              <Users size={15} /> 교사 명렬표 관리 (엑셀 입출력)
+            </button>
+          </>
+        )}
+      </div>
 
-      {isAdmin && subTab === "curriculum" ? (
+      {subTab === "multiweek" ? (
+        <MultiWeekAbsenceView
+          serverUrl={serverUrl}
+          user={user}
+          teachers={teachers}
+          baseCells={cells}
+          activeWeekStart={selectedWeekStart || thisMonday}
+          onRefresh={onRefresh}
+          onNotify={onNotify}
+        />
+      ) : isAdmin && subTab === "curriculum" ? (
         <CurriculumLoadManager serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
       ) : isAdmin && subTab === "builder" ? (
         <BaseTimetableBuilder serverUrl={serverUrl} user={user} cells={cells} teachers={teachers} bellSchedule={bellSchedule} onRefresh={onRefresh} onNotify={onNotify} />
@@ -136,9 +176,9 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
       ) : (
         <>
           <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <h2 style={{ margin: 0, fontSize: 17 }}>정규·일일 스마트 시간표 보드 (Canvas)</h2>
+            <h2 style={{ margin: 0, fontSize: 17 }}>정규·다주간 스마트 시간표 보드 (Canvas)</h2>
             <select className="select" style={{ width: 150 }} value={filterClass} onChange={(e) => setFilterClass(e.target.value)}>
               {classList.map((c) => (
                 <option key={c} value={c}>{c === "ALL" ? "전체 학급 보기" : `${c}반 시간표`}</option>
@@ -160,11 +200,38 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           </div>
         </div>
 
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "8px 10px", marginBottom: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-sm" onClick={() => setSelectedWeekStart(addDaysISO(selectedWeekStart || thisMonday, -7))}>
+              <ChevronLeft size={13} /> 이전 주
+            </button>
+            <button type="button" className={`btn btn-sm ${selectedWeekStart === thisMonday ? "btn-primary" : ""}`} onClick={() => setSelectedWeekStart(thisMonday)}>
+              이번 주
+            </button>
+            <button type="button" className={`btn btn-sm ${selectedWeekStart === addDaysISO(thisMonday, 7) ? "btn-primary" : ""}`} onClick={() => setSelectedWeekStart(addDaysISO(thisMonday, 7))}>
+              다음 주 (+1주)
+            </button>
+            <button type="button" className={`btn btn-sm ${selectedWeekStart === addDaysISO(thisMonday, 14) ? "btn-primary" : ""}`} onClick={() => setSelectedWeekStart(addDaysISO(thisMonday, 14))}>
+              다다음 주 (+2주)
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setSelectedWeekStart(addDaysISO(selectedWeekStart || thisMonday, 7))}>
+              다음 주 <ChevronRight size={13} />
+            </button>
+            <button type="button" className={`btn btn-sm ${selectedWeekStart === "" ? "btn-primary" : ""}`} onClick={() => setSelectedWeekStart("")}>
+              정규 기본 시간표
+            </button>
+          </div>
+          <span className="badge badge-blue">
+            {selectedWeekStart ? `조회 주간: ${selectedWeekStart} ~ ${addDaysISO(selectedWeekStart, 4)}` : "정규 기본 시간표 (전체 주차 공통)"}
+          </span>
+        </div>
+
         <TimetableCanvas
-          cells={cells}
+          cells={activeCells}
           teachersMap={teachersMap}
           bellSchedule={bellSchedule}
           filterClass={filterClass}
+          weekStart={selectedWeekStart}
           onEvaluateDrop={handleEvaluateDrop}
           onRequestCommit={handleRequestFromCanvas}
         />
@@ -173,7 +240,7 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
       <ChainSwapPreview
         serverUrl={serverUrl}
         user={user}
-        cells={cells}
+        cells={activeCells}
         teachersMap={teachersMap}
         activeChain={activeChain}
         onClearChain={() => setActiveChain(null)}

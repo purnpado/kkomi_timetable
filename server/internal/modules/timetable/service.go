@@ -133,10 +133,15 @@ func (s *Service) CommitRequest(requestID, reviewerName string, approve bool, re
 		return target, nil
 	}
 
-	// 승인: 마스터 시간표 셀 반영
-	cells, err := s.ListCells()
-	if err == nil {
-		s.applyCellUpdate(cells, *target)
+	// 승인: 일자/주차 한정(DATE_ONLY / CROSS_WEEK_SWAP) 요청은 정규 기본 시간표를 덮어쓰지 않고 해당 주차 오버레이로 반영
+	if target.RequestType != "CROSS_WEEK_SWAP" && target.Scope != "DATE_ONLY" {
+		cells, err := s.ListCells()
+		if err == nil {
+			s.applyCellUpdate(cells, *target)
+		}
+	}
+	if target.PartnerID != "" && (target.RequestType == "SUBSTITUTE" || target.RequestType == "ABSENCE_SUBSTITUTE" || target.RequestType == "EXTERNAL_TRIP" || target.RequestType == "EVENT_TRIP") {
+		s.incrementSubstitutionCount(target.PartnerID)
 	}
 	target.Status = protocol.StatusApproved
 	if err := s.store.SaveRecord("timetable_requests", target.ID, *target); err != nil {
@@ -350,4 +355,18 @@ func compactIDs(ids ...string) []string {
 		}
 	}
 	return out
+}
+
+func (s *Service) incrementSubstitutionCount(teacherID string) {
+	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
+	if err != nil {
+		return
+	}
+	for i := range teachers {
+		if teachers[i].ID == teacherID {
+			teachers[i].SubstitutionCount++
+			_ = s.store.SaveRecord("teachers", teachers[i].ID, teachers[i])
+			break
+		}
+	}
 }

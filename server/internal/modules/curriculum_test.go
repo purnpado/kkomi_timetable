@@ -173,3 +173,120 @@ func TestSameNameDisambiguationAndQuadChainSteps(t *testing.T) {
 		}
 	}
 }
+
+// TestCrossWeekSwapAndMidWeekAbsencePlan은 이번 주↔다음 주·다다음 주 주차 간 맞교환과
+// 주중 갑작스러운 미출근 시 다음주 교환·당일 공강교사 대타 일괄 처리를 검증합니다.
+func TestCrossWeekSwapAndMidWeekAbsencePlan(t *testing.T) {
+	store, bus := setupTestEnv(t)
+	ttSvc := timetable.NewService(store, bus)
+
+	// 1. 이번 주(2026-11-16 월 1교시 c-1-1-11: 강국어) ↔ 다음 주(2026-11-23 주간) 맞교환 탐색
+	cands, err := ttSvc.FindCrossWeekSwapCandidates("c-1-1-11", "2026-11-16", "2026-11-23")
+	if err != nil || len(cands) == 0 {
+		t.Fatalf("주차 간 맞교환 후보 탐색 실패: len=%d, err=%v", len(cands), err)
+	}
+	var chosen *protocol.CrossWeekCandidate
+	for i := range cands {
+		if cands[i].TargetCell.ID == "c-1-2-11" {
+			chosen = &cands[i]
+			break
+		}
+	}
+	if chosen == nil || chosen.TargetDate != "2026-11-23" {
+		t.Fatalf("다음 주 2교시(c-1-2-11) 맞교환 후보가 누락되었습니다: %+v", cands)
+	}
+
+	req, err := ttSvc.SubmitRequest(protocol.TimetableChangeRequest{
+		RequestType:   "CROSS_WEEK_SWAP",
+		Scope:         "DATE_ONLY",
+		SourceDate:    "2026-11-16",
+		TargetDate:    chosen.TargetDate,
+		RequesterID:   "t06",
+		RequesterName: "강국어",
+		PartnerID:     chosen.TargetCell.TeacherID,
+		PartnerName:   "정행사",
+		PartnerAgreed: true,
+		SourceCell:    protocol.TimetableCell{ID: "c-1-1-11", DayOfWeek: 1, Period: 1, ClassName: "1-1", Grade: 1, Subject: "국어", SubjectCode: "KOR101", TeacherID: "t06", Room: "1-1교실"},
+		TargetCell:    chosen.TargetCell,
+		ChainSteps:    chosen.ChainSteps,
+		Reason:        "이번주 불가로 다음주 교환",
+	})
+	if err != nil {
+		t.Fatalf("주차 간 교환 등록 실패: %v", err)
+	}
+	if _, err := ttSvc.CommitRequest(req.ID, "이수업", true, ""); err != nil {
+		t.Fatalf("주차 간 교환 승인 실패: %v", err)
+	}
+
+	// 이번 주(11/16), 다음 주(11/23), 다다음 주(11/30), 정규 기본 시간표 각각 검증
+	w1, _ := ttSvc.ListWeekCells("2026-11-16")
+	for _, c := range w1 {
+		if c.ID == "c-1-1-11" && (c.TeacherID != "t05" || !strings.Contains(c.ChangeNote, "주차교환")) {
+			t.Fatalf("이번 주 1교시에 주차 교환이 반영되지 않았습니다: %+v", c)
+		}
+	}
+	w2, _ := ttSvc.ListWeekCells("2026-11-23")
+	for _, c := range w2 {
+		if c.ID == "c-1-2-11" && (c.TeacherID != "t06" || !strings.Contains(c.ChangeNote, "주차교환")) {
+			t.Fatalf("다음 주 2교시에 주차 교환이 반영되지 않았습니다: %+v", c)
+		}
+	}
+	w3, _ := ttSvc.ListWeekCells("2026-11-30")
+	for _, c := range w3 {
+		if c.ID == "c-1-1-11" && c.TeacherID != "t06" {
+			t.Fatalf("다다음 주 시간표가 오염되었습니다: %+v", c)
+		}
+	}
+	base, _ := ttSvc.ListCells()
+	for _, c := range base {
+		if c.ID == "c-1-1-11" && c.TeacherID != "t06" {
+			t.Fatalf("정규 기본 시간표가 변경되었습니다: %+v", c)
+		}
+	}
+
+	// 2. 주중 갑작스러운 미출근 (2026-11-18 수요일 t06 강국어): 다음주 교환 + 공강 보강 대책 수립 및 일괄 적용
+	plans, err := ttSvc.PlanTeacherAbsence(protocol.AbsencePlanRequest{
+		TeacherID: "t06", StartDate: "2026-11-18", EndDate: "2026-11-18", StartPeriod: 1, EndPeriod: 7, Reason: "긴급 병가",
+	})
+	if err != nil || len(plans) == 0 {
+		t.Fatalf("주중 미출근 대책 산출 실패: len=%d, err=%v", len(plans), err)
+	}
+	slot := plans[0]
+	if slot.Cell.ID != "c-3-4-31" || len(slot.CrossWeekOptions) == 0 || len(slot.SubstituteOptions) == 0 {
+		t.Fatalf("수요일 4교시 결근 대책 후보가 부족합니다: %+v", slot)
+	}
+	sub := slot.SubstituteOptions[0]
+	applied, err := ttSvc.ApplyAbsenceResolutions(protocol.AbsenceApplyRequest{
+		RequesterID:   "t06",
+		RequesterName: "강국어",
+		AutoApprove:   true,
+		Items: []protocol.AbsenceApplyItem{
+			{
+				Mode:        "SUBSTITUTE",
+				SourceDate:  slot.LessonDate,
+				TargetDate:  slot.LessonDate,
+				SourceCell:  slot.Cell,
+				TargetCell:  slot.Cell,
+				PartnerID:   sub.TeacherID,
+				PartnerName: sub.TeacherName,
+				Reason:      "[긴급병가 보강]",
+			},
+		},
+	}, "이수업", true)
+	if err != nil || len(applied) != 1 || applied[0].Status != protocol.StatusApproved {
+		t.Fatalf("미출근 일괄 즉시 반영 실패: len=%d, err=%v", len(applied), err)
+	}
+
+	w1After, _ := ttSvc.ListWeekCells("2026-11-16")
+	for _, c := range w1After {
+		if c.ID == "c-3-4-31" && (c.TeacherID != sub.TeacherID || !strings.Contains(c.ChangeNote, "일일보강")) {
+			t.Fatalf("당일 일일 보강이 이번 주 시간표에 반영되지 않았습니다: %+v", c)
+		}
+	}
+	w2After, _ := ttSvc.ListWeekCells("2026-11-23")
+	for _, c := range w2After {
+		if c.ID == "c-3-4-31" && c.TeacherID != "t06" {
+			t.Fatalf("일일 보강이 다음 주 시간표까지 침범했습니다: %+v", c)
+		}
+	}
+}

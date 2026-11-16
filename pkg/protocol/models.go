@@ -62,8 +62,10 @@ type TimetableCell struct {
 	Room          string `json:"room"`               // 교실 또는 이동수업/교과교실 전용실
 	ElectiveGroup string `json:"electiveGroup"`      // 고교학점제 이동수업 동시간대 블록 그룹 ID
 	BlockGroupID  string `json:"blockGroupID"`       // 연속 블록타임 묶음 ID
-	IsLocked      bool   `json:"isLocked,omitempty"` // 이동금지 고정 수업 여부
-	BlockedBy     string `json:"blockedBy"`          // 행사 등으로 수업 블록 처리된 사유
+	IsLocked      bool   `json:"isLocked,omitempty"`   // 이동금지 고정 수업 여부
+	BlockedBy     string `json:"blockedBy"`            // 행사 등으로 수업 블록 처리된 사유
+	LessonDate    string `json:"lessonDate,omitempty"` // 주차별 조회 시 해당 수업 실제 일자 (YYYY-MM-DD)
+	ChangeNote    string `json:"changeNote,omitempty"` // [주차교환] / [일일보강] 등 주차별 변동 표시
 }
 
 // SpecialRoom은 교과교실제 전용 강의실 및 특별실(과학실·컴퓨터실·음악실 등) 정의입니다.
@@ -113,8 +115,10 @@ type ChainSwapStep struct {
 	Room        string `json:"room"`
 	FromDay     int    `json:"fromDay"`
 	FromPeriod  int    `json:"fromPeriod"`
+	FromDate    string `json:"fromDate,omitempty"`
 	ToDay       int    `json:"toDay"`
 	ToPeriod    int    `json:"toPeriod"`
+	ToDate      string `json:"toDate,omitempty"`
 	Description string `json:"description"`
 }
 
@@ -139,8 +143,10 @@ type MoveEvaluationResult struct {
 // TimetableChangeRequest는 교사 간 수업 교환 및 결보강 대기열(STAGING) 요청입니다.
 type TimetableChangeRequest struct {
 	ID              string          `json:"id"`
-	RequestType     string          `json:"requestType"`            // "SWAP", "TRIANGLE", "QUAD", "SUBSTITUTE", "EXTERNAL_TRIP", "EVENT_TRIP"
-	TargetDate      string          `json:"targetDate"`             // 변경 적용 일자 (YYYY-MM-DD)
+	RequestType     string          `json:"requestType"`            // "SWAP", "TRIANGLE", "QUAD", "CROSS_WEEK_SWAP", "SUBSTITUTE", "ABSENCE_SUBSTITUTE", "EXTERNAL_TRIP", "EVENT_TRIP"
+	Scope           string          `json:"scope,omitempty"`      // "DATE_ONLY"(특정 일자·주차 한정) 또는 ""(정규 시간표)
+	SourceDate      string          `json:"sourceDate,omitempty"` // 원본 수업 적용 일자 (YYYY-MM-DD)
+	TargetDate      string          `json:"targetDate"`           // 변경/교환 대상 일자 (YYYY-MM-DD)
 	RequesterID     string          `json:"requesterId"`
 	RequesterName   string          `json:"requesterName"`
 	PartnerID       string          `json:"partnerId"`              // 맞교환/보강 교사 ID
@@ -272,4 +278,60 @@ type BellPeriod struct {
 	Label     string `json:"label"`     // 예: "1교시", "아침조회"
 	StartTime string `json:"startTime"` // "08:40"
 	EndTime   string `json:"endTime"`   // "09:30"
+}
+
+// CrossWeekCandidate는 이번 주와 다음 주·다다음 주 간 맞교환 가능한 수업 후보입니다.
+type CrossWeekCandidate struct {
+	TargetDate string          `json:"targetDate"` // 교환 대상 주차의 실제 수업 일자 (YYYY-MM-DD)
+	TargetCell TimetableCell   `json:"targetCell"` // 상대 교사/과목 셀
+	ChainSteps []ChainSwapStep `json:"chainSteps"` // 1단계(이번 주) ↔ 2단계(대상 주) 이동 요약
+	Reason     string          `json:"reason"`
+}
+
+// AbsencePlanRequest는 주중 미출근/결근 교사의 기간별 대책 수립 요청입니다.
+type AbsencePlanRequest struct {
+	TeacherID   string `json:"teacherId"`
+	StartDate   string `json:"startDate"`   // YYYY-MM-DD
+	EndDate     string `json:"endDate"`     // YYYY-MM-DD
+	StartPeriod int    `json:"startPeriod"` // 1~7 (0이면 1교시부터)
+	EndPeriod   int    `json:"endPeriod"`   // 1~7 (0이면 7교시까지)
+	Reason      string `json:"reason"`      // 예: "갑작스러운 병가", "긴급 경조사"
+}
+
+// AbsenceSubCandidate는 미출근 교시와 동시간대에 공강인 대타 보강 교사 후보입니다.
+type AbsenceSubCandidate struct {
+	TeacherID         string `json:"teacherId"`
+	TeacherName       string `json:"teacherName"`
+	Subject           string `json:"subject"`
+	HomeroomClass     string `json:"homeroomClass"`
+	SubstitutionCount int    `json:"substitutionCount"`
+	PriorityBadge     string `json:"priorityBadge"` // 예: "[1순위: 동일교과·공강]"
+}
+
+// AbsenceSlotPlan은 미출근으로 비는 단일 수업과 추천 대책(주차간 교환 + 당일 공강교사 보강) 목록입니다.
+type AbsenceSlotPlan struct {
+	LessonDate        string                `json:"lessonDate"`
+	Cell              TimetableCell         `json:"cell"`
+	CrossWeekOptions  []CrossWeekCandidate  `json:"crossWeekOptions"`
+	SubstituteOptions []AbsenceSubCandidate `json:"substituteOptions"`
+}
+
+// AbsenceApplyItem은 교시별로 선택된 대책 1건(다음주 맞교환 또는 당일 공강교사 보강)입니다.
+type AbsenceApplyItem struct {
+	Mode        string        `json:"mode"` // "CROSS_WEEK_SWAP" | "SUBSTITUTE"
+	SourceDate  string        `json:"sourceDate"`
+	TargetDate  string        `json:"targetDate"`
+	SourceCell  TimetableCell `json:"sourceCell"`
+	TargetCell  TimetableCell `json:"targetCell"`
+	PartnerID   string        `json:"partnerId"`
+	PartnerName string        `json:"partnerName"`
+	Reason      string        `json:"reason"`
+}
+
+// AbsenceApplyRequest는 주중 미출근 대책 일괄 등록 또는 즉시 확정 요청입니다.
+type AbsenceApplyRequest struct {
+	RequesterID   string             `json:"requesterId"`
+	RequesterName string             `json:"requesterName"`
+	Items         []AbsenceApplyItem `json:"items"`
+	AutoApprove   bool               `json:"autoApprove"` // 담당자/마스터 권한일 경우 즉시 확정 여부
 }
