@@ -1,0 +1,17 @@
+{
+	"fixed": {
+		"file_version": "1.0.0",
+		"product_version": "1.0.0"
+	},
+	"info": {
+		"0409": {
+			"FileVersion": "1.0.0",
+			"ProductVersion": "1.0.0",
+			"CompanyName": "푸른파도소리",
+			"FileDescription": "꼬미시간 - 중·고등학교 학사 시간표 및 시험감독 통합 클라이언트",
+			"LegalCopyright": "(c) 2026, 푸른파도소리",
+			"ProductName": "꼬미시간",
+			"Comments": "중·고등학교 학사 시간표·시험감독·행사 통합 관리 솔루션"
+		}
+	}
+}

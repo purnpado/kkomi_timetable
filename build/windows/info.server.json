@@ -1,0 +1,17 @@
+{
+	"fixed": {
+		"file_version": "1.0.0",
+		"product_version": "1.0.0"
+	},
+	"info": {
+		"0409": {
+			"FileVersion": "1.0.0",
+			"ProductVersion": "1.0.0",
+			"CompanyName": "푸른파도소리",
+			"FileDescription": "꼬미시간 서버 - 교무실 공용 PC 포터블 학사·시험감독 서버",
+			"LegalCopyright": "(c) 2026, 푸른파도소리",
+			"ProductName": "꼬미시간서버",
+			"Comments": "업무망 전용 포터블 서버 (포터블 MariaDB 자동 제어)"
+		}
+	}
+}

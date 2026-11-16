@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="/Users/kkomi/homebrew/bin:/Users/kkomi/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="${VERSION:-1.0.0}"
+
+cd "$ROOT_DIR"
+
+echo "============================================================"
+echo "🐾 꼬미시간 v${VERSION} 멀티 OS 빌드 및 Windows 릴리즈 생성"
+echo "============================================================"
+
+# 1. 프론트엔드 프로덕션 빌드 및 서버 내장 웹 자산 동기화
+if [ "${SKIP_FRONTEND_BUILD:-0}" != "1" ]; then
+  echo ">>> [1/5] React 프론트엔드 프로덕션 빌드..."
+  (cd client/frontend && npm run build)
+fi
+rm -rf server/cmd/server/webdist/*
+cp -R client/frontend/dist/* server/cmd/server/webdist/
+
+# 2. 아이콘 및 Windows .syso 리소스 생성
+echo ">>> [2/5] Wails v3 아이콘(.icns/.ico) 및 Windows 리소스(.syso) 생성..."
+mkdir -p build/darwin build/windows bin/darwin bin/windows dist/release
+wails3 generate icons \
+  -input build/appicon.png \
+  -macfilename build/darwin/icons.icns \
+  -windowsfilename build/windows/icon.ico
+
+wails3 generate syso \
+  -arch amd64 \
+  -icon build/windows/icon.ico \
+  -manifest build/windows/wails.exe.manifest \
+  -info build/windows/info.json \
+  -out client/wails_windows_amd64.syso
+
+wails3 generate syso \
+  -arch amd64 \
+  -icon build/windows/icon.ico \
+  -manifest build/windows/wails.exe.manifest \
+  -info build/windows/info.server.json \
+  -out server/cmd/server/wails_windows_amd64.syso
+
+# 3. macOS 빌드 (개발/검증용: 꼬미시간서버.app, 꼬미시간.app)
+echo ">>> [3/5] macOS 바이너리 및 .app 번들 빌드..."
+export CGO_CFLAGS="-mmacosx-version-min=12.0"
+export CGO_LDFLAGS="-mmacosx-version-min=12.0"
+export MACOSX_DEPLOYMENT_TARGET="12.0"
+
+go build -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간서버" ./server/cmd/server
+go build -tags production -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간" ./client
+
+# macOS codesign 호환을 위해 .app 내부 실행 바이너리는 영문 식별자로 유지
+rm -rf "bin/darwin/꼬미시간.app" "bin/darwin/꼬미시간서버.app"
+
+mkdir -p "bin/darwin/꼬미시간.app/Contents/MacOS" "bin/darwin/꼬미시간.app/Contents/Resources"
+cp "bin/darwin/꼬미시간" "bin/darwin/꼬미시간.app/Contents/MacOS/kkomi-timetable"
+cp build/darwin/Info.plist "bin/darwin/꼬미시간.app/Contents/Info.plist"
+cp build/darwin/icons.icns "bin/darwin/꼬미시간.app/Contents/Resources/icons.icns"
+xattr -cr "bin/darwin/꼬미시간.app" || true
+codesign --force --deep --sign - "bin/darwin/꼬미시간.app"
+
+mkdir -p "bin/darwin/꼬미시간서버.app/Contents/MacOS" "bin/darwin/꼬미시간서버.app/Contents/Resources"
+cp "bin/darwin/꼬미시간서버" "bin/darwin/꼬미시간서버.app/Contents/MacOS/kkomi-timetable-server"
+cp build/darwin/Info.server.plist "bin/darwin/꼬미시간서버.app/Contents/Info.plist"
+cp build/darwin/icons.icns "bin/darwin/꼬미시간서버.app/Contents/Resources/icons.icns"
+xattr -cr "bin/darwin/꼬미시간서버.app" || true
+codesign --force --deep --sign - "bin/darwin/꼬미시간서버.app"
+
+# 4. Windows 교차 빌드 (릴리즈 타겟: 꼬미시간서버.exe, 꼬미시간.exe)
+echo ">>> [4/5] Windows x86_64 실행 파일 크로스 컴파일..."
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-w -s" -o "bin/windows/꼬미시간서버.exe" ./server/cmd/server
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o "bin/windows/꼬미시간.exe" ./client
+
+rm -f client/*.syso server/cmd/server/*.syso
+
+# 5. Windows 전용 릴리즈 패키지 생성 (dist/release/)
+echo ">>> [5/5] Windows 전용 릴리즈 패키징 (dist/release/)..."
+rm -rf dist/release/*
+STAGE_DIR="/tmp/kkomi_release_stage_$$"
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb" "$STAGE_DIR/1_교무실_공용서버/templates" "$STAGE_DIR/2_교사용_클라이언트"
+
+cp "bin/windows/꼬미시간서버.exe" "$STAGE_DIR/1_교무실_공용서버/꼬미시간서버.exe"
+cp "scripts/setup_portable_mariadb.ps1" "$STAGE_DIR/1_교무실_공용서버/runtime/mariadb/README_포터블_MariaDB_안내_및_자동설치.ps1"
+cp "bin/windows/꼬미시간.exe" "$STAGE_DIR/2_교사용_클라이언트/꼬미시간.exe"
+
+# 기본 .hwpx 템플릿 생성 후 릴리즈에 포함
+KKOMI_BASE_DIR="$STAGE_DIR/1_교무실_공용서버" "bin/darwin/꼬미시간서버" --init-template
+
+cat << 'TXT' > "$STAGE_DIR/사용설명서_빠른시작.txt"
+[꼬미시간 v1.0.0 Windows 포터블 빠른 시작 안내]
+
+1. 교무실 공용 PC (메인 서버)
+   - "1_교무실_공용서버" 폴더를 공용 PC 원하는 위치(예: D:\꼬미시간서버)에 통째로 복사하세요.
+   - (선택) 포터블 MariaDB 사용 시 runtime\mariadb\README_포터블_MariaDB_안내_및_자동설치.ps1을 실행하거나 MariaDB winx64 bin 폴더를 배치하세요. (미설치 시에도 내장 AES-256 보안 DB로 즉시 작동합니다.)
+   - 꼬미시간서버.exe 를 실행하면 콘솔에 업무망 고정 IP 접속 주소(예: 192.168.x.x:18090)가 안내됩니다.
+
+2. 교사 개인 PC (클라이언트)
+   - "2_교사용_클라이언트\꼬미시간.exe" 를 복사하여 실행하세요.
+   - 첫 화면에서 서버 IP(예: http://192.168.x.x:18090)를 입력하고 로그인하세요. (초기 체험 비밀번호: 1234)
+TXT
+
+cp "bin/windows/꼬미시간서버.exe" "dist/release/꼬미시간서버.exe"
+cp "bin/windows/꼬미시간.exe" "dist/release/꼬미시간.exe"
+
+python3 - <<PYEOF
+import os, unicodedata, zipfile
+
+stage = "$STAGE_DIR"
+out_zip = "$ROOT_DIR/dist/release/꼬미시간_v${VERSION}_windows_portable.zip"
+with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk(stage):
+        for name in sorted(files):
+            full = os.path.join(root, name)
+            rel = unicodedata.normalize("NFC", os.path.relpath(full, stage)).replace(os.sep, "/")
+            zi = zipfile.ZipInfo(rel)
+            zi.flag_bits |= 0x800  # UTF-8 파일명 플래그 명시 (Windows 한글 호환)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            with open(full, "rb") as f:
+                zf.writestr(zi, f.read())
+PYEOF
+cp "$ROOT_DIR/dist/release/꼬미시간_v${VERSION}_windows_portable.zip" "$ROOT_DIR/dist/release/kkomi-timetable_v${VERSION}.zip"
+rm -rf "$STAGE_DIR"
+
+echo "============================================================"
+echo "✅ 빌드 및 Windows 릴리즈 완료!"
+ls -lh bin/darwin/ bin/windows/ dist/release/
+echo "============================================================"

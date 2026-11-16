@@ -1,0 +1,32 @@
+# 데이터베이스 및 민감한 보안 파일 (원격 저장소 유출 절대 금지)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+.env
+.env.*
+
+# 실행 데이터 및 포터블 MariaDB 런타임 데이터
+data/
+backups/
+updates/
+runtime/mariadb/data/
+runtime/mariadb/bin/
+runtime/mariadb/lib/
+server-data/
+client-data/
+
+# 프론트엔드 및 빌드 아티팩트
+node_modules/
+client/frontend/node_modules/
+client/frontend/dist/
+bin/
+dist/
+*.syso
+*.old
+*.log
+.DS_Store
+Thumbs.db
