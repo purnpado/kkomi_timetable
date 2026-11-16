@@ -132,7 +132,9 @@ import os, sys, zipfile
 zip_path, dest = sys.argv[1], sys.argv[2]
 want_bin = {
     "mariadbd.exe",
+    "mysqld.exe",
     "mariadb-install-db.exe",
+    "mysql_install_db.exe",
     "my_print_defaults.exe",
     "mariadb-admin.exe",
     "server.dll",

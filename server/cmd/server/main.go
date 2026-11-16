@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"embed"
 	"flag"
@@ -25,6 +26,39 @@ import (
 
 //go:embed all:webdist
 var embeddedWebFS embed.FS
+
+func failAndPause(shutdownFn func(), title string, err error, hints ...string) {
+	if shutdownFn != nil {
+		shutdownFn()
+	}
+	logPath := pathutil.SafeJoin(pathutil.BaseDir(), "server-error.log")
+	stamp := time.Now().Format("2006-01-02 15:04:05")
+	content := fmt.Sprintf("[%s] %s\n원인: %v\n", stamp, title, err)
+	for _, h := range hints {
+		content += fmt.Sprintf(" - %s\n", h)
+	}
+	content += "------------------------------------------------------------\n"
+	if f, openErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); openErr == nil {
+		_, _ = f.WriteString(content)
+		_ = f.Close()
+	}
+
+	fmt.Println()
+	fmt.Println("============================================================")
+	fmt.Printf("❌ [서버 실행 실패] %s\n", title)
+	fmt.Printf("🔎 상세 원인: %v\n", err)
+	if len(hints) > 0 {
+		fmt.Println("💡 확인 및 해결 방법:")
+		for _, h := range hints {
+			fmt.Printf("   %s\n", h)
+		}
+	}
+	fmt.Printf("📝 오류 로그 저장 위치: %s\n", logPath)
+	fmt.Println("============================================================")
+	fmt.Print("창을 닫거나 종료하려면 [Enter] 키를 누르세요...")
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+	os.Exit(1)
+}
 
 func main() {
 	port := flag.Int("port", 18090, "업무망 LAN HTTP/WebSocket 서버 포트")
@@ -79,6 +113,14 @@ func main() {
 		}
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			failAndPause(shutdownFn, "예기치 못한 서버 내부 오류(Panic)가 발생했습니다", fmt.Errorf("%v", r),
+				"1) server-error.log 파일 내용을 확인해 주세요.",
+				"2) 백신·보안 프로그램이 실행 파일이나 DB 프로세스를 차단하지 않았는지 확인해 주세요.")
+		}
+	}()
+
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -97,7 +139,10 @@ func main() {
 	openedStore, err := database.Open()
 	if err != nil {
 		database.StopActiveDaemon()
-		log.Fatalf("[치명적 오류] 데이터베이스 초기화 실패: %v", err)
+		failAndPause(shutdownFn, "포터블 데이터베이스(MariaDB) 초기화 또는 실행에 실패했습니다", err,
+			"1) 배포 압축 파일(꼬미시간_v..._windows_portable.zip)의 전체 폴더를 압축 해제한 상태에서 실행했는지 확인하세요.",
+			"2) 실행 폴더 내 'runtime\\mariadb\\bin\\mariadbd.exe' 및 'mysqld.exe'가 모두 존재하는지 확인하세요.",
+			"3) Windows Defender·백신 프로그램이나 이전 실행 프로세스(mariadbd.exe)가 DB 파일/포트를 막고 있지 않은지 확인하세요.")
 	}
 	resMu.Lock()
 	store = openedStore
@@ -117,15 +162,16 @@ func main() {
 
 	webSubFS, err := fs.Sub(embeddedWebFS, "webdist")
 	if err != nil {
-		shutdownFn()
-		log.Fatalf("[오류] 내장 웹 에셋 마운트 실패: %v", err)
+		failAndPause(shutdownFn, "내장 웹 관리 화면 에셋을 불러오지 못했습니다", err,
+			"배포 파일이 손상되었을 수 있습니다. 최신 릴리즈를 다시 내려받아 실행해 주세요.")
 	}
 
 	addr := fmt.Sprintf("0.0.0.0:%d", *port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		shutdownFn()
-		log.Fatalf("[서버 오류] 포트(%d) 열기 실패 (이미 서버가 실행 중일 수 있습니다): %v", *port, err)
+		failAndPause(shutdownFn, fmt.Sprintf("서버 포트(%d)를 열 수 없습니다", *port), err,
+			"1) 이미 다른 '꼬미시간서버.exe' 창이 실행 중인지 작업 관리자에서 확인하세요.",
+			"2) Windows 방화벽 또는 다른 프로그램이 해당 포트를 점유하고 있을 수 있습니다.")
 	}
 
 	srv := &http.Server{
@@ -137,16 +183,17 @@ func main() {
 	resMu.Unlock()
 
 	lanIP := ws.LocalIPAddress()
+	log.Println("[🟢 서버 상태: 켜짐 (정상 작동 중)]")
 	log.Printf("🗄️  DB 구동 모드: %s", store.ModeLabel())
 	log.Printf("🌐 업무망 고정 IP 웹 접속: http://%s:%d", lanIP, *port)
 	log.Printf("🔌 교사용 클라이언트(꼬미시간.exe) 서버 주소 입력: http://%s:%d", lanIP, *port)
 	log.Println("💡 교사 명렬표·학년별/학급별 기초 시간표 작성은 클라이언트(마스터/담당 권한)에서 수행하세요.")
-	log.Println("🛑 종료하려면 이 창을 닫거나 Ctrl+C를 누르세요.")
+	log.Println("[🛑 서버 종료 방법: 이 창에서 Ctrl+C를 누르거나 창을 닫으세요]")
 	log.Println("============================================================")
 
 	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
-		shutdownFn()
-		log.Fatalf("[서버 오류] HTTP/WebSocket 리스닝 실패: %v", err)
+		failAndPause(shutdownFn, "HTTP/WebSocket 서버 실행 중 오류가 발생했습니다", err,
+			"네트워크 어댑터 상태 및 보안 프로그램의 포트 차단 여부를 확인해 주세요.")
 	}
 	<-shutdownDone
 }

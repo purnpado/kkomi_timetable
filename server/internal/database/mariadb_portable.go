@@ -81,7 +81,10 @@ func resolveRuntimeDir() (string, error) {
 			return dir, nil
 		}
 	}
-	return "", fmt.Errorf("포터블 MariaDB 런타임(%s)을 찾을 수 없습니다 (scripts/prepare_mariadb_runtime.sh 실행 필요)", binName)
+	if extracted := tryExtractPortableRuntimeFromZip(binName); extracted != "" {
+		return extracted, nil
+	}
+	return "", fmt.Errorf("포터블 MariaDB 런타임(%s)을 찾을 수 없습니다 (압축 파일 내 1_교무실_공용서버/runtime/mariadb 폴더가 함께 있어야 합니다)", binName)
 }
 
 func mustGetwd() string {
@@ -298,6 +301,9 @@ func (m *PortableMariaDBManager) ensureDataInitialized() error {
 	if _, err := os.Stat(m.initPath); err != nil {
 		return fmt.Errorf("초기화 바이너리(%s)를 찾을 수 없습니다", m.initPath)
 	}
+	if err := prepareCleanDataDir(m.dataDir); err != nil {
+		return fmt.Errorf("MariaDB 데이터 폴더 준비 실패: %w", err)
+	}
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -312,8 +318,9 @@ func (m *PortableMariaDBManager) ensureDataInitialized() error {
 			"--skip-test-db",
 			"--force",
 		)
-		cmd.Env = append(os.Environ(), "PATH="+pathutil.SafeJoin(m.runtimeDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
+	cmd.Dir = filepath.Dir(m.binPath)
+	cmd.Env = append(os.Environ(), "PATH="+pathutil.SafeJoin(m.runtimeDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("MariaDB 데이터 디렉토리 초기화 실패: %w (%s)", err, string(out))
 	}
@@ -338,13 +345,13 @@ func (m *PortableMariaDBManager) Start() (string, error) {
 
 	args := []string{
 		"--no-defaults",
-		fmt.Sprintf("--basedir=%s", m.runtimeDir),
-		fmt.Sprintf("--datadir=%s", m.dataDir),
-		fmt.Sprintf("--lc-messages-dir=%s", m.shareDir),
-		fmt.Sprintf("--plugin-dir=%s", m.pluginDir),
+		fmt.Sprintf("--basedir=%s", formatMariaDBArgPath(m.runtimeDir)),
+		fmt.Sprintf("--datadir=%s", formatMariaDBArgPath(m.dataDir)),
+		fmt.Sprintf("--lc-messages-dir=%s", formatMariaDBArgPath(m.shareDir)),
+		fmt.Sprintf("--plugin-dir=%s", formatMariaDBArgPath(m.pluginDir)),
 		"--bind-address=127.0.0.1",
 		fmt.Sprintf("--port=%d", m.port),
-		fmt.Sprintf("--pid-file=%s", m.pidFile),
+		fmt.Sprintf("--pid-file=%s", formatMariaDBArgPath(m.pidFile)),
 		"--character-set-server=utf8mb4",
 		"--collation-server=utf8mb4_unicode_ci",
 		"--skip-grant-tables",
@@ -356,7 +363,7 @@ func (m *PortableMariaDBManager) Start() (string, error) {
 	if m.hasTDE {
 		args = append(args,
 			"--plugin-load-add=file_key_management",
-			fmt.Sprintf("--file-key-management-filename=%s", m.tdeKeyFile),
+			fmt.Sprintf("--file-key-management-filename=%s", formatMariaDBArgPath(m.tdeKeyFile)),
 			"--file-key-management-encryption-algorithm=AES_CTR",
 			"--innodb-encrypt-tables=ON",
 			"--innodb-encrypt-log=ON",
