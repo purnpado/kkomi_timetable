@@ -220,6 +220,7 @@ func (s *Service) FindCrossWeekSwapCandidates(sourceCellID, sourceDate, targetWe
 	}
 	reqs, _ := s.ListRequests()
 	events, _ := database.LoadCollection[protocol.SchoolEvent](s.store, "school_events")
+	constraints, _ := s.ListConstraints()
 
 	srcWeekCells := buildEffectiveWeekCells(srcMon, baseCells, tMap, reqs, events)
 	tgtWeekCells := buildEffectiveWeekCells(tgtMon, baseCells, tMap, reqs, events)
@@ -245,7 +246,7 @@ func (s *Service) FindCrossWeekSwapCandidates(sourceCellID, sourceDate, targetWe
 		sourceDate = src.LessonDate
 	}
 
-	return findCrossWeekForCell(*src, srcWeekCells, tgtWeekCells, tMap, events, srcMon == tgtMon), nil
+	return findCrossWeekForCell(*src, srcWeekCells, tgtWeekCells, tMap, events, constraints, srcMon == tgtMon), nil
 }
 
 func findCrossWeekForCell(
@@ -254,6 +255,7 @@ func findCrossWeekForCell(
 	tgtWeekCells []protocol.TimetableCell,
 	tMap map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
 	sameWeek bool,
 ) []protocol.CrossWeekCandidate {
 	var cands []protocol.CrossWeekCandidate
@@ -280,10 +282,10 @@ func findCrossWeekForCell(
 		srcEvents := filterDateEvents(events, src.LessonDate)
 		tgtEvents := filterDateEvents(events, cand.LessonDate)
 
-		if reason1 := slotConflictReason(cand, src.DayOfWeek, src.Period, src.LessonDate, srcIgnore, srcWeekCells, tMap, srcEvents); reason1 != "" {
+		if reason1 := slotConflictReason(cand, src.DayOfWeek, src.Period, src.LessonDate, srcIgnore, srcWeekCells, tMap, srcEvents, constraints); reason1 != "" {
 			continue
 		}
-		if reason2 := slotConflictReason(src, cand.DayOfWeek, cand.Period, cand.LessonDate, tgtIgnore, tgtWeekCells, tMap, tgtEvents); reason2 != "" {
+		if reason2 := slotConflictReason(src, cand.DayOfWeek, cand.Period, cand.LessonDate, tgtIgnore, tgtWeekCells, tMap, tgtEvents, constraints); reason2 != "" {
 			continue
 		}
 

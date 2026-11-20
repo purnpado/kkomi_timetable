@@ -74,7 +74,8 @@ func (s *Service) EvaluateMove(req protocol.EvaluateMoveRequest) (protocol.MoveE
 		tMap[t.ID] = t
 	}
 	events, _ := database.LoadCollection[protocol.SchoolEvent](s.store, "school_events")
-	return EvaluateMove(req, cells, tMap, events), nil
+	constraints, _ := s.ListConstraints()
+	return EvaluateMoveWithConstraints(req, cells, tMap, events, constraints), nil
 }
 
 // SubmitRequest는 교사의 수업 교환 또는 결보강 신청을 대기열(STAGING)에 등록합니다.
@@ -145,7 +146,8 @@ func (s *Service) CommitRequest(requestID, reviewerName string, approve bool, re
 			for _, t := range teachers {
 				tMap[t.ID] = t
 			}
-			changed, uErr := validateAndApplyCellUpdateTx(tx, cells, tMap, *loaded)
+			constraints, _ := database.LoadCollectionTx[protocol.TeacherConstraint](tx, "teacher_constraints")
+			changed, uErr := validateAndApplyCellUpdateTx(tx, cells, tMap, constraints, *loaded, reviewerName)
 			if uErr != nil {
 				return uErr
 			}
@@ -216,7 +218,9 @@ func validateAndApplyCellUpdateTx(
 	tx *database.TxStore,
 	cells []protocol.TimetableCell,
 	tMap map[string]protocol.Teacher,
+	constraints []protocol.TeacherConstraint,
 	req protocol.TimetableChangeRequest,
+	actorName string,
 ) (bool, error) {
 	sim := make([]protocol.TimetableCell, len(cells))
 	copy(sim, cells)
@@ -294,7 +298,7 @@ func validateAndApplyCellUpdateTx(
 	for _, tid := range touchedIDs {
 		idx := indexByID[tid]
 		c := sim[idx]
-		if reason := slotConflictReason(c, c.DayOfWeek, c.Period, "", map[string]bool{c.ID: true}, sim, tMap, nil); reason != "" {
+		if reason := slotConflictReason(c, c.DayOfWeek, c.Period, "", map[string]bool{c.ID: true}, sim, tMap, nil, constraints); reason != "" {
 			return false, fmt.Errorf("승인 시점 시간표 충돌: %s", reason)
 		}
 		for _, other := range sim {
@@ -302,6 +306,9 @@ func validateAndApplyCellUpdateTx(
 				return false, fmt.Errorf("승인 시점 충돌: %s반 %d교시에 이미 %s 수업이 있습니다", c.ClassName, c.Period, other.Subject)
 			}
 		}
+	}
+	if hErr := recordHistoryTx(tx, fmt.Sprintf("수업 변경 확정 (%s)", req.SourceCell.ClassName), actorName, cells, sim); hErr != nil {
+		return false, hErr
 	}
 	for _, tid := range touchedIDs {
 		c := sim[indexByID[tid]]

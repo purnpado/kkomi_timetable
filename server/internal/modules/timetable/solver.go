@@ -3,6 +3,7 @@ package timetable
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"kkomi-timetable/pkg/protocol"
 )
@@ -16,6 +17,17 @@ func EvaluateMove(
 	cells []protocol.TimetableCell,
 	teachers map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
+) protocol.MoveEvaluationResult {
+	return EvaluateMoveWithConstraints(req, cells, teachers, events, nil)
+}
+
+// EvaluateMoveWithConstraints는 교사별 고정 공강·기피 교시 제약을 포함해 Canvas 드래그 앤 드롭 신호등을 판정합니다.
+func EvaluateMoveWithConstraints(
+	req protocol.EvaluateMoveRequest,
+	cells []protocol.TimetableCell,
+	teachers map[string]protocol.Teacher,
+	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
 ) protocol.MoveEvaluationResult {
 	var src *protocol.TimetableCell
 	for i := range cells {
@@ -69,17 +81,21 @@ func EvaluateMove(
 
 	// 1. 빈 교시 단순 이동 검사
 	if targetCell == nil {
-		conflict := slotConflictReason(*src, req.TargetDay, req.TargetPeriod, weekMon, map[string]bool{src.ID: true}, cells, teachers, events)
+		conflict := slotConflictReason(*src, req.TargetDay, req.TargetPeriod, weekMon, map[string]bool{src.ID: true}, cells, teachers, events, constraints)
 		if conflict == "" {
 			step := buildChainStep(1, *src, src.DayOfWeek, src.Period, req.TargetDay, req.TargetPeriod, teachers)
+			reason := "빈 교시로 즉시 이동 가능합니다"
+			if soft := softNotesForSlot(*src, req.TargetDay, req.TargetPeriod, constraints, teachers); soft != "" {
+				reason += " (참고: 기피 교시 — " + soft + ")"
+			}
 			return protocol.MoveEvaluationResult{
 				Signal:     "GREEN",
 				Mode:       "MOVE",
-				Reason:     "빈 교시로 즉시 이동 가능합니다",
+				Reason:     reason,
 				ChainSteps: []protocol.ChainSwapStep{step},
 			}
 		}
-		if mode, path, steps := findEmptyTargetChain(src, req.TargetDay, req.TargetPeriod, weekMon, cells, teachers, events); len(steps) > 0 {
+		if mode, path, steps := findEmptyTargetChain(src, req.TargetDay, req.TargetPeriod, weekMon, cells, teachers, events, constraints); len(steps) > 0 {
 			return protocol.MoveEvaluationResult{
 				Signal:       "YELLOW",
 				Mode:         mode,
@@ -103,13 +119,24 @@ func EvaluateMove(
 
 	// 2. 1:1 맞교환 판정
 	ignoreBoth := map[string]bool{src.ID: true, targetCell.ID: true}
-	srcConflict := slotConflictReason(*src, targetCell.DayOfWeek, targetCell.Period, weekMon, ignoreBoth, cells, teachers, events)
-	tgtConflict := slotConflictReason(*targetCell, src.DayOfWeek, src.Period, weekMon, ignoreBoth, cells, teachers, events)
+	srcConflict := slotConflictReason(*src, targetCell.DayOfWeek, targetCell.Period, weekMon, ignoreBoth, cells, teachers, events, constraints)
+	tgtConflict := slotConflictReason(*targetCell, src.DayOfWeek, src.Period, weekMon, ignoreBoth, cells, teachers, events, constraints)
 	if srcConflict == "" && tgtConflict == "" {
+		reason := fmt.Sprintf("%s(%s) ↔ %s(%s) 1:1 수업 맞교환 가능", src.Subject, teacherName(src.TeacherID, teachers), targetCell.Subject, teacherName(targetCell.TeacherID, teachers))
+		var sNotes []string
+		if n1 := softNotesForSlot(*src, targetCell.DayOfWeek, targetCell.Period, constraints, teachers); n1 != "" {
+			sNotes = append(sNotes, n1)
+		}
+		if n2 := softNotesForSlot(*targetCell, src.DayOfWeek, src.Period, constraints, teachers); n2 != "" {
+			sNotes = append(sNotes, n2)
+		}
+		if len(sNotes) > 0 {
+			reason += " (참고: 기피 교시 — " + strings.Join(sNotes, ", ") + ")"
+		}
 		return protocol.MoveEvaluationResult{
 			Signal: "GREEN",
 			Mode:   "SWAP",
-			Reason: fmt.Sprintf("%s(%s) ↔ %s(%s) 1:1 수업 맞교환 가능", src.Subject, teacherName(src.TeacherID, teachers), targetCell.Subject, teacherName(targetCell.TeacherID, teachers)),
+			Reason: reason,
 			ChainSteps: []protocol.ChainSwapStep{
 				buildChainStep(1, *src, src.DayOfWeek, src.Period, targetCell.DayOfWeek, targetCell.Period, teachers),
 				buildChainStep(2, *targetCell, targetCell.DayOfWeek, targetCell.Period, src.DayOfWeek, src.Period, teachers),
@@ -118,7 +145,7 @@ func EvaluateMove(
 	}
 
 	// 3. 3단계(삼각) → 4단계(사각) 순환 연쇄 교환 탐색
-	if mode, path, steps := findCyclicChainSwap(src, targetCell, weekMon, cells, teachers, events); len(steps) > 0 {
+	if mode, path, steps := findCyclicChainSwap(src, targetCell, weekMon, cells, teachers, events, constraints); len(steps) > 0 {
 		return protocol.MoveEvaluationResult{
 			Signal:       "YELLOW",
 			Mode:         mode,
@@ -149,6 +176,7 @@ func findEmptyTargetChain(
 	cells []protocol.TimetableCell,
 	teachers map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
 ) (string, []string, []protocol.ChainSwapStep) {
 	classCells := sameClassCandidates(src.ClassName, cells, src.ID)
 	// 2단계 연쇄 (중간 -> 빈칸, 원본 -> 중간)
@@ -157,8 +185,8 @@ func findEmptyTargetChain(
 			continue
 		}
 		ign := map[string]bool{src.ID: true, mid.ID: true}
-		if slotConflictReason(mid, td, tp, weekMon, ign, cells, teachers, events) == "" &&
-			slotConflictReason(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events) == "" {
+		if slotConflictReason(mid, td, tp, weekMon, ign, cells, teachers, events, constraints) == "" &&
+			slotConflictReason(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
 			steps := []protocol.ChainSwapStep{
 				buildChainStep(1, mid, mid.DayOfWeek, mid.Period, td, tp, teachers),
 				buildChainStep(2, *src, src.DayOfWeek, src.Period, mid.DayOfWeek, mid.Period, teachers),
@@ -175,15 +203,16 @@ func findCyclicChainSwap(
 	cells []protocol.TimetableCell,
 	teachers map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
 ) (string, []string, []protocol.ChainSwapStep) {
 	classCells := sameClassCandidates(src.ClassName, cells, src.ID, tgt.ID)
 
 	// 1) 3단계 삼각 순환 (A→B→C→A 또는 A→C→B→A)
 	for _, mid := range classCells {
 		ign := map[string]bool{src.ID: true, tgt.ID: true, mid.ID: true}
-		if slotConflictReason(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events) == "" &&
-			slotConflictReason(mid, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events) == "" &&
-			slotConflictReason(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events) == "" {
+		if slotConflictReason(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+			slotConflictReason(mid, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+			slotConflictReason(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
 			steps := []protocol.ChainSwapStep{
 				buildChainStep(1, *src, src.DayOfWeek, src.Period, mid.DayOfWeek, mid.Period, teachers),
 				buildChainStep(2, mid, mid.DayOfWeek, mid.Period, tgt.DayOfWeek, tgt.Period, teachers),
@@ -191,9 +220,9 @@ func findCyclicChainSwap(
 			}
 			return "TRIANGLE", []string{src.ID, mid.ID, tgt.ID}, steps
 		}
-		if slotConflictReason(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events) == "" &&
-			slotConflictReason(*tgt, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events) == "" &&
-			slotConflictReason(mid, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events) == "" {
+		if slotConflictReason(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+			slotConflictReason(*tgt, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+			slotConflictReason(mid, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
 			steps := []protocol.ChainSwapStep{
 				buildChainStep(1, *src, src.DayOfWeek, src.Period, tgt.DayOfWeek, tgt.Period, teachers),
 				buildChainStep(2, *tgt, tgt.DayOfWeek, tgt.Period, mid.DayOfWeek, mid.Period, teachers),
@@ -210,10 +239,10 @@ func findCyclicChainSwap(
 				continue
 			}
 			ign := map[string]bool{src.ID: true, tgt.ID: true, m1.ID: true, m2.ID: true}
-			if slotConflictReason(*src, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events) == "" &&
-				slotConflictReason(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events) == "" &&
-				slotConflictReason(m2, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events) == "" &&
-				slotConflictReason(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events) == "" {
+			if slotConflictReason(*src, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+				slotConflictReason(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+				slotConflictReason(m2, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+				slotConflictReason(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
 				steps := []protocol.ChainSwapStep{
 					buildChainStep(1, *src, src.DayOfWeek, src.Period, m1.DayOfWeek, m1.Period, teachers),
 					buildChainStep(2, m1, m1.DayOfWeek, m1.Period, m2.DayOfWeek, m2.Period, teachers),
@@ -222,10 +251,10 @@ func findCyclicChainSwap(
 				}
 				return "QUAD", []string{src.ID, m1.ID, m2.ID, tgt.ID}, steps
 			}
-			if slotConflictReason(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events) == "" &&
-				slotConflictReason(*tgt, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events) == "" &&
-				slotConflictReason(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events) == "" &&
-				slotConflictReason(m2, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events) == "" {
+			if slotConflictReason(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+				slotConflictReason(*tgt, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+				slotConflictReason(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
+				slotConflictReason(m2, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
 				steps := []protocol.ChainSwapStep{
 					buildChainStep(1, *src, src.DayOfWeek, src.Period, tgt.DayOfWeek, tgt.Period, teachers),
 					buildChainStep(2, *tgt, tgt.DayOfWeek, tgt.Period, m1.DayOfWeek, m1.Period, teachers),
@@ -261,6 +290,19 @@ func buildChainStep(step int, cell protocol.TimetableCell, fd, fp, td, tp int, t
 	}
 }
 
+func softNotesForSlot(cell protocol.TimetableCell, day, period int, constraints []protocol.TeacherConstraint, teachers map[string]protocol.Teacher) string {
+	var notes []string
+	if s := softConstraintReason(cell.TeacherID, day, period, constraints, teachers); s != "" {
+		notes = append(notes, s)
+	}
+	if cell.CoTeacherID != "" {
+		if s := softConstraintReason(cell.CoTeacherID, day, period, constraints, teachers); s != "" {
+			notes = append(notes, s)
+		}
+	}
+	return strings.Join(notes, ", ")
+}
+
 func slotConflictReason(
 	cell protocol.TimetableCell,
 	day, period int,
@@ -269,6 +311,7 @@ func slotConflictReason(
 	cells []protocol.TimetableCell,
 	teachers map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
 ) string {
 	if blk := eventBlockReason(cell.Grade, cell.ClassName, day, period, weekMon, events); blk != "" {
 		return blk
@@ -276,9 +319,15 @@ func slotConflictReason(
 	if itn := itinerantReason(cell.TeacherID, day, teachers); itn != "" {
 		return itn
 	}
+	if hr := hardConstraintReason(cell.TeacherID, day, period, constraints, teachers); hr != "" {
+		return hr
+	}
 	if cell.CoTeacherID != "" {
 		if itn := itinerantReason(cell.CoTeacherID, day, teachers); itn != "" {
 			return itn
+		}
+		if hr := hardConstraintReason(cell.CoTeacherID, day, period, constraints, teachers); hr != "" {
+			return hr
 		}
 	}
 	for _, c := range cells {

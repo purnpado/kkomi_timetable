@@ -102,6 +102,13 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/timetable/requests", a.handleTimetableRequests)
 	mux.HandleFunc("/api/timetable/commit", a.handleCommitTimetableRequest)
 	mux.HandleFunc("/api/timetable/neis", a.handleNEISHelper)
+	mux.HandleFunc("/api/timetable/constraints", a.handleTimetableConstraints)
+	mux.HandleFunc("/api/timetable/constraints/batch", a.handleTimetableConstraintsBatch)
+	mux.HandleFunc("/api/timetable/scenarios", a.handleTimetableScenarios)
+	mux.HandleFunc("/api/timetable/scenarios/apply", a.handleApplyTimetableScenario)
+	mux.HandleFunc("/api/timetable/history", a.handleTimetableHistory)
+	mux.HandleFunc("/api/timetable/undo", a.handleTimetableUndo)
+	mux.HandleFunc("/api/timetable/redo", a.handleTimetableRedo)
 
 	// 교내 지필고사 시험감독 (봉인/당일 발표/긴급 대타)
 	mux.HandleFunc("/api/internal-exam/slots", a.handleInternalExamSlots)

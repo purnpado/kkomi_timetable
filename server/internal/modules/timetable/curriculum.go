@@ -37,15 +37,18 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 		tMap[t.ID] = t
 	}
 
+	constraints, _ := s.ListConstraints()
 	existing, _ := s.ListCells()
-	st := newSchedState(cfg, tMap)
+	st := newSchedState(cfg, tMap, constraints)
 	var deleteIDs []string
+	var keptCells []protocol.TimetableCell
 	keptHours := make(map[string]int)
 	for _, c := range existing {
 		if clearExisting && !c.IsLocked {
 			deleteIDs = append(deleteIDs, c.ID)
 			continue
 		}
+		keptCells = append(keptCells, c)
 		st.mark(c, true)
 		keptHours[fmt.Sprintf("%s|%s|%s", c.ClassName, c.Subject, c.TeacherID)]++
 	}
@@ -180,26 +183,34 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 				continue
 			}
 			placedGrp := false
-			for _, allowDup := range []bool{false, true} {
+			for _, allowSoft := range []bool{false, true} {
 				if placedGrp {
 					break
 				}
-				for step := 0; step < 5 && !placedGrp; step++ {
-					day := ((simDayOffset + step) % 5) + 1
-					for p := 1; p <= 7 && !placedGrp; p++ {
-						allOK := true
-						for _, u := range roundUnits {
-							if !st.canPlace(u, day, p, allowDup) {
-								allOK = false
-								break
-							}
-						}
-						if allOK {
+				for _, allowDup := range []bool{false, true} {
+					if placedGrp {
+						break
+					}
+					for step := 0; step < 5 && !placedGrp; step++ {
+						day := ((simDayOffset + step) % 5) + 1
+						for p := 1; p <= 7 && !placedGrp; p++ {
+							allOK := true
 							for _, u := range roundUnits {
-								placeUnitInMem(u, day, p)
+								if !st.canPlace(u, day, p, allowDup, allowSoft) {
+									allOK = false
+									break
+								}
 							}
-							placedGrp = true
-							simDayOffset = (simDayOffset + 1) % 5
+							if allOK {
+								for _, u := range roundUnits {
+									placeUnitInMem(u, day, p)
+									if allowSoft {
+										warnings = append(warnings, st.softPlacementWarnings(u, day, p)...)
+									}
+								}
+								placedGrp = true
+								simDayOffset = (simDayOffset + 1) % 5
+							}
 						}
 					}
 				}
@@ -218,21 +229,29 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 	dayOffset := 0
 	for _, u := range normalUnits {
 		placed := false
-		for _, allowDup := range []bool{false, true} {
+		for _, allowSoft := range []bool{false, true} {
 			if placed {
 				break
 			}
-			for step := 0; step < 5 && !placed; step++ {
-				day := ((dayOffset + step) % 5) + 1
-				maxP := st.maxPeriod(parseGrade(u.ClassName, u.Load.Grade), day)
-				for p := 1; p <= maxP; p++ {
-					if !st.canPlace(u, day, p, allowDup) {
-						continue
-					}
-					placeUnitInMem(u, day, p)
-					placed = true
-					dayOffset = (dayOffset + 1) % 5
+			for _, allowDup := range []bool{false, true} {
+				if placed {
 					break
+				}
+				for step := 0; step < 5 && !placed; step++ {
+					day := ((dayOffset + step) % 5) + 1
+					maxP := st.maxPeriod(parseGrade(u.ClassName, u.Load.Grade), day)
+					for p := 1; p <= maxP; p++ {
+						if !st.canPlace(u, day, p, allowDup, allowSoft) {
+							continue
+						}
+						placeUnitInMem(u, day, p)
+						if allowSoft {
+							warnings = append(warnings, st.softPlacementWarnings(u, day, p)...)
+						}
+						placed = true
+						dayOffset = (dayOffset + 1) % 5
+						break
+					}
 				}
 			}
 		}
@@ -266,7 +285,7 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 						},
 						ClassName: other.ClassName, Hours: 1,
 					}
-					if st.canPlace(otherUnit, ed, ep, true) && st.canPlace(u, other.DayOfWeek, other.Period, true) {
+					if st.canPlace(otherUnit, ed, ep, true, true) && st.canPlace(u, other.DayOfWeek, other.Period, true, true) {
 						targetD, targetP := other.DayOfWeek, other.Period
 						other.DayOfWeek = ed
 						other.Period = ep
@@ -274,6 +293,8 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 						created[idx] = other
 						st.mark(other, true)
 						placeUnitInMem(u, targetD, targetP)
+						warnings = append(warnings, st.softPlacementWarnings(otherUnit, ed, ep)...)
+						warnings = append(warnings, st.softPlacementWarnings(u, targetD, targetP)...)
 						repaired = true
 						break
 					}
@@ -287,7 +308,13 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 		}
 	}
 
+	afterCells := make([]protocol.TimetableCell, 0, len(keptCells)+len(created))
+	afterCells = append(afterCells, keptCells...)
+	afterCells = append(afterCells, created...)
 	if err := s.store.WithTx(func(tx *database.TxStore) error {
+		if hErr := recordHistoryTx(tx, "시수표 기반 자동 편성", "시간표 담당", existing, afterCells); hErr != nil {
+			return hErr
+		}
 		for _, id := range deleteIDs {
 			if dErr := tx.DeleteRecord("timetable_cells", id); dErr != nil {
 				return dErr

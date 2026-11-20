@@ -41,7 +41,7 @@
 
 ### 3.1. 포터블 MariaDB(TDE) 단일 DB 및 이벤트 기반 아키텍처 (EDA)
 * **무설치 포터블 MariaDB(`mariadbd` / `mariadbd.exe` + AES-256 암호화):** macOS(`bin/darwin/runtime/mariadb/`) 및 Windows(`bin/windows/runtime/mariadb/`) 모두 포터블 MariaDB 바이너리가 번들되어 `127.0.0.1:13306` 로컬 루프백 전용으로 자동 초기화·기동·종료 제어됩니다. (행 단위 잠금 Row-level Locking 및 UTF8MB4 완벽 지원)
-* **중앙 도메인 이벤트 버스 (`server/internal/eventbus`):** `TimetableApproved`, `ExamUnsealed`, `ExternalExamConfirmed`, `SchoolEventPublished`, `BellScheduleChanged` 이벤트를 발행하여 모듈 간 느슨한 결합(Zero-Coupling)과 WebSocket 실시간 브로드캐스트를 구현합니다.
+* **중앙 도메인 이벤트 버스 (`server/internal/eventbus`):** `TimetableApproved`, `TimetableCellsUpdated`, `TeacherConstraintUpdated`, `ExamUnsealed`, `ExternalExamConfirmed`, `SchoolEventPublished`, `BellScheduleChanged` 이벤트를 발행하여 모듈 간 느슨한 결합(Zero-Coupling)과 WebSocket 실시간 브로드캐스트를 구현합니다.
 
 ### 3.2. 주요 업무 모듈
 1. **업무분장 기반 6종 RBAC 권한 분리 (`server/internal/modules/auth`):**
@@ -51,7 +51,7 @@
    * **학교 기본사항·요일별 기준시수·교사별 시수표 매트릭스(`curriculum.go`):** 1~3학년 학급수(가상반 포함), 요일별 기준 시수, 교사별·학급별 주당 배당 시수 일치성 검사(`일치/부족/초과`), 동시수업·연속수업·교과교실(특별실) 동시간대 중복 차단 기반 자동 시간표 편성.
    * **엑셀(`.xlsx`) 일괄 입출력(`xlsx_io.go`):** 교사 명렬표 및 컴시간 표준 형식 교사별 시수표 엑셀 다운로드·일괄 업로드 지원.
    * **다주간(이번 주 · 다음 주 · 다다음 주) 시간표 & 주중 미출근 일괄 대책 (`multiweek.go`):** 정규 기본 시간표를 건드리지 않고 특정 일자/주차에만 적용되는 `CROSS_WEEK_SWAP`(주차 간 맞교환) 및 `DATE_ONLY` 일일 보강 오버레이를 지원하며, 주중 갑작스러운 병가·경조사·출장 시 다음주·다다음주 교환 후보와 당일 공강 교사 대타(동일교과·담임·누적횟수 순)를 자동 추천해 일괄 신청/확정할 수 있습니다.
-   * **다단계 연쇄 교환 & 교과교실 열람:** 60fps HTML5 Canvas(HiDPI, 주차별 날짜 헤더, 변동 배지, 드래그 고스트, 🟢 이동/맞교환 · 🟡 삼각(3단계)/사각(4단계) 순환 연쇄교환 1~4단계 상세 과정 시각화 · 🔴 충돌사유 신호등, PNG 클립보드 복사) 및 교과교실/특별실별 주간 시간표 조회.
+   * **다단계 연쇄 교환 · 공강/기피 제약 · A/B/C 시나리오 & 20단계 Undo/Redo:** 60fps HTML5 Canvas(HiDPI, 주차별 날짜 헤더, 변동 배지, 드래그 고스트, 🟢 이동/맞교환 · 🟡 삼각(3단계)/사각(4단계) 순환 연쇄교환 1~4단계 상세 과정 시각화 · 🔴 충돌사유 신호등, PNG 클립보드 복사)와 교사별 고정 공강/기피 교시 제약(`constraints.go` · 부장회의·교과협의회 일괄 등록 포함), A/B/C안 품질 비교·채택(`scenarios.go`), 20단계 실행취소·다시실행(`history.go` · `Ctrl+Z`/`Ctrl+Y`) 및 교과교실/특별실별 주간 시간표 조회를 지원합니다.
    * 일반 교사 신청은 `STAGING`에 머물고, 시간표 담당교사가 Radix Dialog 전/후 비교 모달에서 **`[최종 선택(서버 반영)]`**을 눌러야만 마스터 DB에 반영됩니다. 나이스(NEIS) 입력 순서 정렬 및 과목코드 원클릭 복사 지원.
    * **동명이인 구분 간편 로그인(`LoginView.jsx`):** 서버의 교사/과목 디렉토리를 연동해 `담당과목 선택 → 교사 선택 → 비밀번호` 또는 `과목·성명·비밀번호` 직접 입력으로 동명이인을 정확히 구분하여 로그인합니다.
 3. **교내 지필고사 시험감독 배정 & 보안 봉인 (`internal_exam`):**
@@ -140,11 +140,12 @@ go test -v ./...
 
 ## 6. 현재 개발 상태 · 로드맵 ([ROADMAP.md](ROADMAP.md))
 
-* **✅ 구현 완료 (`v0.1.01`):**
+* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.x` 1~3단계):**
   * [x] 1~6단계 코어 인프라, 포터블 MariaDB(TDE), 6종 RBAC(`최고관리자` 기본 계정 분리·권한 위임), 정규·다주간 시간표 & 1~4단계 연쇄교환, 교내·외부 시험감독, 행사 4종 연동, `.hwpx`/`.xlsx`/고대비 출력 완성
-  * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.1.01` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화, 18개 전체 단위·E2E 테스트 통과
-* **🔄 진행 중 (`v0.1.x`):**
-  * [ ] Windows 교무실 서버/클라이언트 및 macOS 실환경 교차 검증, 실데이터 엑셀 양식 예외 보강, GitHub 자동 패치 실운영 점검
+  * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.1.01` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화 및 1~2단계 보안·동시성·도메인·문서 정합성 강화 완료
+  * [x] **`v0.2.x` 3단계 완료:** 교사별 절대 금지·회의 공강(부장/교과 일괄)·기피 교시 제약(`constraints.go`), 시간표 A/B/C안 품질 비교·채택(`scenarios.go`), 서버 측 20단계 실행취소/다시실행(`history.go`)
+* **🔄 진행 중 (`v0.1.x` / `v0.2.x`):**
+  * [ ] Windows 교무실 서버/클라이언트 및 macOS 실환경 교차 검증, 다중일(3~5일) 지필고사 통합 감독 및 월별/학기별 정산 출력(4단계 예정)
 * **📋 앞으로 구현해야 할 항목 (상세 목록: [ROADMAP.md](ROADMAP.md)):**
-  * [ ] `v0.2.x` 단기: 시간표 다중 시나리오(A/B/C안)·Undo/Redo, 교사별 회피교시·공강 제약기, 다중일(3~5일) 지필고사 통합 감독 및 연강 감독 방지, 월별/학기별 정산 출력
+  * [ ] `v0.2.x` 단기(잔여): 다중일(3~5일) 지필고사 통합 감독 및 연강 감독 방지, 월별/학기별 정산 출력
   * [ ] `v0.3.x` ~ `v1.0` 중·장기: 고교학점제 학생 이동수업 시간표, 나이스 양방향 검증 확대, 교무실 TV 전광판 모드, macOS GitHub 릴리즈 자동 업데이트 및 신학년도 이관 마법사

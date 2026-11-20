@@ -52,6 +52,7 @@ func (s *Service) PlanTeacherAbsence(req protocol.AbsencePlanRequest) ([]protoco
 	}
 	reqs, _ := s.ListRequests()
 	events, _ := database.LoadCollection[protocol.SchoolEvent](s.store, "school_events")
+	constraints, _ := s.ListConstraints()
 
 	weekCache := make(map[string][]protocol.TimetableCell)
 	getWeek := func(mon string) []protocol.TimetableCell {
@@ -90,8 +91,8 @@ func (s *Service) PlanTeacherAbsence(req protocol.AbsencePlanRequest) ([]protoco
 		for _, c := range dayCells {
 			var crossOpts []protocol.CrossWeekCandidate
 			for _, cw := range append(
-				findCrossWeekForCell(c, weekCells, nextWeek1, tMap, events, false),
-				findCrossWeekForCell(c, weekCells, nextWeek2, tMap, events, false)...,
+				findCrossWeekForCell(c, weekCells, nextWeek1, tMap, events, constraints, false),
+				findCrossWeekForCell(c, weekCells, nextWeek2, tMap, events, constraints, false)...,
 			) {
 				if cw.TargetDate >= req.StartDate && cw.TargetDate <= endDateStr {
 					continue // 미출근 기간 자체 날짜는 제외
@@ -102,7 +103,7 @@ func (s *Service) PlanTeacherAbsence(req protocol.AbsencePlanRequest) ([]protoco
 				}
 			}
 
-			subOpts := rankSubstituteCandidates(c, weekCells, teachersList, req.TeacherID)
+			subOpts := rankSubstituteCandidates(c, weekCells, teachersList, tMap, constraints, req.TeacherID)
 			plans = append(plans, protocol.AbsenceSlotPlan{
 				LessonDate:        dateStr,
 				Cell:              c,
@@ -118,14 +119,23 @@ func rankSubstituteCandidates(
 	slot protocol.TimetableCell,
 	weekCells []protocol.TimetableCell,
 	teachers []protocol.Teacher,
+	tMap map[string]protocol.Teacher,
+	constraints []protocol.TeacherConstraint,
 	absentID string,
 ) []protocol.AbsenceSubCandidate {
-	var list []protocol.AbsenceSubCandidate
+	type candWithScore struct {
+		cand  protocol.AbsenceSubCandidate
+		score int
+	}
+	var list []candWithScore
 	for _, t := range teachers {
 		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || t.ID == absentID {
 			continue
 		}
 		if len(t.ItinerantDays) > 0 && !slices.Contains(t.ItinerantDays, slot.DayOfWeek) {
+			continue
+		}
+		if hardConstraintReason(t.ID, slot.DayOfWeek, slot.Period, constraints, tMap) != "" {
 			continue
 		}
 		busy := false
@@ -139,41 +149,41 @@ func rankSubstituteCandidates(
 		if busy || exceedsThreeConsecutiveMap(t.ID, slot.DayOfWeek, slot.Period, map[string]bool{}, weekCells) {
 			continue
 		}
+		sc := 0
 		badge := fmt.Sprintf("[공강·보강%d회]", t.SubstitutionCount)
 		if t.Subject == slot.Subject {
+			sc += 100
 			badge = fmt.Sprintf("[1순위: 동일교과(%s)·공강]", t.Subject)
 		} else if t.HomeroomClass != "" && t.HomeroomClass == slot.ClassName {
+			sc += 50
 			badge = fmt.Sprintf("[담임교사(%s)·공강]", t.HomeroomClass)
 		}
-		list = append(list, protocol.AbsenceSubCandidate{
-			TeacherID:         t.ID,
-			TeacherName:       t.Name,
-			Subject:           t.Subject,
-			HomeroomClass:     t.HomeroomClass,
-			SubstitutionCount: t.SubstitutionCount,
-			PriorityBadge:     badge,
+		if softConstraintReason(t.ID, slot.DayOfWeek, slot.Period, constraints, tMap) != "" {
+			sc -= 30
+			badge += " [기피교시]"
+		}
+		list = append(list, candWithScore{
+			cand: protocol.AbsenceSubCandidate{
+				TeacherID: t.ID, TeacherName: t.Name, Subject: t.Subject,
+				HomeroomClass: t.HomeroomClass, SubstitutionCount: t.SubstitutionCount, PriorityBadge: badge,
+			},
+			score: sc,
 		})
 	}
 	sort.SliceStable(list, func(i, j int) bool {
-		score := func(c protocol.AbsenceSubCandidate) int {
-			s := 0
-			if c.Subject == slot.Subject {
-				s += 100
-			}
-			if c.HomeroomClass != "" && c.HomeroomClass == slot.ClassName {
-				s += 50
-			}
-			return s
+		if list[i].score != list[j].score {
+			return list[i].score > list[j].score
 		}
-		if score(list[i]) != score(list[j]) {
-			return score(list[i]) > score(list[j])
+		if list[i].cand.SubstitutionCount != list[j].cand.SubstitutionCount {
+			return list[i].cand.SubstitutionCount < list[j].cand.SubstitutionCount
 		}
-		if list[i].SubstitutionCount != list[j].SubstitutionCount {
-			return list[i].SubstitutionCount < list[j].SubstitutionCount
-		}
-		return list[i].TeacherName < list[j].TeacherName
+		return list[i].cand.TeacherName < list[j].cand.TeacherName
 	})
-	return list
+	out := make([]protocol.AbsenceSubCandidate, len(list))
+	for i := range list {
+		out[i] = list[i].cand
+	}
+	return out
 }
 
 // ApplyAbsenceResolutions는 미출근 교시별 해결책(다음주 맞교환 또는 당일 공강교사 대타)을

@@ -29,6 +29,7 @@ func (u allocUnit) Subject() string {
 type schedState struct {
 	cfg         protocol.SchoolConfig
 	tMap        map[string]protocol.Teacher
+	constraints []protocol.TeacherConstraint
 	slotBusy    map[string]bool
 	teacherBusy map[string]bool
 	roomBusy    map[string]bool
@@ -36,10 +37,11 @@ type schedState struct {
 	streakMap   map[string]map[int]bool
 }
 
-func newSchedState(cfg protocol.SchoolConfig, tMap map[string]protocol.Teacher) *schedState {
+func newSchedState(cfg protocol.SchoolConfig, tMap map[string]protocol.Teacher, constraints []protocol.TeacherConstraint) *schedState {
 	return &schedState{
 		cfg:         cfg,
 		tMap:        tMap,
+		constraints: constraints,
 		slotBusy:    make(map[string]bool),
 		teacherBusy: make(map[string]bool),
 		roomBusy:    make(map[string]bool),
@@ -80,7 +82,7 @@ func (st *schedState) maxPeriod(grade, day int) int {
 	return 6
 }
 
-func (st *schedState) canPlace(u allocUnit, day, startP int, allowSameDayDup bool) bool {
+func (st *schedState) canPlace(u allocUnit, day, startP int, allowSameDayDup, allowSoftAvoid bool) bool {
 	teacher := st.tMap[u.Load.TeacherID]
 	if protocol.IsSystemAdminAccount(teacher) || teacher.IsParentHonorary {
 		return false
@@ -104,6 +106,20 @@ func (st *schedState) canPlace(u allocUnit, day, startP int, allowSameDayDup boo
 	}
 	for offset := 0; offset < u.Hours; offset++ {
 		p := startP + offset
+		if hardConstraintReason(u.Load.TeacherID, day, p, st.constraints, st.tMap) != "" {
+			return false
+		}
+		if u.Load.CoTeacherID != "" && hardConstraintReason(u.Load.CoTeacherID, day, p, st.constraints, st.tMap) != "" {
+			return false
+		}
+		if !allowSoftAvoid {
+			if softConstraintReason(u.Load.TeacherID, day, p, st.constraints, st.tMap) != "" {
+				return false
+			}
+			if u.Load.CoTeacherID != "" && softConstraintReason(u.Load.CoTeacherID, day, p, st.constraints, st.tMap) != "" {
+				return false
+			}
+		}
 		if st.slotBusy[fmt.Sprintf("%s-%d-%d", u.ClassName, day, p)] {
 			return false
 		}
@@ -175,4 +191,21 @@ func parseGrade(className string, fallback int) int {
 		return fallback
 	}
 	return 1
+}
+
+func (st *schedState) softPlacementWarnings(u allocUnit, day, startP int) []string {
+	var warns []string
+	dayLabel := dayNames[day]
+	for offset := 0; offset < u.Hours; offset++ {
+		p := startP + offset
+		if r := softConstraintReason(u.Load.TeacherID, day, p, st.constraints, st.tMap); r != "" {
+			warns = append(warns, fmt.Sprintf("[기피교시 배정] %s반 %s %d교시 %s (%s)", u.ClassName, dayLabel, p, u.Subject(), r))
+		}
+		if u.Load.CoTeacherID != "" {
+			if r := softConstraintReason(u.Load.CoTeacherID, day, p, st.constraints, st.tMap); r != "" {
+				warns = append(warns, fmt.Sprintf("[기피교시 배정] %s반 %s %d교시 %s 코티칭 (%s)", u.ClassName, dayLabel, p, u.Subject(), r))
+			}
+		}
+	}
+	return warns
 }

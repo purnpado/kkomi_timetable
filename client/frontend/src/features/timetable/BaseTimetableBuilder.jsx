@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { Download, Plus, Redo2, Save, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import BellScheduleEditor from "./BellScheduleEditor";
@@ -7,9 +7,23 @@ import BellScheduleEditor from "./BellScheduleEditor";
 const DAYS = ["", "월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
 
+const isSystemAdmin = (t) =>
+  t.username === "admin" && (t.subject === "시스템" || t.name === "최고관리자" || t.name === "시스템 관리자");
+
 // BaseTimetableBuilder는 마스터 및 시간표 담당교사가 클라이언트에서 직접
 // 학년별·학급별 기초 시간표 및 일과시간을 작성·자동 편성·엑셀 업로드할 수 있는 작성기입니다.
-export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers, bellSchedule = [], onRefresh, onNotify }) {
+export default function BaseTimetableBuilder({
+  serverUrl,
+  user,
+  cells,
+  teachers,
+  bellSchedule = [],
+  historyStatus,
+  onUndo,
+  onRedo,
+  onRefresh,
+  onNotify,
+}) {
   const [grade, setGrade] = useState(1);
   const [className, setClassName] = useState("1-1");
   const [newClassInput, setNewClassInput] = useState("");
@@ -21,12 +35,15 @@ export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers,
   const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [subject, setSubject] = useState("국어");
   const [subjectCode, setSubjectCode] = useState("KOR101");
-  const [teacherId, setTeacherId] = useState(teachers?.[0]?.id || "t06");
+  const regularTeachers = useMemo(
+    () => (teachers || []).filter((t) => !t.isParentHonorary && !isSystemAdmin(t)),
+    [teachers]
+  );
+  const [teacherId, setTeacherId] = useState(regularTeachers[0]?.id || "t06");
   const [coTeacherId, setCoTeacherId] = useState("");
   const [room, setRoom] = useState("1-1교실");
   const [electiveGroup, setElectiveGroup] = useState("");
 
-  const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
   const teachersMap = useMemo(() => {
     const m = {};
     regularTeachers.forEach((t) => { m[t.id] = t; });
@@ -198,6 +215,28 @@ export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers,
               <Upload size={13} /> 엑셀 업로드
               <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => handleImportXLSX(e.target.files?.[0])} />
             </label>
+            {onUndo && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={!historyStatus?.canUndo}
+                title="직전 편집 실행취소 (Ctrl+Z)"
+                onClick={onUndo}
+              >
+                <Undo2 size={13} /> 실행취소
+              </button>
+            )}
+            {onRedo && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={!historyStatus?.canRedo}
+                title="다시실행 (Ctrl+Y)"
+                onClick={onRedo}
+              >
+                <Redo2 size={13} /> 다시실행
+              </button>
+            )}
           </div>
         </div>
       </div>

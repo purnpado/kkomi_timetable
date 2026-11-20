@@ -1,22 +1,25 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, FileText, History, PlusCircle, Redo2, Sliders, TableProperties, Undo2, Users, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
 import { apiFetch, hasRole } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import BaseTimetableBuilder from "./BaseTimetableBuilder";
 import CurriculumLoadManager from "./CurriculumLoadManager";
 import ChainSwapPreview from "./ChainSwapPreview";
+import ConstraintManager from "./ConstraintManager";
+import ScenarioComparePanel from "./ScenarioComparePanel";
 import MultiWeekAbsenceView, { addDaysISO, getMondayISO } from "./MultiWeekAbsenceView";
 import TeacherManagerCard from "../admin-remote/TeacherManagerCard";
 
 // TimetableView는 60fps HTML5 Canvas 다주간 시간표 조정, 주중 미출근·주차간 교환,
-// 교사별 시수표/교과교실 편성, 1~4단계 연쇄교환 미리보기 및 나이스(NEIS) 입력 도우미를 제공합니다.
+// 교사별 시수표/교과교실·공강제약·시나리오 비교 및 실행취소(Undo/Redo)·나이스(NEIS) 입력 도우미를 제공합니다.
 export default function TimetableView({ serverUrl, user, cells, teachers, requests, bellSchedule, onRefresh, onOpenApproval, onNotify }) {
-  const [subTab, setSubTab] = useState("board"); // "board" | "multiweek" | "curriculum" | "builder" | "teachers"
+  const [subTab, setSubTab] = useState("board"); // "board" | "multiweek" | "curriculum" | "constraints" | "scenarios" | "builder" | "teachers"
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => getMondayISO());
   const [weekCells, setWeekCells] = useState(null);
   const [filterClass, setFilterClass] = useState("2-1");
   const [activeChain, setActiveChain] = useState(null);
+  const [historyStatus, setHistoryStatus] = useState({ canUndo: false, canRedo: false, undoCount: 0, redoCount: 0, lastUndo: "", lastRedo: "" });
   const [reason, setReason] = useState("학년 협의 및 수업 교환");
   const [reqType, setReqType] = useState("SWAP");
   const [sourceId, setSourceId] = useState(cells[0]?.id || "");
@@ -56,6 +59,69 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
   const isAdmin = hasRole(user, "TIMETABLE_ADMIN");
   const approvedList = (requests || []).filter((r) => r.status === "APPROVED");
 
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
+
+  const loadHistory = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const st = await apiFetch(serverUrl, "/api/timetable/history", user.id);
+      setHistoryStatus(st || { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0, lastUndo: "", lastRedo: "" });
+    } catch {
+      // 비권한·초기 로딩 시 무시
+    }
+  }, [isAdmin, serverUrl, user?.id]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory, cells]);
+
+  const handleUndo = useCallback(async () => {
+    if (!isAdmin || !historyStatus.canUndo) return;
+    try {
+      const res = await apiFetch(serverUrl, "/api/timetable/undo", user.id, { method: "POST" });
+      if (res?.history) setHistoryStatus(res.history);
+      onNotifyRef.current?.("실행취소 (Undo) 완료", "시간표가 직전 상태로 복원되었습니다.");
+      onRefreshRef.current?.();
+    } catch (err) {
+      onNotifyRef.current?.("실행취소 실패", err.message, true);
+    }
+  }, [isAdmin, historyStatus.canUndo, serverUrl, user?.id]);
+
+  const handleRedo = useCallback(async () => {
+    if (!isAdmin || !historyStatus.canRedo) return;
+    try {
+      const res = await apiFetch(serverUrl, "/api/timetable/redo", user.id, { method: "POST" });
+      if (res?.history) setHistoryStatus(res.history);
+      onNotifyRef.current?.("다시실행 (Redo) 완료", "실행취소했던 시간표 변경이 다시 적용되었습니다.");
+      onRefreshRef.current?.();
+    } catch (err) {
+      onNotifyRef.current?.("다시실행 실패", err.message, true);
+    }
+  }, [isAdmin, historyStatus.canRedo, serverUrl, user?.id]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    const onKeyDown = (e) => {
+      const el = e.target;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isAdmin, handleUndo, handleRedo]);
+
   const handleEvaluateDrop = async (sourceCell, targetDay, targetPeriod) => {
     try {
       return await apiFetch(serverUrl, "/api/timetable/evaluate", user.id, {
@@ -66,6 +132,7 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           targetPeriod,
           targetClass: sourceCell.className,
           targetTeacher: sourceCell.teacherId,
+          targetDate: selectedWeekStart,
         }),
       });
     } catch {
@@ -136,25 +203,55 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className={`btn ${subTab === "board" ? "btn-primary" : ""}`} onClick={() => setSubTab("board")}>
-          <TableProperties size={15} /> 주간 시간표 & 일일 결보강·연쇄교환
-        </button>
-        <button className={`btn ${subTab === "multiweek" ? "btn-primary" : ""}`} onClick={() => setSubTab("multiweek")}>
-          <AlertTriangle size={15} /> 주중 미출근 대책 · 다음주 교환
-        </button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className={`btn ${subTab === "board" ? "btn-primary" : ""}`} onClick={() => setSubTab("board")}>
+            <TableProperties size={15} /> 주간 시간표 & 일일 결보강·연쇄교환
+          </button>
+          <button className={`btn ${subTab === "multiweek" ? "btn-primary" : ""}`} onClick={() => setSubTab("multiweek")}>
+            <AlertTriangle size={15} /> 주중 미출근 대책 · 다음주 교환
+          </button>
+          {isAdmin && (
+            <>
+              <button className={`btn ${subTab === "curriculum" ? "btn-primary" : ""}`} onClick={() => setSubTab("curriculum")}>
+                <BookOpenCheck size={15} /> 시수표 등록부 · 학급수 · 교과교실
+              </button>
+              <button className={`btn ${subTab === "constraints" ? "btn-primary" : ""}`} onClick={() => setSubTab("constraints")}>
+                <Sliders size={15} /> 교사별 공강·기피 제약
+              </button>
+              <button className={`btn ${subTab === "scenarios" ? "btn-primary" : ""}`} onClick={() => setSubTab("scenarios")}>
+                <History size={15} /> A/B/C 시나리오 비교·채택
+              </button>
+              <button className={`btn ${subTab === "builder" ? "btn-primary" : ""}`} onClick={() => setSubTab("builder")}>
+                <Wrench size={15} /> 학급별 기초 시간표 수동 편집
+              </button>
+              <button className={`btn ${subTab === "teachers" ? "btn-primary" : ""}`} onClick={() => setSubTab("teachers")}>
+                <Users size={15} /> 교사 명렬표 관리 (엑셀 입출력)
+              </button>
+            </>
+          )}
+        </div>
         {isAdmin && (
-          <>
-            <button className={`btn ${subTab === "curriculum" ? "btn-primary" : ""}`} onClick={() => setSubTab("curriculum")}>
-              <BookOpenCheck size={15} /> 시수표 등록부 · 학급수 · 교과교실
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={!historyStatus.canUndo}
+              title={historyStatus.lastUndo ? `Ctrl+Z: ${historyStatus.lastUndo}` : "실행취소 (Ctrl+Z)"}
+              onClick={handleUndo}
+            >
+              <Undo2 size={14} /> 실행취소 ({historyStatus.undoCount || 0})
             </button>
-            <button className={`btn ${subTab === "builder" ? "btn-primary" : ""}`} onClick={() => setSubTab("builder")}>
-              <Wrench size={15} /> 학급별 기초 시간표 수동 편집
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={!historyStatus.canRedo}
+              title={historyStatus.lastRedo ? `Ctrl+Y: ${historyStatus.lastRedo}` : "다시실행 (Ctrl+Y)"}
+              onClick={handleRedo}
+            >
+              <Redo2 size={14} /> 다시실행 ({historyStatus.redoCount || 0})
             </button>
-            <button className={`btn ${subTab === "teachers" ? "btn-primary" : ""}`} onClick={() => setSubTab("teachers")}>
-              <Users size={15} /> 교사 명렬표 관리 (엑셀 입출력)
-            </button>
-          </>
+          </div>
         )}
       </div>
 
@@ -170,8 +267,23 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
         />
       ) : isAdmin && subTab === "curriculum" ? (
         <CurriculumLoadManager serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+      ) : isAdmin && subTab === "constraints" ? (
+        <ConstraintManager serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+      ) : isAdmin && subTab === "scenarios" ? (
+        <ScenarioComparePanel serverUrl={serverUrl} user={user} cells={cells} onRefresh={onRefresh} onHistoryRefresh={loadHistory} onNotify={onNotify} />
       ) : isAdmin && subTab === "builder" ? (
-        <BaseTimetableBuilder serverUrl={serverUrl} user={user} cells={cells} teachers={teachers} bellSchedule={bellSchedule} onRefresh={onRefresh} onNotify={onNotify} />
+        <BaseTimetableBuilder
+          serverUrl={serverUrl}
+          user={user}
+          cells={cells}
+          teachers={teachers}
+          bellSchedule={bellSchedule}
+          historyStatus={historyStatus}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onRefresh={onRefresh}
+          onNotify={onNotify}
+        />
       ) : isAdmin && subTab === "teachers" ? (
         <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
       ) : (

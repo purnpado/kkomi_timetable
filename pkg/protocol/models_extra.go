@@ -93,3 +93,82 @@ type ExamFairnessSummary struct {
 	MainGap       int                `json:"mainGap"`
 	Stats         []ExamFairnessStat `json:"stats"`
 }
+
+// ConstraintType은 교사별 시간표 배정 제약(절대 금지·회의 고정 공강·희망 공강) 유형입니다.
+type ConstraintType string
+
+const (
+	ConstraintHardAvoid   ConstraintType = "HARD_AVOID"   // 배정 절대 금지 (수업/연수/육아단축 등)
+	ConstraintSoftAvoid   ConstraintType = "SOFT_AVOID"   // 희망 공강 / 기피 교시 (불가피 시만 허용)
+	ConstraintMeetingFree ConstraintType = "MEETING_FREE" // 부장회의·교과협의회 고정 공강 (절대 금지)
+)
+
+// TeacherConstraint는 교사별·요일별·교시별 공강 및 기피 교시 제약 조건입니다.
+type TeacherConstraint struct {
+	ID             string         `json:"id"`
+	TeacherID      string         `json:"teacherId"`
+	TeacherName    string         `json:"teacherName"`
+	GroupTag       string         `json:"groupTag,omitempty"` // 예: "부장회의", "수학교과협의회"
+	DayOfWeek      int            `json:"dayOfWeek"`          // 0=월~금 전체, 1(월)~5(금)
+	Period         int            `json:"period"`             // 0=종일, 1~7교시
+	ConstraintType ConstraintType `json:"constraintType"`     // HARD_AVOID, SOFT_AVOID, MEETING_FREE
+	Reason         string         `json:"reason"`
+	CreatedAt      string         `json:"createdAt"`
+}
+
+// BatchConstraintRequest는 부장회의·교과협의회 등 그룹 단위로 고정 공강을 일괄 등록할 때 사용합니다.
+type BatchConstraintRequest struct {
+	TargetScope    string         `json:"targetScope"` // "DEPT_HEADS" | "SUBJECT" | "TEACHERS"
+	Subject        string         `json:"subject,omitempty"`
+	TeacherIDs     []string       `json:"teacherIds,omitempty"`
+	GroupTag       string         `json:"groupTag,omitempty"`
+	DayOfWeek      int            `json:"dayOfWeek"`
+	Period         int            `json:"period"`
+	ConstraintType ConstraintType `json:"constraintType"`
+	Reason         string         `json:"reason"`
+}
+
+// ScenarioMetrics는 시간표 시나리오(A/B/C안)의 충돌·제약 위반·연강 품질 지표입니다.
+type ScenarioMetrics struct {
+	TotalCells        int `json:"totalCells"`
+	ConflictCount     int `json:"conflictCount"`
+	HardAvoidViolated int `json:"hardAvoidViolated"`
+	SoftAvoidViolated int `json:"softAvoidViolated"`
+	Consecutive3Count int `json:"consecutive3Count"`
+	Consecutive4Plus  int `json:"consecutive4Plus"`
+	FreeDayTeachers   int `json:"freeDayTeachers"`
+	Score             int `json:"score"`
+}
+
+// TimetableScenario는 비교 및 채택을 위해 저장된 정규 시간표 스냅샷(A/B/C안)입니다.
+type TimetableScenario struct {
+	ID          string          `json:"id"`
+	SlotCode    string          `json:"slotCode"` // "A", "B", "C" 등
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Cells       []TimetableCell `json:"cells"`
+	Metrics     ScenarioMetrics `json:"metrics"`
+	CreatedBy   string          `json:"createdBy"`
+	CreatedAt   string          `json:"createdAt"`
+}
+
+// TimetableHistoryEntry는 서버 측 실행취소(Undo)/다시실행(Redo) 스택의 단일 변경 이력입니다.
+type TimetableHistoryEntry struct {
+	ID        string          `json:"id"`
+	Seq       int64           `json:"seq"`
+	Action    string          `json:"action"`
+	ActorName string          `json:"actorName"`
+	CreatedAt string          `json:"createdAt"`
+	Before    []TimetableCell `json:"before"`
+	After     []TimetableCell `json:"after"`
+}
+
+// TimetableHistoryStatus는 현재 시간표 Undo/Redo 가능 상태 요약입니다.
+type TimetableHistoryStatus struct {
+	CanUndo   bool   `json:"canUndo"`
+	CanRedo   bool   `json:"canRedo"`
+	UndoCount int    `json:"undoCount"`
+	RedoCount int    `json:"redoCount"`
+	LastUndo  string `json:"lastUndo"`
+	LastRedo  string `json:"lastRedo"`
+}
