@@ -1,6 +1,8 @@
 package modules_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"kkomi-timetable/pkg/protocol"
@@ -72,5 +74,60 @@ func TestPhase5EnsureCleanInitAdminOnly(t *testing.T) {
 	teachersAgain, _ := database.LoadCollection[protocol.Teacher](store, "teachers")
 	if len(teachersAgain) != 1 {
 		t.Fatalf("EnsureCleanInit 재호출 시 교사 수가 변했습니다: got=%d", len(teachersAgain))
+	}
+}
+
+// TestPhase5MariaDBInspectAndAbortedInitSafety는 중단된 최초 초기화(ibdata1 0바이트)는 자동 복구하되,
+// 실제 kkomi_timetable 운영 스키마가 있는 상태에서 ibdata1 손상 시에는 자동 삭제하지 않고 차단하는지 검증합니다.
+func TestPhase5MariaDBInspectAndAbortedInitSafety(t *testing.T) {
+	// 1. 빈 데이터 폴더 -> 최초 초기화 필요
+	emptyDir := filepath.Join(t.TempDir(), "empty")
+	if err := os.MkdirAll(emptyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initOK, recoverOK, _ := database.InspectMariaDBDataDir(emptyDir)
+	if initOK || !recoverOK {
+		t.Fatalf("빈 폴더는 initialized=false, canAutoRecover=true여야 합니다: init=%v recover=%v", initOK, recoverOK)
+	}
+
+	// 2. 중단된 최초 초기화 시뮬레이션 (mysql/ 존재 + ibdata1 16KB 0바이트 + kkomi_timetable 없음) -> 자동 복구 허용
+	abortedDir := filepath.Join(t.TempDir(), "aborted")
+	if err := os.MkdirAll(filepath.Join(abortedDir, "mysql"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zeroHeader := make([]byte, 32768)
+	if err := os.WriteFile(filepath.Join(abortedDir, "ibdata1"), zeroHeader, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initOK, recoverOK, reason := database.InspectMariaDBDataDir(abortedDir)
+	if initOK || !recoverOK || reason == "" {
+		t.Fatalf("중단된 최초 초기화는 자동 복구 가능해야 합니다: init=%v recover=%v reason=%q", initOK, recoverOK, reason)
+	}
+
+	// 3. 실제 운영 DB 스키마(kkomi_timetable) 존재 상태에서 ibdata1 0바이트 -> 자동 삭제 금지 차단
+	if err := os.MkdirAll(filepath.Join(abortedDir, "kkomi_timetable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initOK, recoverOK, reason = database.InspectMariaDBDataDir(abortedDir)
+	if initOK || recoverOK || reason == "" {
+		t.Fatalf("기존 운영 DB가 존재하는 경우 자동 초기화를 차단해야 합니다: init=%v recover=%v reason=%q", initOK, recoverOK, reason)
+	}
+
+	// 4. 정상 비-0 ibdata1 헤더 -> initialized=true 및 마커 파일 생성 확인
+	validDir := filepath.Join(t.TempDir(), "valid")
+	if err := os.MkdirAll(filepath.Join(validDir, "mysql"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	validHeader := make([]byte, 32768)
+	validHeader[4] = 0x42
+	if err := os.WriteFile(filepath.Join(validDir, "ibdata1"), validHeader, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initOK, recoverOK, _ = database.InspectMariaDBDataDir(validDir)
+	if !initOK || recoverOK {
+		t.Fatalf("정상 ibdata1은 initialized=true여야 합니다: init=%v recover=%v", initOK, recoverOK)
+	}
+	if _, err := os.Stat(filepath.Join(validDir, ".kkomi_mariadb_initialized")); err != nil {
+		t.Fatalf("초기화 완료 마커 파일이 기록되지 않았습니다: %v", err)
 	}
 }

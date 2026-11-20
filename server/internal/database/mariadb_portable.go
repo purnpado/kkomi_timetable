@@ -301,36 +301,7 @@ func (m *PortableMariaDBManager) ensureTDEKeyFile() error {
 }
 
 func (m *PortableMariaDBManager) ensureDataInitialized() error {
-	if _, err := os.Stat(pathutil.SafeJoin(m.dataDir, "mysql")); err == nil {
-		return nil
-	}
-	if _, err := os.Stat(m.initPath); err != nil {
-		return fmt.Errorf("초기화 바이너리(%s)를 찾을 수 없습니다", m.initPath)
-	}
-	if err := prepareCleanDataDir(m.dataDir); err != nil {
-		return fmt.Errorf("MariaDB 데이터 폴더 준비 실패: %w", err)
-	}
-
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command(m.initPath, fmt.Sprintf("--datadir=%s", formatMariaDBArgPath(m.dataDir)))
-	} else {
-		cmd = exec.Command(
-			m.initPath,
-			"--no-defaults",
-			fmt.Sprintf("--basedir=%s", m.runtimeDir),
-			fmt.Sprintf("--datadir=%s", m.dataDir),
-			"--auth-root-authentication-method=normal",
-			"--skip-test-db",
-			"--force",
-		)
-	}
-	cmd.Dir = filepath.Dir(m.binPath)
-	cmd.Env = append(os.Environ(), "PATH="+pathutil.SafeJoin(m.runtimeDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("MariaDB 데이터 디렉토리 초기화 실패: %w (%s)", err, string(out))
-	}
-	return nil
+	return runBootstrapInstall(m.initPath, m.runtimeDir, m.dataDir, filepath.Dir(m.binPath), isRunningTests())
 }
 
 // Start는 포터블 MariaDB를 127.0.0.1 로컬 전용으로 기동하고 포트 응답을 대기합니다.
@@ -410,7 +381,7 @@ func (m *PortableMariaDBManager) Start() (string, error) {
 		activeMu.Unlock()
 	}
 
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case exitErr := <-m.waitCh:
