@@ -20,7 +20,7 @@ func SeedIfEmpty(s *Store) error {
 		return upgradeLegacyAdminIfNeeded(s)
 	}
 
-	hashBytes, err := bcrypt.GenerateFromPassword([]byte("1234"), bcrypt.MinCost)
+	hashBytes, err := bcrypt.GenerateFromPassword([]byte("1234"), BcryptCost())
 	if err != nil {
 		return err
 	}
@@ -413,7 +413,7 @@ func upgradeLegacyAdminIfNeeded(s *Store) error {
 	adminIdx, hasKim := -1, false
 	for i := range teachers {
 		uname := strings.TrimSpace(teachers[i].Username)
-		if strings.EqualFold(uname, "admin") || teachers[i].ID == "t01" {
+		if strings.EqualFold(uname, "admin") {
 			adminIdx = i
 		} else if teachers[i].ID == "t17" || strings.EqualFold(uname, "kim") || teachers[i].Name == "김교무" {
 			hasKim = true

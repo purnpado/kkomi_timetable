@@ -83,6 +83,7 @@ func main() {
 	menu.AddSeparator()
 	menu.Add("완전 종료").OnClick(func(*application.Context) {
 		appBridge.MarkQuitting()
+		appBridge.Disconnect()
 		wailsApp.Quit()
 	})
 	tray.SetMenu(menu)

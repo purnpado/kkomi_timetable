@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import BellScheduleEditor from "./BellScheduleEditor";
 
 const DAYS = ["", "월", "화", "수", "목", "금"];
@@ -183,9 +184,16 @@ export default function BaseTimetableBuilder({ serverUrl, user, cells, teachers,
             <button className="btn btn-sm btn-green" onClick={handleAutoGenerate}>
               <Sparkles size={13} /> 전 학년 기초 시간표 자동 편성
             </button>
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=base-template`} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=base-template", "기초시간표_업로드양식.xlsx")
+                  .catch((err) => onNotify("양식 다운로드 실패", err.message, true))
+              }
+            >
               <Download size={13} /> 엑셀 양식
-            </a>
+            </button>
             <label className="btn btn-sm" style={{ cursor: "pointer" }}>
               <Upload size={13} /> 엑셀 업로드
               <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => handleImportXLSX(e.target.files?.[0])} />

@@ -2,7 +2,9 @@ package eventbus
 
 import (
 	"fmt"
+	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kkomi-timetable/pkg/protocol"
@@ -14,6 +16,7 @@ type Handler func(event protocol.DomainEvent)
 // Bus는 모듈 간 결합도를 낮추기 위한 중앙 도메인 이벤트 버스(Pub/Sub)입니다.
 type Bus struct {
 	mu          sync.RWMutex
+	seq         atomic.Uint64
 	subscribers map[protocol.EventType][]Handler
 	allHandlers []Handler
 	history     []protocol.DomainEvent
@@ -46,7 +49,7 @@ func (b *Bus) SubscribeAll(handler Handler) {
 // 브로드캐스트 핸들러는 고루틴으로 비동기 전파합니다.
 func (b *Bus) Publish(event protocol.DomainEvent) protocol.DomainEvent {
 	if event.ID == "" {
-		event.ID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
+		event.ID = fmt.Sprintf("evt-%d-%d", time.Now().UnixMilli(), b.seq.Add(1))
 	}
 	if event.OccurredAt == "" {
 		event.OccurredAt = time.Now().Format("2006-01-02 15:04:05")
@@ -62,13 +65,25 @@ func (b *Bus) Publish(event protocol.DomainEvent) protocol.DomainEvent {
 	b.mu.Unlock()
 
 	for _, h := range typed {
-		h(event)
+		safeInvoke(h, event)
 	}
 	for _, h := range globals {
 		handler := h
-		go handler(event)
+		go safeInvoke(handler, event)
 	}
 	return event
+}
+
+func safeInvoke(h Handler, evt protocol.DomainEvent) {
+	if h == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[EventBus] 이벤트(%s) 구독자 패닉 복구: %v", evt.Type, r)
+		}
+	}()
+	h(evt)
 }
 
 // RecentEvents는 최근 발행된 이벤트 목록을 최신순으로 반환합니다.

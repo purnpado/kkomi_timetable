@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Building2, CheckCircle2, Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 
 const DAY_LABELS = [
   { key: 1, label: "월" },
@@ -249,9 +250,16 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
               <CheckCircle2 size={15} style={{ verticalAlign: "middle", color: "#087f5b" }} /> 학급별 기준 시수 vs 시수표 배당 일치성 검사 (전체 {summary.totalAssigned} / {summary.totalRequired}시간)
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=loads`} target="_blank" rel="noreferrer">
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() =>
+                  downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=loads", "교사별시수표.xlsx")
+                    .catch((err) => onNotify("시수표 다운로드 실패", err.message, true))
+                }
+              >
                 <Download size={13} /> 교사별 시수표 엑셀 (.xlsx)
-              </a>
+              </button>
               <label className="btn btn-sm" style={{ cursor: "pointer" }}>
                 <Upload size={13} /> 시수표 엑셀 일괄 업로드
                 <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => handleImportLoadsXLSX(e.target.files?.[0])} />

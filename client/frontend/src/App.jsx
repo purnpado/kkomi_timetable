@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CalendarDays, ClipboardList, Columns, Globe, KeyRound, LayoutDashboard,
+  CalendarDays, ClipboardList, Columns, Download, Globe, KeyRound, LayoutDashboard,
   LogOut, Search, ServerCog, ShieldCheck, TableProperties,
 } from "lucide-react";
 import {
-  apiFetch, checkInClassNow, formatUserDisplayName, hasRole, resolveServerUrl,
-  ROLE_LABELS, subscribeDesktopEvents, toggleSideDockBridge,
+  apiFetch, applySelfUpdateBridge, checkInClassNow, clearAuthToken, connectDesktopBridge,
+  disconnectDesktopBridge, formatUserDisplayName, getAuthToken, hasRole, isWailsRuntime,
+  resolveServerUrl, ROLE_LABELS, setAuthToken, setUnauthorizedHandler, subscribeDesktopEvents,
+  toggleSideDockBridge,
 } from "./events/eventStore";
 import ToastHub from "./components/ui/ToastHub";
 import ApprovalModal from "./components/ui/ApprovalModal";
@@ -39,6 +41,8 @@ export default function App() {
   const [approvalIndex, setApprovalIndex] = useState(0);
   const [pwModalOpen, setPwModalOpen] = useState(false);
   const [clockText, setClockText] = useState(() => new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
+  const [wsStatus, setWsStatus] = useState("connected");
+  const [updateBanner, setUpdateBanner] = useState(null);
 
   const [summary, setSummary] = useState(null);
   const [teachers, setTeachers] = useState([]);
@@ -69,15 +73,44 @@ export default function App() {
   }, []);
 
   const inClassStatus = useMemo(() => checkInClassNow(summary?.bellSchedule || []), [summary?.bellSchedule, clockText]);
+  const inClassRef = useRef(inClassStatus);
+  inClassRef.current = inClassStatus;
+  const prevInClassRef = useRef(false);
+
+  useEffect(() => {
+    if (prevInClassRef.current && !inClassStatus.inClass && queuedAlerts.length > 0) {
+      setToasts((prev) => [...prev.slice(-2), ...queuedAlerts]);
+      setQueuedAlerts([]);
+    }
+    prevInClassRef.current = inClassStatus.inClass;
+  }, [inClassStatus.inClass, queuedAlerts]);
 
   const pushToast = (title, message, urgent = false) => {
     const item = { id: `t-${Date.now()}-${Math.random()}`, title, message, urgent };
-    if (!urgent && inClassStatus.inClass) {
+    if (!urgent && inClassRef.current.inClass) {
       setQueuedAlerts((prev) => [...prev, item]);
       return;
     }
     setToasts((prev) => [...prev.slice(-3), item]);
   };
+
+  const resetClientSession = (noticeTitle, noticeMsg) => {
+    clearAuthToken();
+    disconnectDesktopBridge();
+    setUser(null);
+    setActiveTab("dashboard");
+    setUpdateBanner(null);
+    if (noticeTitle) {
+      pushToast(noticeTitle, noticeMsg, true);
+    }
+  };
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      resetClientSession("로그인 세션 만료", "인증이 만료되어 로그인 화면으로 이동합니다.");
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   const refreshAll = async (srv = serverUrl, usr = user) => {
     if (!usr) return;
@@ -103,32 +136,84 @@ export default function App() {
     if (!user) return;
     refreshAll(serverUrl, user);
 
-    const unsubDesktop = subscribeDesktopEvents(
-      (evt) => {
-        pushToast(evt.title, evt.message, evt.urgent);
-        refreshAll(serverUrl, user);
-      },
-      (dock) => setDockMode(dock)
-    );
+    const handleIncomingEvent = (evt) => {
+      if (evt.type === "SystemReset" || evt.type === "SystemRestored") {
+        resetClientSession(evt.title || "시스템 상태 변경", evt.message || "다시 로그인해 주세요.");
+        return;
+      }
+      if (evt.type === "SystemUpdateAvailable") {
+        setUpdateBanner(evt.payload || { version: "최신", message: evt.message });
+      }
+      pushToast(evt.title, evt.message, evt.urgent);
+      refreshAll(serverUrl, user);
+    };
 
-    const wsUrl = serverUrl.replace(/^http/, "ws") + `/ws?teacherId=${user.id}`;
-    let socket;
-    try {
-      socket = new WebSocket(wsUrl);
-      socket.onmessage = (msg) => {
-        try {
-          const evt = JSON.parse(msg.data);
-          pushToast(evt.title, evt.message, evt.urgent);
-          refreshAll(serverUrl, user);
-        } catch { /* ignore */ }
-      };
-    } catch { /* ignore */ }
+    const unsubDesktop = subscribeDesktopEvents(handleIncomingEvent, (dock) => setDockMode(dock));
 
+    // Wails 데스크톱 앱에서는 Go netclient가 단일 WebSocket을 관리하므로 브라우저 WS 중복 연결 금지
+    if (isWailsRuntime()) {
+      setWsStatus("connected");
+      return () => unsubDesktop();
+    }
+
+    let alive = true;
+    let socket = null;
+    let retryTimer = null;
+    let backoffMs = 2000;
+
+    const connectBrowserWS = () => {
+      if (!alive) return;
+      const token = getAuthToken();
+      const wsBase = serverUrl.replace(/^http/, "ws");
+      const wsUrl = token
+        ? `${wsBase}/ws?token=${encodeURIComponent(token)}`
+        : `${wsBase}/ws?teacherId=${encodeURIComponent(user.id)}`;
+      try {
+        socket = new WebSocket(wsUrl);
+        socket.onopen = () => {
+          backoffMs = 2000;
+          if (alive) setWsStatus("connected");
+        };
+        socket.onmessage = (msg) => {
+          try {
+            handleIncomingEvent(JSON.parse(msg.data));
+          } catch { /* ignore */ }
+        };
+        socket.onclose = () => {
+          if (!alive) return;
+          setWsStatus("reconnecting");
+          retryTimer = setTimeout(connectBrowserWS, backoffMs);
+          backoffMs = Math.min(20000, backoffMs * 2);
+        };
+        socket.onerror = () => {
+          if (socket) socket.close();
+        };
+      } catch {
+        if (alive) {
+          setWsStatus("reconnecting");
+          retryTimer = setTimeout(connectBrowserWS, backoffMs);
+          backoffMs = Math.min(20000, backoffMs * 2);
+        }
+      }
+    };
+
+    connectBrowserWS();
     return () => {
+      alive = false;
       unsubDesktop();
+      if (retryTimer) clearTimeout(retryTimer);
       if (socket) socket.close();
     };
   }, [user?.id, serverUrl]);
+
+  const handleLogout = async () => {
+    try {
+      await apiFetch(serverUrl, "/api/auth/logout", user?.id || "", { method: "POST" });
+    } catch {
+      // ignore logout error
+    }
+    resetClientSession();
+  };
 
   const handleCommitApproval = async (requestId, approve, rejectReason, openNext) => {
     try {
@@ -181,7 +266,7 @@ export default function App() {
           <div className="brand-logo">🐾</div>
           <div>
             <div style={{ fontWeight: 800, fontSize: 16 }}>꼬미시간</div>
-            <div style={{ fontSize: 11, color: "#93c5fd" }}>v{summary?.serverVersion || "0.1.0"} · 교무 통합</div>
+            <div style={{ fontSize: 11, color: "#93c5fd" }}>v{summary?.serverVersion || "0.1.01"} · 교무 통합</div>
           </div>
         </div>
 
@@ -212,7 +297,7 @@ export default function App() {
           <button className="btn btn-sm" style={{ width: "100%", justifyContent: "center" }} onClick={() => setPwModalOpen(true)}>
             <KeyRound size={13} /> 비밀번호 변경
           </button>
-          <button className="btn btn-sm" style={{ width: "100%", justifyContent: "center" }} onClick={() => setUser(null)}>
+          <button className="btn btn-sm" style={{ width: "100%", justifyContent: "center" }} onClick={handleLogout}>
             <LogOut size={13} /> 로그아웃 / 계정 전환
           </button>
         </div>
@@ -226,6 +311,9 @@ export default function App() {
             </button>
             <span className={`badge ${inClassStatus.inClass ? "badge-amber" : "badge-green"}`}>
               {inClassStatus.inClass ? `🔕 수업 중 방해금지 (${inClassStatus.periodLabel})` : "🔔 쉬는시간 실시간 알림"}
+            </span>
+            <span className={`badge ${wsStatus === "connected" ? "badge-green" : "badge-amber"}`}>
+              {wsStatus === "connected" ? "🟢 실시간 연결" : "🟡 재연결 중"}
             </span>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -241,6 +329,32 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {updateBanner && (
+          <div className="admin-summary-bar no-print" style={{ background: "#e6fcf5", borderBottomColor: "#63e6be" }}>
+            <div>
+              <Download size={15} style={{ verticalAlign: "middle", marginRight: 6 }} />
+              <b>새 버전({updateBanner.version || "최신"}) 업데이트가 준비되었습니다.</b>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {isWailsRuntime() && (
+                <button
+                  className="btn btn-sm btn-green"
+                  onClick={async () => {
+                    try {
+                      await applySelfUpdateBridge();
+                    } catch (err) {
+                      pushToast("업데이트 적용 안내", err?.message || "업데이트 확인 중 오류", true);
+                    }
+                  }}
+                >
+                  지금 원클릭 패치 적용
+                </button>
+              )}
+              <button className="btn btn-sm" onClick={() => setUpdateBanner(null)}>닫기</button>
+            </div>
+          </div>
+        )}
 
         {isAnyAdmin && (pendingQueue.length > 0 || pendingEventCount > 0) && (
           <div className="admin-summary-bar no-print">
@@ -298,10 +412,7 @@ export default function App() {
               user={user}
               teachers={teachers}
               onRefresh={() => refreshAll()}
-              onResetComplete={() => {
-                setUser(null);
-                setActiveTab("dashboard");
-              }}
+              onResetComplete={() => resetClientSession()}
               onNotify={pushToast}
             />
           )}
@@ -315,6 +426,10 @@ export default function App() {
         user={user}
         forced={Boolean(user?.mustChangePassword)}
         onChanged={(updated) => {
+          if (updated?.token) {
+            setAuthToken(updated.token);
+            connectDesktopBridge(serverUrl, updated.id, updated.token);
+          }
           setUser(updated);
           pushToast("비밀번호 변경 완료", "새 비밀번호가 안전하게 저장되었습니다.");
         }}

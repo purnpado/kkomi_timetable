@@ -13,6 +13,9 @@ import (
 func (a *ServerApp) handleSchoolConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := a.requireAuth(w, r); !ok {
+			return
+		}
 		cfg, err := a.Timetable.GetSchoolConfig()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -42,6 +45,9 @@ func (a *ServerApp) handleSchoolConfig(w http.ResponseWriter, r *http.Request) {
 func (a *ServerApp) handleTeachingLoads(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := a.requireAuth(w, r); !ok {
+			return
+		}
 		loads, err := a.Timetable.ListTeachingLoads()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -153,8 +159,7 @@ func (a *ServerApp) handleCrossWeekCandidates(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
 		return
 	}
-	if actor := a.currentActor(r); actor == nil {
-		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+	if _, ok := a.requireAuth(w, r); !ok {
 		return
 	}
 	var body struct {
@@ -179,8 +184,7 @@ func (a *ServerApp) handleAbsencePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
 		return
 	}
-	if actor := a.currentActor(r); actor == nil {
-		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+	if _, ok := a.requireAuth(w, r); !ok {
 		return
 	}
 	var req protocol.AbsencePlanRequest
@@ -201,9 +205,8 @@ func (a *ServerApp) handleAbsenceApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
 		return
 	}
-	actor := a.currentActor(r)
-	if actor == nil {
-		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+	actor, ok := a.requireAuth(w, r)
+	if !ok {
 		return
 	}
 	var req protocol.AbsenceApplyRequest

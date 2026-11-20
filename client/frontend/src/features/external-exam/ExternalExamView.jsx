@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, FileSpreadsheet, HandHeart, Plus } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 
 const CRITERIA_LABELS = {
   VOLUNTEER: "1순위: 해당 시험 자발적 지원자",
@@ -123,9 +124,16 @@ export default function ExternalExamView({ serverUrl, user, onNotify, onRefresh 
             </div>
           </div>
           {selectedNotice && (
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=external&noticeId=${selectedNotice.id}`} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, `/api/export/xlsx?kind=external&noticeId=${encodeURIComponent(selectedNotice.id)}`, "외부시험감독_파견명단.xlsx")
+                  .catch((err) => onNotify("파견명단 출력 실패", err.message, true))
+              }
+            >
               <FileSpreadsheet size={14} /> 교육청 파견 명단 (.xlsx)
-            </a>
+            </button>
           )}
         </div>
 

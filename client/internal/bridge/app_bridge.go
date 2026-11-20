@@ -28,8 +28,11 @@ func NewAppBridge() *AppBridge {
 		if app != nil {
 			app.Event.Emit("kkomi:domain-event", evt)
 		}
-		if evt.Urgent && b.notifier != nil {
-			_ = b.notifier.SendNotification(notifications.NotificationOptions{
+		b.mu.Lock()
+		notifier := b.notifier
+		b.mu.Unlock()
+		if evt.Urgent && notifier != nil {
+			_ = notifier.SendNotification(notifications.NotificationOptions{
 				ID:    evt.ID,
 				Title: evt.Title,
 				Body:  evt.Message,
@@ -72,10 +75,15 @@ func (b *AppBridge) GetServerURL() string {
 	return b.net.ServerURL()
 }
 
-// ConnectServer는 서버 주소와 로그인 교사 ID를 저장하고 실시간 WebSocket 수신을 시작합니다.
-func (b *AppBridge) ConnectServer(serverURL, teacherID string) string {
-	b.net.SetConnection(serverURL, teacherID)
+// ConnectServer는 서버 주소, 교사 ID 및 세션 토큰을 저장하고 실시간 WebSocket 수신을 시작합니다.
+func (b *AppBridge) ConnectServer(serverURL, teacherID, token string) string {
+	b.net.SetConnection(serverURL, teacherID, token)
 	return b.net.ServerURL()
+}
+
+// Disconnect는 로그아웃 또는 앱 종료 시 실시간 WebSocket 수신을 즉시 중단합니다.
+func (b *AppBridge) Disconnect() {
+	b.net.Disconnect()
 }
 
 // ApplySelfUpdate는 서버에 배포된 최신 클라이언트 패치를 내려받아 자가 재실행합니다.

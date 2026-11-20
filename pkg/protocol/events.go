@@ -4,16 +4,24 @@ package protocol
 type EventType string
 
 const (
-	EventTimetableRequested    EventType = "TimetableRequested"
-	EventTimetableApproved     EventType = "TimetableApproved"
-	EventTimetableRejected     EventType = "TimetableRejected"
-	EventExamSealed            EventType = "ExamSealed"
-	EventExamUnsealed          EventType = "ExamUnsealed"
-	EventExamSubstituted       EventType = "ExamSubstituted"
-	EventExternalExamConfirmed EventType = "ExternalExamConfirmed"
-	EventSchoolEventPublished  EventType = "SchoolEventPublished"
-	EventBellScheduleChanged   EventType = "BellScheduleChanged"
-	EventSystemUpdateAvailable EventType = "SystemUpdateAvailable"
+	EventTimetableRequested        EventType = "TimetableRequested"
+	EventTimetableApproved         EventType = "TimetableApproved"
+	EventTimetableRejected         EventType = "TimetableRejected"
+	EventExamSealed                EventType = "ExamSealed"
+	EventExamUnsealed              EventType = "ExamUnsealed"
+	EventExamSubstituted           EventType = "ExamSubstituted"
+	EventExternalExamConfirmed     EventType = "ExternalExamConfirmed"
+	EventSchoolEventPublished      EventType = "SchoolEventPublished"
+	EventBellScheduleChanged       EventType = "BellScheduleChanged"
+	EventSystemUpdateAvailable     EventType = "SystemUpdateAvailable"
+	EventTeacherUpdated            EventType = "TeacherUpdated"
+	EventTimetableCellsUpdated     EventType = "TimetableCellsUpdated"
+	EventTeacherConstraintUpdated  EventType = "TeacherConstraintUpdated"
+	EventExamScheduleUpdated       EventType = "ExamScheduleUpdated"
+	EventExternalExamUpdated       EventType = "ExternalExamUpdated"
+	EventSchoolEventDeleted        EventType = "SchoolEventDeleted"
+	EventSystemReset               EventType = "SystemReset"
+	EventSystemRestored            EventType = "SystemRestored"
 )
 
 // DomainEvent는 모듈 간 및 서버-클라이언트 간 실시간 전달되는 이벤트 봉투입니다.

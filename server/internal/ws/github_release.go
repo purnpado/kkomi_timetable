@@ -169,7 +169,7 @@ func ApplyGitHubReleaseUpdate(target string, store *database.Store, bus *eventbu
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := &http.Client{Timeout: 180 * time.Second}
 
 	if target == "client" || target == "all" {
 		if info.ClientAssetURL == "" {
@@ -204,7 +204,12 @@ func ApplyGitHubReleaseUpdate(target string, store *database.Store, bus *eventbu
 		if resp.StatusCode != http.StatusOK {
 			return info, fmt.Errorf("GitHub 서버 에셋 다운로드 오류 (%d)", resp.StatusCode)
 		}
-		if err := SelfReplaceServerAndRestart(resp.Body, store, onShutdown); err != nil {
+		delay := 800 * time.Millisecond
+		if target == "all" {
+			// 클라이언트들이 WebSocket 알림을 받고 패치 파일을 내려받을 여유 시간 확보
+			delay = 3500 * time.Millisecond
+		}
+		if err := SelfReplaceServerAndRestartWithDelay(resp.Body, store, onShutdown, delay); err != nil {
 			return info, err
 		}
 	}

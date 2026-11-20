@@ -30,10 +30,19 @@ type ServerApp struct {
 	OnShutdown   func()
 }
 
-// NewServerApp은 모든 도메인 모듈을 초기화하고 이벤트 버스 구독을 연결합니다.
+// NewServerApp은 모든 도메인 모듈을 초기화하고 이벤트 버스·WebSocket 토큰 검증을 연결합니다.
 func NewServerApp(store *database.Store, onShutdown func()) *ServerApp {
 	bus := eventbus.New()
 	hub := ws.NewHub()
+	authSvc := auth.NewService(store, bus)
+
+	hub.TokenVerifier = func(token string) (string, bool) {
+		t, err := authSvc.VerifySessionToken(token)
+		if err != nil || t == nil {
+			return "", false
+		}
+		return t.ID, true
+	}
 
 	// 모든 도메인 이벤트를 감사 로그에 저장하고 실시간 WebSocket 클라이언트로 브로드캐스트
 	bus.SubscribeAll(func(evt protocol.DomainEvent) {
@@ -45,7 +54,7 @@ func NewServerApp(store *database.Store, onShutdown func()) *ServerApp {
 		Store:        store,
 		Bus:          bus,
 		Hub:          hub,
-		Auth:         auth.NewService(store),
+		Auth:         authSvc,
 		Timetable:    timetable.NewService(store, bus),
 		InternalExam: internal_exam.NewService(store, bus),
 		ExternalExam: external_exam.NewService(store, bus),
@@ -67,6 +76,7 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	// 인증 및 교사/권한 관리
 	mux.HandleFunc("/api/auth/directory", a.handleAuthDirectory)
 	mux.HandleFunc("/api/auth/login", a.handleLogin)
+	mux.HandleFunc("/api/auth/logout", a.handleLogout)
 	mux.HandleFunc("/api/auth/change-password", a.handleChangePassword)
 	mux.HandleFunc("/api/auth/reset-password", a.handleResetPassword)
 	mux.HandleFunc("/api/teachers", a.handleTeachers)
@@ -118,8 +128,10 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/export/xlsx", a.handleExportXLSX)
 	mux.HandleFunc("/api/export/print", a.handleExportPrint)
 	mux.HandleFunc("/api/system/backups", a.handleSystemBackups)
+	mux.HandleFunc("/api/system/backups/restore", a.handleRestoreBackup)
 	mux.HandleFunc("/api/system/reset", a.handleSystemReset)
 	mux.HandleFunc("/api/system/client-patch", a.handleClientPatch)
+	mux.HandleFunc("/api/system/client-patch/meta", a.handleClientPatchMeta)
 	mux.HandleFunc("/api/system/server-update", a.handleServerSelfUpdate)
 	mux.HandleFunc("/api/system/github-release", a.handleGitHubRelease)
 	mux.HandleFunc("/api/system/github-update", a.handleGitHubUpdate)
@@ -141,7 +153,7 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Teacher-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Teacher-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -151,25 +163,39 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func (a *ServerApp) currentActor(r *http.Request) *protocol.Teacher {
-	id := strings.TrimSpace(r.Header.Get("X-Teacher-ID"))
-	if id == "" {
-		id = strings.TrimSpace(r.URL.Query().Get("teacherId"))
+func extractBearerToken(r *http.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(authHeader) > 7 && strings.EqualFold(authHeader[:7], "Bearer ") {
+		return strings.TrimSpace(authHeader[7:])
 	}
-	if id == "" {
+	return strings.TrimSpace(r.URL.Query().Get("token"))
+}
+
+// currentActor는 반드시 서명된 세션 토큰을 검증하여 인증된 교사를 반환합니다.
+func (a *ServerApp) currentActor(r *http.Request) *protocol.Teacher {
+	tok := extractBearerToken(r)
+	if tok == "" {
 		return nil
 	}
-	t, err := a.Auth.GetTeacher(id)
+	t, err := a.Auth.VerifySessionToken(tok)
 	if err != nil {
 		return nil
 	}
 	return t
 }
 
-func (a *ServerApp) requireRole(w http.ResponseWriter, r *http.Request, roles ...protocol.Role) (*protocol.Teacher, bool) {
+func (a *ServerApp) requireAuth(w http.ResponseWriter, r *http.Request) (*protocol.Teacher, bool) {
 	actor := a.currentActor(r)
 	if actor == nil {
-		writeError(w, http.StatusUnauthorized, "교사 인증 정보(X-Teacher-ID)가 필요합니다")
+		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다 (유효한 인증 토큰 없음)")
+		return nil, false
+	}
+	return actor, true
+}
+
+func (a *ServerApp) requireRole(w http.ResponseWriter, r *http.Request, roles ...protocol.Role) (*protocol.Teacher, bool) {
+	actor, ok := a.requireAuth(w, r)
+	if !ok {
 		return nil, false
 	}
 	if !auth.HasRole(actor, roles...) {

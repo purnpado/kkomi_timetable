@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-react";
-import { apiFetch, connectDesktopBridge } from "../../events/eventStore";
+import { apiFetch, connectDesktopBridge, setAuthToken } from "../../events/eventStore";
 
 const QUICK_ACCOUNTS = [
   { label: "최고관리자 (admin · 서버 전체관리)", username: "admin", badge: "최고관리자" },
@@ -17,28 +17,35 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
   const [loginMode, setLoginMode] = useState("select"); // "select" | "manual"
   const [directory, setDirectory] = useState([]);
   const [dirStatus, setDirStatus] = useState("");
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [selectedSubject, setSelectedSubject] = useState(() => localStorage.getItem("kkomi_last_subject") || "ALL");
   const [selectedUsername, setSelectedUsername] = useState(() => localStorage.getItem("kkomi_last_user") || "admin");
 
-  const [manualName, setManualName] = useState("admin");
+  const [manualName, setManualName] = useState("");
   const [manualSubject, setManualSubject] = useState("");
-  const [password, setPassword] = useState("1234");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const normalizedServer = (srv = serverUrl) => (srv.startsWith("http") ? srv : `http://${srv}`).replace(/\/+$/, "");
 
   const loadDirectory = async (srv = serverUrl) => {
+    const base = normalizedServer(srv);
     try {
-      const list = await apiFetch(normalizedServer(srv), "/api/auth/directory", "");
+      const [list, health] = await Promise.all([
+        apiFetch(base, "/api/auth/directory", ""),
+        apiFetch(base, "/api/health", "").catch(() => null),
+      ]);
       setDirectory(list || []);
+      setIsDemoMode(Boolean(health?.isDemoMode));
       setDirStatus(`교사 ${list?.length || 0}명 연결됨`);
       if (list && list.length > 0 && !list.some((t) => t.username === selectedUsername)) {
         setSelectedUsername(list[0].username);
       }
     } catch {
       setDirectory([]);
+      setIsDemoMode(false);
       setDirStatus("서버 연결 대기 중");
     }
   };
@@ -69,9 +76,12 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      if (user?.token) {
+        setAuthToken(user.token);
+      }
       localStorage.setItem("kkomi_last_user", user.username || "");
       localStorage.setItem("kkomi_last_subject", selectedSubject);
-      await connectDesktopBridge(normalized, user.id);
+      await connectDesktopBridge(normalized, user.id, user.token || "");
       onLoginSuccess(normalized, user);
     } catch (err) {
       setError(err.message || "서버 연결 또는 로그인에 실패했습니다.");
@@ -188,9 +198,16 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
 
           <div>
             <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
-              <KeyRound size={12} style={{ verticalAlign: "middle" }} /> 비밀번호 (초기 기본값: 1234)
+              <KeyRound size={12} style={{ verticalAlign: "middle" }} /> 비밀번호
             </label>
-            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <input
+              className="input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="비밀번호 입력 (최초 초기 비밀번호: 1234)"
+              required
+            />
           </div>
 
           {error && <div className="badge badge-red" style={{ padding: "8px 12px", borderRadius: 8 }}>{error}</div>}
@@ -200,23 +217,25 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
           </button>
         </form>
 
-        <div style={{ marginTop: 18, borderTop: "1px solid #e2e8f0", paddingTop: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8 }}>
-            체험용 빠른 계정 전환 (초기 비밀번호: 1234)
+        {isDemoMode && (
+          <div style={{ marginTop: 18, borderTop: "1px solid #e2e8f0", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8 }}>
+              체험용 빠른 계정 전환 (시연 모드 · 초기 비밀번호: 1234)
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {QUICK_ACCOUNTS.map((acc) => (
+                <button
+                  key={acc.username}
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => performLogin({ username: acc.username, password: "1234" })}
+                >
+                  <span className="badge badge-blue">{acc.badge}</span> {acc.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {QUICK_ACCOUNTS.map((acc) => (
-              <button
-                key={acc.username}
-                type="button"
-                className="btn btn-sm"
-                onClick={() => performLogin({ username: acc.username, password: "1234" })}
-              >
-                <span className="badge badge-blue">{acc.badge}</span> {acc.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

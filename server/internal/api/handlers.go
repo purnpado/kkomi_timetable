@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"kkomi-timetable/pkg/protocol"
@@ -17,6 +18,7 @@ func (a *ServerApp) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"serverIp":       ws.LocalIPAddress(),
 		"databaseMode":   a.Store.ModeLabel(),
 		"connectedUsers": a.Hub.ConnectedCount(),
+		"isDemoMode":     a.Auth.IsDemoMode(),
 		"time":           time.Now().Format("2006-01-02 15:04:05"),
 	})
 }
@@ -45,17 +47,37 @@ func (a *ServerApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "잘못된 로그인 요청 형식입니다")
 		return
 	}
-	t, err := a.Auth.AuthenticateLogin(body.Username, body.Name, body.Subject, body.Password)
+	t, tok, err := a.Auth.LoginWithToken(body.Username, body.Name, body.Subject, body.Password)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusOK, struct {
+		protocol.Teacher
+		Token string `json:"token"`
+	}{
+		Teacher: *t,
+		Token:   tok,
+	})
+}
+
+func (a *ServerApp) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if tok := extractBearerToken(r); tok != "" {
+		a.Auth.LogoutToken(tok)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "안전하게 로그아웃되었습니다"})
 }
 
 func (a *ServerApp) handleTeachers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := a.requireAuth(w, r); !ok {
+			return
+		}
 		teachers, err := a.Auth.ListTeachers()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -67,7 +89,8 @@ func (a *ServerApp) handleTeachers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, teachers)
 		return
 	case http.MethodPost:
-		if _, ok := a.requireRole(w, r, protocol.RoleMaster, protocol.RoleTimetableAdmin); !ok {
+		actor, ok := a.requireRole(w, r, protocol.RoleMaster, protocol.RoleTimetableAdmin)
+		if !ok {
 			return
 		}
 		var body struct {
@@ -78,9 +101,13 @@ func (a *ServerApp) handleTeachers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		saved, err := a.Auth.SaveTeacher(body.Teacher, body.Password)
+		saved, err := a.Auth.SaveTeacherByActor(actor, body.Teacher, body.Password)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			status := http.StatusBadRequest
+			if strings.Contains(err.Error(), "최고관리자(MASTER)") {
+				status = http.StatusForbidden
+			}
+			writeError(w, status, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, saved)
@@ -149,15 +176,13 @@ func (a *ServerApp) handleRoleHandover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *ServerApp) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	actor := a.currentActor(r)
-	teacherID := ""
-	homeroom := ""
-	isExamAdmin := false
-	if actor != nil {
-		teacherID = actor.ID
-		homeroom = actor.HomeroomClass
-		isExamAdmin = auth.HasRole(actor, protocol.RoleInternalExamAdmin)
+	actor, ok := a.requireAuth(w, r)
+	if !ok {
+		return
 	}
+	teacherID := actor.ID
+	homeroom := actor.HomeroomClass
+	isExamAdmin := auth.HasRole(actor, protocol.RoleInternalExamAdmin)
 
 	now := time.Now()
 	today := now.Format("2006-01-02")
@@ -195,7 +220,7 @@ func (a *ServerApp) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	slots, _, _ := a.InternalExam.ListSlotsForViewer(isExamAdmin)
 	var myExamSlots []protocol.ExamSlot
 	for _, sl := range slots {
-		if sl.TeacherID == teacherID || teacherID == "" {
+		if sl.TeacherID == teacherID {
 			myExamSlots = append(myExamSlots, sl)
 		}
 	}
@@ -242,6 +267,9 @@ func (a *ServerApp) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *ServerApp) handleRecentEvents(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requireAuth(w, r); !ok {
+		return
+	}
 	logs, err := a.Store.ListAuditLogs(30)
 	if err != nil {
 		writeJSON(w, http.StatusOK, a.Bus.RecentEvents(30))
@@ -253,6 +281,9 @@ func (a *ServerApp) handleRecentEvents(w http.ResponseWriter, r *http.Request) {
 func (a *ServerApp) handleEvaluateMove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	if _, ok := a.requireAuth(w, r); !ok {
 		return
 	}
 	var req protocol.EvaluateMoveRequest
@@ -270,6 +301,9 @@ func (a *ServerApp) handleEvaluateMove(w http.ResponseWriter, r *http.Request) {
 
 func (a *ServerApp) handleTimetableRequests(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		if _, ok := a.requireAuth(w, r); !ok {
+			return
+		}
 		reqs, err := a.Timetable.ListRequests()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -279,10 +313,18 @@ func (a *ServerApp) handleTimetableRequests(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if r.Method == http.MethodPost {
+		actor, ok := a.requireAuth(w, r)
+		if !ok {
+			return
+		}
 		var req protocol.TimetableChangeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if !auth.HasRole(actor, protocol.RoleTimetableAdmin) {
+			req.RequesterID = actor.ID
+			req.RequesterName = actor.Name
 		}
 		saved, err := a.Timetable.SubmitRequest(req)
 		if err != nil {
@@ -322,6 +364,9 @@ func (a *ServerApp) handleCommitTimetableRequest(w http.ResponseWriter, r *http.
 }
 
 func (a *ServerApp) handleNEISHelper(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requireAuth(w, r); !ok {
+		return
+	}
 	list, err := a.Timetable.NEISHelperList()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

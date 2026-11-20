@@ -129,7 +129,13 @@ func newManagerWithPaths(rtDir, dataRoot string, port int) (*PortableMariaDBMana
 
 func (m *PortableMariaDBManager) setPort(port int) {
 	m.port = port
-	m.socketPath = filepath.Join(os.TempDir(), fmt.Sprintf("kkomi-mariadb-%d.sock", port))
+	sockDir := os.TempDir()
+	if len(sockDir) > 60 {
+		if info, err := os.Stat("/tmp"); err == nil && info.IsDir() {
+			sockDir = "/tmp"
+		}
+	}
+	m.socketPath = filepath.Join(sockDir, fmt.Sprintf("kkomi-mariadb-%d.sock", port))
 	m.pidFile = pathutil.SafeJoin(m.dataDir, fmt.Sprintf("mariadbd-%d.pid", port))
 }
 
@@ -307,7 +313,7 @@ func (m *PortableMariaDBManager) ensureDataInitialized() error {
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command(m.initPath, fmt.Sprintf("--datadir=%s", m.dataDir))
+		cmd = exec.Command(m.initPath, fmt.Sprintf("--datadir=%s", formatMariaDBArgPath(m.dataDir)))
 	} else {
 		cmd = exec.Command(
 			m.initPath,

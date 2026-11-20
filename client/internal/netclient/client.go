@@ -3,13 +3,8 @@ package netclient
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -23,8 +18,6 @@ import (
 // ClientVersion은 현재 교사 클라이언트의 릴리즈 버전입니다.
 const ClientVersion = "0.1.01"
 
-const gitHubLatestAPI = "https://api.github.com/repos/purnpado/kkomi_timetable/releases/latest"
-
 // ClientConfig는 교사용 클라이언트의 서버 접속 정보(os.Executable() 기준 절대 경로 저장)입니다.
 type ClientConfig struct {
 	ServerAddr string `json:"serverAddr"` // 예: "127.0.0.1:18090" 또는 "192.168.0.10:18090"
@@ -36,6 +29,7 @@ type Client struct {
 	mu        sync.RWMutex
 	serverURL string
 	teacherID string
+	token     string
 	stopCh    chan struct{}
 	onEvent   func(protocol.DomainEvent)
 }
@@ -99,16 +93,18 @@ func (c *Client) ServerURL() string {
 	return c.serverURL
 }
 
-// SetConnection은 서버 주소 또는 로그인 교사 ID를 갱신하고 WebSocket 연결을 재시작합니다.
-func (c *Client) SetConnection(serverAddr, teacherID string) {
+// SetConnection은 서버 주소, 교사 ID 및 세션 토큰을 갱신하고 WebSocket 연결을 재시작합니다.
+func (c *Client) SetConnection(serverAddr, teacherID, token string) {
 	c.mu.Lock()
 	if strings.TrimSpace(serverAddr) != "" {
 		c.serverURL = normalizeServerURL(serverAddr)
 		cfg := LoadConfig()
 		cfg.ServerAddr = c.serverURL
+		cfg.LastUser = teacherID
 		_ = SaveConfig(cfg)
 	}
 	c.teacherID = teacherID
+	c.token = strings.TrimSpace(token)
 	if c.stopCh != nil {
 		close(c.stopCh)
 	}
@@ -119,7 +115,22 @@ func (c *Client) SetConnection(serverAddr, teacherID string) {
 	go c.connectLoop(stop)
 }
 
+// Disconnect는 현재 활성화된 WebSocket 수신 루프를 즉시 중단합니다.
+func (c *Client) Disconnect() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.token = ""
+	c.teacherID = ""
+	if c.stopCh != nil {
+		close(c.stopCh)
+		c.stopCh = nil
+	}
+}
+
 func (c *Client) connectLoop(stop <-chan struct{}) {
+	backoff := 2 * time.Second
+	const maxBackoff = 20 * time.Second
+
 	for {
 		select {
 		case <-stop:
@@ -130,21 +141,36 @@ func (c *Client) connectLoop(stop <-chan struct{}) {
 		c.mu.RLock()
 		base := c.serverURL
 		tid := c.teacherID
+		tok := c.token
 		c.mu.RUnlock()
 
 		wsURL := strings.Replace(base, "http://", "ws://", 1)
 		wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
-		wsURL = fmt.Sprintf("%s/ws?teacherId=%s", wsURL, tid)
+		if tok != "" {
+			wsURL = fmt.Sprintf("%s/ws?token=%s", wsURL, url.QueryEscape(tok))
+		} else {
+			wsURL = fmt.Sprintf("%s/ws?teacherId=%s", wsURL, url.QueryEscape(tid))
+		}
 
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
 			select {
 			case <-stop:
 				return
-			case <-time.After(3 * time.Second):
-				continue
+			case <-time.After(backoff):
 			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
 		}
+
+		backoff = 2 * time.Second
+		_ = conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+		conn.SetPongHandler(func(string) error {
+			return conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+		})
 
 		done := make(chan struct{})
 		go func() {
@@ -167,180 +193,11 @@ func (c *Client) connectLoop(stop <-chan struct{}) {
 			return
 		case <-done:
 			_ = conn.Close()
-			time.Sleep(2 * time.Second)
+			select {
+			case <-stop:
+				return
+			case <-time.After(backoff):
+			}
 		}
-	}
-}
-
-// ApplyClientSelfUpdate는 서버에 배포된 최신 클라이언트 패치 또는 GitHub Releases(v0.1.01+)에서
-// 최신 꼬미시간 실행 파일을 내려받아 자가 교체 재실행합니다.
-func (c *Client) ApplyClientSelfUpdate() error {
-	var body io.ReadCloser
-	patchURL := c.ServerURL() + "/api/system/client-patch"
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Get(patchURL) // #nosec G107 -- 업무망 내부 서버 URL
-	if err == nil && resp.StatusCode == http.StatusOK {
-		body = resp.Body
-	} else {
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-		ghBody, ghErr := openGitHubClientAsset(client)
-		if ghErr != nil {
-			return ghErr
-		}
-		body = ghBody
-	}
-	defer body.Close()
-
-	exePath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	newPath := exePath + ".new"
-	out, err := os.OpenFile(newPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, body); err != nil {
-		_ = out.Close()
-		_ = os.Remove(newPath)
-		return err
-	}
-	_ = out.Close()
-
-	if valErr := validateClientBinaryForOS(newPath); valErr != nil {
-		return valErr
-	}
-
-	oldPath := exePath + ".old"
-	_ = os.Remove(oldPath)
-	if err := os.Rename(exePath, oldPath); err != nil {
-		return err
-	}
-	if err := os.Rename(newPath, exePath); err != nil {
-		_ = os.Rename(oldPath, exePath)
-		return err
-	}
-	if runtime.GOOS == "darwin" {
-		resignDarwinAppBundle(exePath)
-	}
-
-	go func() {
-		time.Sleep(600 * time.Millisecond)
-		cmd := exec.Command(exePath, os.Args[1:]...)
-		if startErr := cmd.Start(); startErr != nil {
-			log.Printf("[클라이언트 업데이트] 재실행 실패: %v", startErr)
-		}
-		os.Exit(0)
-	}()
-	return nil
-}
-
-func openGitHubClientAsset(httpCli *http.Client) (io.ReadCloser, error) {
-	req, err := http.NewRequest(http.MethodGet, gitHubLatestAPI, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "KkomiTimetable-Client/"+ClientVersion)
-
-	resp, err := httpCli.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("서버 및 GitHub 릴리즈 업데이트 연결 실패: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub 최신 릴리즈 조회 실패 (상태코드 %d)", resp.StatusCode)
-	}
-
-	var rel struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			Label              string `json:"label"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return nil, fmt.Errorf("GitHub 릴리즈 응답 파싱 실패: %w", err)
-	}
-
-	var assetName, assetURL string
-	for _, a := range rel.Assets {
-		low := strings.ToLower(a.Name)
-		isServer := strings.Contains(a.Name, "서버") || strings.Contains(a.Label, "서버") || strings.Contains(low, "server")
-		isClient := strings.Contains(a.Name, "꼬미시간") || strings.Contains(a.Label, "꼬미시간") || strings.Contains(low, "client") || strings.Contains(low, "kkomi-timetable")
-		if strings.HasSuffix(low, ".exe") && !isServer && isClient {
-			assetName = a.Name
-			assetURL = a.BrowserDownloadURL
-			break
-		}
-	}
-	if assetURL == "" {
-		return nil, fmt.Errorf("GitHub 릴리즈(%s)에서 클라이언트 실행 파일(꼬미시간.exe)을 찾지 못했습니다", rel.TagName)
-	}
-	if runtime.GOOS != "windows" {
-		return nil, fmt.Errorf("GitHub 최신 릴리즈(%s)는 Windows용(%s)입니다. macOS에서는 소스 빌드를 이용해 주세요", rel.TagName, assetName)
-	}
-
-	dlResp, err := httpCli.Get(assetURL) // #nosec G107 -- GitHub Releases 공식 다운로드 URL
-	if err != nil {
-		return nil, fmt.Errorf("GitHub 클라이언트 다운로드 실패: %w", err)
-	}
-	if dlResp.StatusCode != http.StatusOK {
-		_ = dlResp.Body.Close()
-		return nil, fmt.Errorf("GitHub 클라이언트 다운로드 오류 (%d)", dlResp.StatusCode)
-	}
-	return dlResp.Body, nil
-}
-
-func validateClientBinaryForOS(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	var hdr [4]byte
-	n, rErr := io.ReadFull(f, hdr[:])
-	_ = f.Close()
-	if rErr != nil || n < 4 {
-		_ = os.Remove(path)
-		return fmt.Errorf("손상되었거나 올바르지 않은 클라이언트 바이너리 파일입니다")
-	}
-	isPE := hdr[0] == 'M' && hdr[1] == 'Z'
-	isMachO := (hdr[0] == 0xCF && hdr[1] == 0xFA && hdr[2] == 0xED && hdr[3] == 0xFE) ||
-		(hdr[0] == 0xFE && hdr[1] == 0xED && hdr[2] == 0xFA && hdr[3] == 0xCF) ||
-		(hdr[0] == 0xCA && hdr[1] == 0xFE && hdr[2] == 0xBA && hdr[3] == 0xBE) ||
-		(hdr[0] == 0xBE && hdr[1] == 0xBA && hdr[2] == 0xFE && hdr[3] == 0xCA)
-	switch runtime.GOOS {
-	case "windows":
-		if !isPE {
-			_ = os.Remove(path)
-			return fmt.Errorf("현재 OS(Windows)와 호환되지 않는 클라이언트 실행 파일(.exe 아님)입니다")
-		}
-	case "darwin":
-		if isPE {
-			_ = os.Remove(path)
-			return fmt.Errorf("배포된 클라이언트 패치가 Windows 전용(.exe)이므로 macOS 앱에 적용할 수 없습니다")
-		}
-		if !isMachO {
-			_ = os.Remove(path)
-			return fmt.Errorf("올바른 macOS 실행 파일(Mach-O) 형식이 아닙니다")
-		}
-	}
-	return nil
-}
-
-func resignDarwinAppBundle(exePath string) {
-	marker := filepath.Join(".app", "Contents", "MacOS")
-	idx := strings.Index(exePath, marker)
-	if idx == -1 {
-		return
-	}
-	bundlePath := exePath[:idx+4]
-	_ = exec.Command("xattr", "-cr", bundlePath).Run()
-	if out, err := exec.Command("codesign", "--force", "--deep", "--sign", "-", bundlePath).CombinedOutput(); err != nil {
-		log.Printf("[클라이언트 업데이트] macOS 번들 재서명 경고 (%s): %v (%s)", bundlePath, err, strings.TrimSpace(string(out)))
 	}
 }

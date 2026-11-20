@@ -1,19 +1,18 @@
 package database
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"golang.org/x/crypto/bcrypt"
 
 	"kkomi-timetable/pkg/pathutil"
 	"kkomi-timetable/pkg/protocol"
@@ -122,6 +121,19 @@ func (s *Store) ModeLabel() string {
 	return s.modeLabel
 }
 
+// MasterKey는 마스터 암호화 키의 안전한 복제본을 반환합니다.
+func (s *Store) MasterKey() []byte {
+	return bytes.Clone(s.masterKey)
+}
+
+// BcryptCost는 실행 환경(운영 vs 테스트)에 맞는 안전한 bcrypt 해싱 비용을 반환합니다.
+func BcryptCost() int {
+	if isRunningTests() {
+		return bcrypt.MinCost
+	}
+	return bcrypt.DefaultCost
+}
+
 // Close는 DB 커넥션과 직접 기동한 포터블 MariaDB 자식 프로세스를 안전하게 종료합니다.
 func (s *Store) Close() error {
 	s.mu.Lock()
@@ -156,7 +168,8 @@ func (s *Store) initSchema() error {
 			actor_name VARCHAR(64) NOT NULL,
 			title VARCHAR(255) NOT NULL,
 			message TEXT NOT NULL,
-			occurred_at VARCHAR(32) NOT NULL
+			occurred_at VARCHAR(32) NOT NULL,
+			INDEX idx_audit_occurred (occurred_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	}
 	for _, stmt := range stmts {
@@ -164,7 +177,97 @@ func (s *Store) initSchema() error {
 			return fmt.Errorf("MariaDB 스키마 초기화 실패: %w", err)
 		}
 	}
+	// 기존 테이블에 인덱스가 없을 경우 안전하게 보강
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_occurred ON audit_logs (occurred_at)`)
 	return nil
+}
+
+// TxStore는 단일 InnoDB 트랜잭션 내부에서 원자적 읽기·쓰기를 수행하는 트랜잭션 핸들입니다.
+type TxStore struct {
+	tx *sql.Tx
+}
+
+// WithTx는 Store 락과 InnoDB 트랜잭션(Begin/Commit/Rollback) 안에서 작업을 원자적으로 실행합니다.
+func (s *Store) WithTx(fn func(tx *TxStore) error) (err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sqlTx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("DB 트랜잭션 시작 실패: %w", err)
+	}
+	txStore := &TxStore{tx: sqlTx}
+	defer func() {
+		if r := recover(); r != nil {
+			_ = sqlTx.Rollback()
+			err = fmt.Errorf("트랜잭션 실행 중 예기치 못한 오류: %v", r)
+			return
+		}
+		if err != nil {
+			_ = sqlTx.Rollback()
+		}
+	}()
+
+	if err = fn(txStore); err != nil {
+		return err
+	}
+	if commitErr := sqlTx.Commit(); commitErr != nil {
+		return fmt.Errorf("DB 트랜잭션 커밋 실패: %w", commitErr)
+	}
+	return nil
+}
+
+// Exec는 트랜잭션 내에서 SQL 문장을 실행합니다.
+func (t *TxStore) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return t.tx.Exec(query, args...)
+}
+
+// SaveRecord는 트랜잭션 내에서 컬렉션과 ID 단위로 도메인 객체를 저장합니다.
+func (t *TxStore) SaveRecord(collection, id string, value interface{}) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	_, err = t.tx.Exec(
+		`INSERT INTO kv_records (collection, id, payload, updated_at) VALUES (?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)`,
+		collection, id, string(raw), now,
+	)
+	return err
+}
+
+// DeleteRecord는 트랜잭션 내에서 특정 컬렉션의 레코드를 삭제합니다.
+func (t *TxStore) DeleteRecord(collection, id string) error {
+	_, err := t.tx.Exec(`DELETE FROM kv_records WHERE collection = ? AND id = ?`, collection, id)
+	return err
+}
+
+// ClearCollections는 트랜잭션 내에서 지정된 컬렉션들의 모든 레코드를 삭제합니다.
+func (t *TxStore) ClearCollections(collections ...string) error {
+	for _, col := range collections {
+		if _, err := t.tx.Exec(`DELETE FROM kv_records WHERE collection = ?`, col); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LoadRecord는 기본 키(collection, id)로 단일 JSON 레코드를 빠르게 조회합니다.
+func LoadRecord[T any](s *Store, collection, id string) (*T, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var payload string
+	err := s.db.QueryRow(`SELECT payload FROM kv_records WHERE collection = ? AND id = ?`, collection, id).Scan(&payload)
+	if err != nil {
+		return nil, err
+	}
+	var item T
+	if jsonErr := json.Unmarshal([]byte(payload), &item); jsonErr != nil {
+		return nil, jsonErr
+	}
+	return &item, nil
 }
 
 // SaveRecord는 컬렉션과 ID 단위로 도메인 객체를 행 단위 잠금(InnoDB)으로 저장합니다.
@@ -267,76 +370,4 @@ func (s *Store) ListAuditLogs(limit int) ([]protocol.DomainEvent, error) {
 		logs = append(logs, e)
 	}
 	return logs, rows.Err()
-}
-
-// ExportEncryptedBackup은 현재 전체 DB 레코드를 AES-256-GCM 암호화 파일(.kbackup)로 백업합니다.
-func (s *Store) ExportEncryptedBackup(tag string) (string, error) {
-	s.mu.RLock()
-	rows, err := s.db.Query(`SELECT collection, id, payload, updated_at FROM kv_records ORDER BY collection, id`)
-	if err != nil {
-		s.mu.RUnlock()
-		return "", err
-	}
-	type rowItem struct {
-		Collection string `json:"collection"`
-		ID         string `json:"id"`
-		Payload    string `json:"payload"`
-		UpdatedAt  string `json:"updatedAt"`
-	}
-	var snapshot []rowItem
-	for rows.Next() {
-		var r rowItem
-		if scanErr := rows.Scan(&r.Collection, &r.ID, &r.Payload, &r.UpdatedAt); scanErr == nil {
-			snapshot = append(snapshot, r)
-		}
-	}
-	rowsErr := rows.Err()
-	_ = rows.Close()
-	s.mu.RUnlock()
-	if rowsErr != nil {
-		return "", rowsErr
-	}
-
-	plain, err := json.Marshal(snapshot)
-	if err != nil {
-		return "", err
-	}
-	cipherData, err := EncryptAESGCM(s.masterKey, plain)
-	if err != nil {
-		return "", err
-	}
-
-	backupDir, err := pathutil.BackupDir()
-	if err != nil {
-		return "", err
-	}
-	if tag == "" {
-		tag = "manual"
-	}
-	filename := fmt.Sprintf("kkomi_backup_%s_%s.kbackup", tag, time.Now().Format("20060102_150405"))
-	fullPath := pathutil.SafeJoin(backupDir, filename)
-	if err := os.WriteFile(fullPath, cipherData, 0o600); err != nil {
-		return "", err
-	}
-	return fullPath, nil
-}
-
-// ListBackups는 backups 폴더의 암호화 백업 목록을 최신순으로 반환합니다.
-func (s *Store) ListBackups() ([]string, error) {
-	backupDir, err := pathutil.BackupDir()
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(backupDir)
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".kbackup" {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	return names, nil
 }

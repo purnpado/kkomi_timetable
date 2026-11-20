@@ -2,27 +2,72 @@ import { Call, Events } from "@wailsio/runtime";
 
 const BRIDGE_SERVICE = "kkomi-timetable/client/internal/bridge.AppBridge";
 
+let authToken = sessionStorage.getItem("kkomi_auth_token") || "";
+let desktopBridgeDetected = typeof window !== "undefined" && Boolean(window._wails);
+let unauthorizedHandler = null;
+
+export function getAuthToken() {
+  return authToken;
+}
+
+export function setAuthToken(token) {
+  authToken = token || "";
+  if (authToken) {
+    sessionStorage.setItem("kkomi_auth_token", authToken);
+  } else {
+    sessionStorage.removeItem("kkomi_auth_token");
+  }
+}
+
+export function clearAuthToken() {
+  authToken = "";
+  sessionStorage.removeItem("kkomi_auth_token");
+}
+
+export function setUnauthorizedHandler(fn) {
+  unauthorizedHandler = typeof fn === "function" ? fn : null;
+}
+
+export function triggerUnauthorized() {
+  if (unauthorizedHandler) unauthorizedHandler();
+}
+
+export function isWailsRuntime() {
+  return Boolean(desktopBridgeDetected || (typeof window !== "undefined" && window._wails));
+}
+
 // Wails 데스크톱 앱 또는 웹 브라우저 폴백 환경에 맞게 서버 기본 주소를 결정합니다.
 export async function resolveServerUrl() {
   const saved = localStorage.getItem("kkomi_server_url");
-  if (saved) return saved;
   try {
     const url = await Call.ByName(`${BRIDGE_SERVICE}.GetServerURL`);
+    desktopBridgeDetected = true;
+    if (saved) return saved;
     if (url) return url;
   } catch {
     // 브라우저로 서버에 직접 접속한 경우 동일 Origin 사용
   }
+  if (saved) return saved;
   if (window.location.port === "5173") return "http://127.0.0.1:18090";
   if (window.location.protocol.startsWith("http")) return window.location.origin;
   return "http://127.0.0.1:18090";
 }
 
-export async function connectDesktopBridge(serverUrl, teacherId) {
+export async function connectDesktopBridge(serverUrl, teacherId, token = authToken) {
   localStorage.setItem("kkomi_server_url", serverUrl);
   try {
-    await Call.ByName(`${BRIDGE_SERVICE}.ConnectServer`, serverUrl, teacherId);
+    await Call.ByName(`${BRIDGE_SERVICE}.ConnectServer`, serverUrl, teacherId, token || "");
+    desktopBridgeDetected = true;
   } catch {
     // 브라우저 환경에서는 직접 WebSocket 연결
+  }
+}
+
+export async function disconnectDesktopBridge() {
+  try {
+    await Call.ByName(`${BRIDGE_SERVICE}.Disconnect`);
+  } catch {
+    // ignore in web browser mode
   }
 }
 
@@ -60,12 +105,12 @@ export function subscribeDesktopEvents(onDomainEvent, onDockChange) {
       })
     );
   } catch {
-    // 웹 브라우저 모드에서는 아래 WebSocket 구독 사용
+    // 웹 브라우저 모드에서는 직접 WebSocket 구독 사용
   }
   return () => cleanups.forEach((fn) => typeof fn === "function" && fn());
 }
 
-// apiFetch는 X-Teacher-ID 인증 헤더를 자동 포함해 서버 API를 호출합니다.
+// apiFetch는 Authorization Bearer 세션 토큰을 자동 포함해 서버 API를 호출합니다.
 export async function apiFetch(serverUrl, path, teacherId, options = {}) {
   const base = (serverUrl || "http://127.0.0.1:18090").replace(/\/+$/, "");
   const headers = {
@@ -73,6 +118,9 @@ export async function apiFetch(serverUrl, path, teacherId, options = {}) {
   };
   if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
+  }
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
   }
   if (teacherId) headers["X-Teacher-ID"] = teacherId;
 
@@ -83,6 +131,9 @@ export async function apiFetch(serverUrl, path, teacherId, options = {}) {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
+  }
+  if (res.status === 401 && !path.startsWith("/api/auth/login") && unauthorizedHandler) {
+    unauthorizedHandler();
   }
   if (!res.ok) {
     throw new Error(data?.error || `요청 오류 (${res.status})`);

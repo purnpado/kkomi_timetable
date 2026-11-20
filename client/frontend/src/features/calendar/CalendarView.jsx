@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { CheckCircle2, FileSpreadsheet, FileText, PlusCircle, Printer, XCircle } from "lucide-react";
 import { apiFetch, hasRole, printDesktopWindow } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 
 const LINK_LABELS = {
   SIMPLE_NOTICE: "[단순안내]",
@@ -74,15 +75,36 @@ export default function CalendarView({ serverUrl, user, events, teachers, onRefr
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/hwpx?kind=calendar`} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=calendar", "주중월중_학사일정표.hwpx")
+                  .catch((err) => onNotify("한글 출력 실패", err.message, true))
+              }
+            >
               <FileText size={14} /> 한글 행사표 (.hwpx)
-            </a>
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=calendar`} target="_blank" rel="noreferrer">
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=calendar", "주중월중_학사일정.xlsx")
+                  .catch((err) => onNotify("엑셀 출력 실패", err.message, true))
+              }
+            >
               <FileSpreadsheet size={14} /> 엑셀 일정 (.xlsx)
-            </a>
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/print`} target="_blank" rel="noreferrer">
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, "/api/export/print", "교무실_대형현황판.html", { openInTab: true })
+                  .catch((err) => onNotify("현황판 열기 실패", err.message, true))
+              }
+            >
               <Printer size={14} /> B4/A3 고대비 현황판
-            </a>
+            </button>
             <button className="btn btn-sm" onClick={printDesktopWindow}>
               <Printer size={14} /> 현재 화면 인쇄/PDF
             </button>

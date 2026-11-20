@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Download, KeyRound, Trash2, Upload, UserPlus } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 
 // TeacherManagerCard는 최고관리자 또는 시간표 담당교사가 클라이언트에서 신규 교사 등록,
 // 전용 교과교실 지정, 명렬표 엑셀 다운로드/일괄 업로드를 수행하는 관리 카드입니다.
@@ -94,9 +95,16 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
           <UserPlus size={15} style={{ verticalAlign: "middle" }} /> 교사·교과교실 기초 명렬표 등록 및 관리
         </h3>
         <div style={{ display: "flex", gap: 8 }}>
-          <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=teachers`} target="_blank" rel="noreferrer">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() =>
+              downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=teachers", "교사명렬표.xlsx")
+                .catch((err) => onNotify("명렬표 다운로드 실패", err.message, true))
+            }
+          >
             <Download size={13} /> 교사 명렬표 엑셀 (.xlsx)
-          </a>
+          </button>
           <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
             <Upload size={13} /> 명렬표 엑셀 일괄 업로드
             <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => handleImportTeachersXLSX(e.target.files?.[0])} />

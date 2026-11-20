@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, CloudDownload, Database, RefreshCw, Shield, UploadCloud, UserCog } from "lucide-react";
+import { AlertTriangle, CloudDownload, Database, RefreshCw, RotateCcw, Shield, UploadCloud, UserCog } from "lucide-react";
 import { apiFetch, applySelfUpdateBridge, ROLE_LABELS } from "../../events/eventStore";
 import TeacherManagerCard from "./TeacherManagerCard";
 
 const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
 
 // AdminRemoteView는 최고관리자(MASTER)의 교사 관리, RBAC 권한 배정,
-// 전체 시스템 초기화, 원격 DB 암호화 백업 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
+// 전체 시스템 초기화, 원격 DB 암호화 백업·복원 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
 export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, onResetComplete, onNotify }) {
   const [backups, setBackups] = useState([]);
+  const [confirmRestoreFile, setConfirmRestoreFile] = useState("");
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers?.[0]?.id || "t01");
   const [handoverFrom, setHandoverFrom] = useState("t02");
   const [handoverTo, setHandoverTo] = useState("t06");
@@ -71,6 +72,20 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
       loadBackups();
     } catch (err) {
       onNotify("백업 실패", err.message, true);
+    }
+  };
+
+  const handleRestoreBackup = async (fileName) => {
+    try {
+      const res = await apiFetch(serverUrl, "/api/system/backups/restore", user.id, {
+        method: "POST",
+        body: JSON.stringify({ fileName }),
+      });
+      setConfirmRestoreFile("");
+      onNotify("암호화 백업 복원 완료", `${res.fileName}에서 ${res.restoredCount}건이 복원되었습니다. 보안을 위해 다시 로그인해 주세요.`, true);
+      if (onResetComplete) onResetComplete();
+    } catch (err) {
+      onNotify("백업 복원 실패", err.message, true);
     }
   };
 
@@ -235,9 +250,23 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           {backups.length === 0 ? (
             <div style={{ fontSize: 13, color: "#64748b" }}>생성된 백업 파일이 아직 없습니다.</div>
           ) : (
-            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
-              {backups.slice(0, 8).map((b) => <li key={b}>{b}</li>)}
-            </ul>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {backups.slice(0, 8).map((b) => (
+                <div key={b} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 12 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{b}</span>
+                  {confirmRestoreFile === b ? (
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      <button className="btn btn-sm btn-danger" onClick={() => handleRestoreBackup(b)}>복원 실행</button>
+                      <button className="btn btn-sm" onClick={() => setConfirmRestoreFile("")}>취소</button>
+                    </div>
+                  ) : (
+                    <button className="btn btn-sm" style={{ flexShrink: 0 }} onClick={() => setConfirmRestoreFile(b)}>
+                      <RotateCcw size={12} /> 복원
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
 

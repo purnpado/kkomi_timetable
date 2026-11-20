@@ -9,12 +9,14 @@ import (
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/internal_exam"
 	"kkomi-timetable/server/internal/modules/timetable"
-	"kkomi-timetable/server/internal/ws"
 )
 
 func (a *ServerApp) handleTimetableCells(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := a.requireAuth(w, r); !ok {
+			return
+		}
 		weekStart := r.URL.Query().Get("weekStart")
 		cells, err := a.Timetable.ListWeekCells(weekStart)
 		if err != nil {
@@ -118,6 +120,9 @@ func (a *ServerApp) handleImportTimetableXLSX(w http.ResponseWriter, r *http.Req
 
 func (a *ServerApp) handleBellSchedule(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		if _, ok := a.requireAuth(w, r); !ok {
+			return
+		}
 		bells, err := a.Calendar.ListBellSchedule()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -152,9 +157,8 @@ func (a *ServerApp) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
 		return
 	}
-	actor := a.currentActor(r)
-	if actor == nil {
-		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
+	actor, ok := a.requireAuth(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -165,12 +169,18 @@ func (a *ServerApp) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	updated, err := a.Auth.ChangePassword(actor.ID, body.CurrentPassword, body.NewPassword)
+	updated, newTok, err := a.Auth.ChangePasswordWithToken(actor.ID, body.CurrentPassword, body.NewPassword)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, struct {
+		protocol.Teacher
+		Token string `json:"token"`
+	}{
+		Teacher: *updated,
+		Token:   newTok,
+	})
 }
 
 func (a *ServerApp) handleResetPassword(w http.ResponseWriter, r *http.Request) {
@@ -193,33 +203,6 @@ func (a *ServerApp) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "비밀번호가 초기값(1234)으로 재설정되었습니다"})
-}
-
-func (a *ServerApp) handleSystemReset(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
-		return
-	}
-	if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
-		return
-	}
-	var body struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	backupPath, err := a.Store.ResetSystem(body.Mode)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status":     "시스템 초기화가 완료되었습니다",
-		"mode":       body.Mode,
-		"backupFile": backupPath,
-	})
 }
 
 func writeBaseTemplateXLSX(w http.ResponseWriter) {
@@ -252,43 +235,4 @@ func (a *ServerApp) handleInternalExamTeacherPolicy(w http.ResponseWriter, r *ht
 	}
 	fairness, _ := a.InternalExam.CalculateFairnessSummary()
 	writeJSON(w, http.StatusOK, fairness)
-}
-
-func (a *ServerApp) handleGitHubRelease(w http.ResponseWriter, r *http.Request) {
-	if actor := a.currentActor(r); actor == nil {
-		writeError(w, http.StatusUnauthorized, "로그인이 필요합니다")
-		return
-	}
-	info, err := ws.CheckGitHubLatestRelease()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, info)
-}
-
-func (a *ServerApp) handleGitHubUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
-		return
-	}
-	if _, ok := a.requireRole(w, r, protocol.RoleMaster); !ok {
-		return
-	}
-	var body struct {
-		Target string `json:"target"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Target == "" {
-		body.Target = "client"
-	}
-	info, err := ws.ApplyGitHubReleaseUpdate(body.Target, a.Store, a.Bus, a.OnShutdown)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":  fmt.Sprintf("GitHub 최신 릴리즈(%s) 기반 %s 업데이트를 적용했습니다.", info.TagName, body.Target),
-		"release": info,
-	})
 }

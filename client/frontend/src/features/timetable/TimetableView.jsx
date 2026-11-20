@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, FileText, PlusCircle, TableProperties, Users, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
 import { apiFetch, hasRole } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import BaseTimetableBuilder from "./BaseTimetableBuilder";
 import CurriculumLoadManager from "./CurriculumLoadManager";
 import ChainSwapPreview from "./ChainSwapPreview";
@@ -191,12 +192,26 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
                 <CheckSquare size={14} /> 대기열 비교 승인 ({(requests || []).filter((r) => r.status === "STAGING").length}건)
               </button>
             )}
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/hwpx?kind=timetable`} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=timetable", "결보강_수업교환_대장.hwpx")
+                  .catch((err) => onNotify("문서 출력 실패", err.message, true))
+              }
+            >
               <FileText size={14} /> 결보강 대장 (.hwpx)
-            </a>
-            <a className="btn btn-sm" href={`${serverUrl}/api/export/xlsx?kind=timetable`} target="_blank" rel="noreferrer">
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=timetable", "나이스_결보강대장.xlsx")
+                  .catch((err) => onNotify("엑셀 출력 실패", err.message, true))
+              }
+            >
               <FileSpreadsheet size={14} /> 나이스 엑셀 (.xlsx)
-            </a>
+            </button>
           </div>
         </div>
 
