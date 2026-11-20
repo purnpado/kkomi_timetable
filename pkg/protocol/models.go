@@ -136,6 +136,7 @@ type EvaluateMoveRequest struct {
 	TargetPeriod  int    `json:"targetPeriod"`
 	TargetClass   string `json:"targetClass"`
 	TargetTeacher string `json:"targetTeacher"`
+	TargetDate    string `json:"targetDate,omitempty"` // 특정 주차·일자 컨텍스트 (YYYY-MM-DD, 비어 있으면 정규 시간표)
 }
 
 // MoveEvaluationResult는 신호등 판정 결과(GREEN/YELLOW/RED)와 다단계 연쇄 교환 과정을 담습니다.
@@ -187,9 +188,10 @@ type ExamConfig struct {
 	IsSealed             bool                `json:"isSealed"`              // 사전 봉인 여부 (true면 고사장 비공개)
 	InstantRevealMode    bool                `json:"instantRevealMode"`     // 학교 설정: 즉시 공개 모드 여부
 	DeputyMode           bool                `json:"deputyMode"`            // 정·부감독 2인 선택 운영 (false면 1인 단독)
-	BalanceMode          string              `json:"balanceMode,omitempty"` // "TOTAL_AND_ROLE"(연간총계+역할균형) | "STRICT_ROLE"(정·부 각각 균등)
-	HonoraryParentOn     bool                `json:"honoraryParentOn"`      // 학부모 명예감독 선택적(On/Off) 투입
-	SubjectTeacherPolicy SubjectHandlingMode `json:"subjectTeacherPolicy"`  // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
+	BalanceMode          string              `json:"balanceMode,omitempty"`     // "TOTAL_AND_ROLE"(연간총계+역할균형) | "STRICT_ROLE"(정·부 각각 균등)
+	HonoraryParentOn     bool                `json:"honoraryParentOn"`          // 학부모 명예감독 선택적(On/Off) 투입
+	SubjectTeacherPolicy SubjectHandlingMode `json:"subjectTeacherPolicy"`      // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
+	CountsCommitted      bool                `json:"countsCommitted,omitempty"` // 이번 시험 감독 횟수가 연간 누적에 확정 반영되었는지 여부 (이중 누적 방지)
 }
 
 // ExamSlot은 지필고사 교시별 고사장/복도감독 배정 항목입니다.

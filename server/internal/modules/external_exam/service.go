@@ -3,7 +3,6 @@ package external_exam
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -29,8 +28,19 @@ func (s *Service) ListNotices() ([]protocol.ExternalExamNotice, error) {
 	return database.LoadCollection[protocol.ExternalExamNotice](s.store, "external_exams")
 }
 
-// CreateNotice는 신규 대외 시험 공고를 등록합니다.
+// CreateNotice는 신규 대외 시험 공고를 검증 후 등록합니다.
 func (s *Service) CreateNotice(notice protocol.ExternalExamNotice) (protocol.ExternalExamNotice, error) {
+	notice.Title = strings.TrimSpace(notice.Title)
+	notice.ExamDate = strings.TrimSpace(notice.ExamDate)
+	if notice.Title == "" {
+		return notice, fmt.Errorf("외부 시험 공고 제목을 입력해 주세요")
+	}
+	if _, err := time.Parse("2006-01-02", notice.ExamDate); err != nil {
+		return notice, fmt.Errorf("시험 일자(YYYY-MM-DD) 형식이 올바르지 않습니다")
+	}
+	if notice.RequiredCount <= 0 {
+		notice.RequiredCount = 1
+	}
 	if notice.ID == "" {
 		notice.ID = fmt.Sprintf("ext-%d", time.Now().UnixNano())
 	}
@@ -40,44 +50,104 @@ func (s *Service) CreateNotice(notice protocol.ExternalExamNotice) (protocol.Ext
 	if err := s.store.SaveRecord("external_exams", notice.ID, notice); err != nil {
 		return notice, err
 	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventExternalExamUpdated,
+			Title:   fmt.Sprintf("[%s] 외부 시험감독 공고 등록", notice.Title),
+			Message: fmt.Sprintf("시험일: %s · 차출 인원: %d명", notice.ExamDate, notice.RequiredCount),
+			Payload: notice,
+		})
+	}
 	return notice, nil
 }
 
-// PresetOrder는 학교별 차출 프리셋 이름에 따른 기본 우선순위 조건 배열을 반환합니다.
-func PresetOrder(presetMode string) []protocol.ExternalExamCriteria {
-	switch presetMode {
-	case "PRESET_COOLDOWN": // 방식 B: 순번/쿨타임형 (미파견/오래된 순 우선)
-		return []protocol.ExternalExamCriteria{
-			protocol.CriteriaVolunteer,
-			protocol.CriteriaOldestDispatch,
-			protocol.CriteriaLateTransfer,
-			protocol.CriteriaLowCount,
-		}
-	case "PRESET_RECENT_TRANSFER": // 방식 C: 최근 전입자 우선형
-		return []protocol.ExternalExamCriteria{
-			protocol.CriteriaVolunteer,
-			protocol.CriteriaLateTransfer,
-			protocol.CriteriaOldestDispatch,
-			protocol.CriteriaNonHomeroom,
-		}
-	default: // 방식 A: 혼합형(권장)
-		return []protocol.ExternalExamCriteria{
-			protocol.CriteriaVolunteer,
-			protocol.CriteriaLowCount,
-			protocol.CriteriaLateTransfer,
-			protocol.CriteriaOldestDispatch,
-		}
+// UpdateNotice는 기존 외부 시험 공고의 기본 정보 및 차출 기준을 수정합니다.
+func (s *Service) UpdateNotice(notice protocol.ExternalExamNotice) (*protocol.ExternalExamNotice, error) {
+	if strings.TrimSpace(notice.ID) == "" {
+		return nil, fmt.Errorf("수정할 공고 ID가 필요합니다")
 	}
+	existing, err := database.LoadRecord[protocol.ExternalExamNotice](s.store, "external_exams", notice.ID)
+	if err != nil || existing == nil {
+		return nil, fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", notice.ID)
+	}
+	if strings.TrimSpace(notice.Title) != "" {
+		existing.Title = strings.TrimSpace(notice.Title)
+	}
+	if strings.TrimSpace(notice.ExamCategory) != "" {
+		existing.ExamCategory = strings.TrimSpace(notice.ExamCategory)
+	}
+	if strings.TrimSpace(notice.ExamDate) != "" {
+		if _, pErr := time.Parse("2006-01-02", strings.TrimSpace(notice.ExamDate)); pErr != nil {
+			return nil, fmt.Errorf("시험 일자(YYYY-MM-DD) 형식이 올바르지 않습니다")
+		}
+		existing.ExamDate = strings.TrimSpace(notice.ExamDate)
+	}
+	if strings.TrimSpace(notice.Location) != "" {
+		existing.Location = strings.TrimSpace(notice.Location)
+	}
+	if notice.RequiredCount > 0 {
+		existing.RequiredCount = notice.RequiredCount
+	}
+	if notice.PresetMode != "" {
+		existing.PresetMode = notice.PresetMode
+	}
+	if len(notice.PriorityOrder) > 0 {
+		existing.PriorityOrder = notice.PriorityOrder
+	}
+	existing.ExcludeExempt = notice.ExcludeExempt
+	if err := s.store.SaveRecord("external_exams", existing.ID, *existing); err != nil {
+		return nil, err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventExternalExamUpdated,
+			Title:   fmt.Sprintf("[%s] 외부 시험 공고 수정", existing.Title),
+			Message: fmt.Sprintf("시험일: %s · 차출 인원: %d명", existing.ExamDate, existing.RequiredCount),
+			Payload: *existing,
+		})
+	}
+	return existing, nil
+}
+
+// DeleteNotice는 외부 시험 공고를 삭제하고 시간표 대기열의 미승인 출장 이관을 정리합니다.
+func (s *Service) DeleteNotice(noticeID, actorName string) error {
+	if strings.TrimSpace(noticeID) == "" {
+		return fmt.Errorf("삭제할 공고 ID가 필요합니다")
+	}
+	existing, err := database.LoadRecord[protocol.ExternalExamNotice](s.store, "external_exams", noticeID)
+	if err != nil || existing == nil {
+		return fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", noticeID)
+	}
+	if err := s.store.DeleteRecord("external_exams", noticeID); err != nil {
+		return err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:      protocol.EventExternalExamUpdated,
+			Title:     fmt.Sprintf("[%s] 외부 시험 공고 삭제", existing.Title),
+			Message:   "외부 시험 공고와 미승인 결보강 대기 항목이 정리되었습니다.",
+			ActorName: actorName,
+			Payload:   map[string]string{"deletedId": noticeID},
+		})
+	}
+	return nil
 }
 
 // ToggleVolunteer는 교사의 자발적 외부감독 지원 또는 지원 취소를 처리합니다.
 func (s *Service) ToggleVolunteer(noticeID, teacherID string) (*protocol.ExternalExamNotice, error) {
+	teacher, tErr := database.LoadRecord[protocol.Teacher](s.store, "teachers", teacherID)
+	if tErr == nil && teacher != nil && (protocol.IsSystemAdminAccount(*teacher) || teacher.IsParentHonorary) {
+		return nil, fmt.Errorf("시스템 관리자 및 명예감독 계정은 외부 시험감독에 지원할 수 없습니다")
+	}
 	notices, err := s.ListNotices()
 	if err != nil {
 		return nil, err
 	}
 	for i := range notices {
 		if notices[i].ID == noticeID {
+			if notices[i].IsConfirmed {
+				return nil, fmt.Errorf("이미 파견 명단이 확정된 공고는 지원 상태를 변경할 수 없습니다")
+			}
 			if slices.Contains(notices[i].VolunteerIDs, teacherID) {
 				filtered := make([]string, 0, len(notices[i].VolunteerIDs))
 				for _, id := range notices[i].VolunteerIDs {
@@ -91,6 +161,14 @@ func (s *Service) ToggleVolunteer(noticeID, teacherID string) (*protocol.Externa
 			}
 			if err := s.store.SaveRecord("external_exams", notices[i].ID, notices[i]); err != nil {
 				return nil, err
+			}
+			if s.bus != nil {
+				s.bus.Publish(protocol.DomainEvent{
+					Type:    protocol.EventExternalExamUpdated,
+					Title:   fmt.Sprintf("[%s] 자발적 지원 현황 변경", notices[i].Title),
+					Message: fmt.Sprintf("현재 지원자 %d명", len(notices[i].VolunteerIDs)),
+					Payload: notices[i],
+				})
 			}
 			return &notices[i], nil
 		}
@@ -122,208 +200,121 @@ func (s *Service) UpdateRules(noticeID, presetMode string, priorityOrder []proto
 	return nil, fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", noticeID)
 }
 
-// CalculateCandidates는 다단계 차출 우선순위 조합기를 통해 모든 교사의 순번과 투명한 산정 근거 배지를 계산합니다.
-func (s *Service) CalculateCandidates(noticeID string) ([]protocol.ExternalExamCandidate, *protocol.ExternalExamNotice, error) {
-	notices, err := s.ListNotices()
-	if err != nil {
-		return nil, nil, err
-	}
-	var notice *protocol.ExternalExamNotice
-	for i := range notices {
-		if notices[i].ID == noticeID {
-			notice = &notices[i]
-			break
-		}
-	}
-	if notice == nil {
-		return nil, nil, fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", noticeID)
-	}
-
-	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	order := notice.PriorityOrder
-	if len(order) == 0 {
-		order = PresetOrder(notice.PresetMode)
-	}
-	now := time.Now()
-	var candidates []protocol.ExternalExamCandidate
-
-	for _, t := range teachers {
-		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) {
-			continue // 학부모 명예감독 및 시스템 기본 최고관리자(admin)는 외부 파견 대상에서 제외
-		}
-		isVol := slices.Contains(notice.VolunteerIDs, t.ID)
-		isExempt := len(t.ExemptReasons) > 0
-		isSel := slices.Contains(notice.ConfirmedIDs, t.ID)
-		days := daysSince(t.LastExternalDispatch, now)
-
-		candidates = append(candidates, protocol.ExternalExamCandidate{
-			Teacher:       t,
-			IsVolunteer:   isVol,
-			IsExempt:      isExempt,
-			IsSelected:    isSel,
-			DaysSinceLast: days,
-		})
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		a, b := candidates[i], candidates[j]
-		// 면제 대상자 제외 옵션이 켜져 있으면 면제자는 무조건 후순위(또는 비활성)로 이동
-		if notice.ExcludeExempt && a.IsExempt != b.IsExempt {
-			return !a.IsExempt
-		}
-		// 설정된 우선순위 조건 배열 순차 비교
-		for _, crit := range order {
-			if cmp := compareByCriteria(a, b, crit); cmp != 0 {
-				return cmp < 0
-			}
-		}
-		return a.Teacher.ID < b.Teacher.ID
-	})
-
-	draftSeq := 1
-	for i := range candidates {
-		candidates[i].Rank = i + 1
-		candidates[i].ReasonBadge = buildReasonBadge(candidates[i], draftSeq)
-		if !candidates[i].IsVolunteer && !candidates[i].IsExempt {
-			draftSeq++
-		}
-	}
-	return candidates, notice, nil
-}
-
-// ConfirmDispatch는 외부 시험감독 담당교사가 [최종 선택(파견 명단 확정)]을 실행하여
-// 확정 명단을 저장하고 교사 누적 횟수/최근 파견일을 갱신하며 시간표 결보강 대기로 자동 이관합니다.
+// ConfirmDispatch는 외부 시험감독 담당교사가 [최종 선택(파견 명단 확정)]을 실행할 때
+// 이전 확정 명단과 Diff를 계산해 누적 횟수/최근 파견일을 정확히 보정하고, 평일 시험일 때만 시간표 이관을 연동합니다.
 func (s *Service) ConfirmDispatch(noticeID string, selectedIDs []string, actorName string) (*protocol.ExternalExamNotice, error) {
-	notices, err := s.ListNotices()
-	if err != nil {
-		return nil, err
+	seen := make(map[string]bool, len(selectedIDs))
+	deduped := make([]string, 0, len(selectedIDs))
+	for _, rawID := range selectedIDs {
+		id := strings.TrimSpace(rawID)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			deduped = append(deduped, id)
+		}
 	}
+
 	var notice *protocol.ExternalExamNotice
-	for i := range notices {
-		if notices[i].ID == noticeID {
-			notice = &notices[i]
-			break
+	isWeekday := false
+	err := s.store.WithTx(func(tx *database.TxStore) error {
+		loaded, lErr := database.LoadRecordTx[protocol.ExternalExamNotice](tx, "external_exams", noticeID)
+		if lErr != nil || loaded == nil {
+			return fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", noticeID)
 		}
-	}
-	if notice == nil {
-		return nil, fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", noticeID)
-	}
-
-	notice.ConfirmedIDs = selectedIDs
-	notice.IsConfirmed = true
-	notice.LinkedToTimetable = true
-
-	// 확정된 교사의 누적 파견 횟수 및 마지막 파견일 갱신
-	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
-	for i := range teachers {
-		if slices.Contains(selectedIDs, teachers[i].ID) {
-			teachers[i].ExternalExamCount++
-			if notice.ExamDate > teachers[i].LastExternalDispatch {
-				teachers[i].LastExternalDispatch = notice.ExamDate
+		allNotices, _ := database.LoadCollectionTx[protocol.ExternalExamNotice](tx, "external_exams")
+		txTeachers, tErr := database.LoadCollectionTx[protocol.Teacher](tx, "teachers")
+		if tErr != nil {
+			return tErr
+		}
+		tMap := make(map[string]protocol.Teacher, len(txTeachers))
+		for _, t := range txTeachers {
+			tMap[t.ID] = t
+		}
+		for _, sid := range deduped {
+			t, ok := tMap[sid]
+			if !ok {
+				return fmt.Errorf("선택한 교사(%s)를 찾을 수 없습니다", sid)
 			}
-			_ = s.store.SaveRecord("teachers", teachers[i].ID, teachers[i])
+			if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) {
+				return fmt.Errorf("%s 계정은 외부 시험감독 파견 대상이 아닙니다", t.Name)
+			}
 		}
-	}
 
-	if err := s.store.SaveRecord("external_exams", notice.ID, *notice); err != nil {
+		prevSet := make(map[string]bool)
+		if loaded.IsConfirmed {
+			for _, id := range loaded.ConfirmedIDs {
+				prevSet[id] = true
+			}
+		}
+		nextSet := make(map[string]bool, len(deduped))
+		for _, id := range deduped {
+			nextSet[id] = true
+		}
+
+		if parsedDate, pErr := time.Parse("2006-01-02", loaded.ExamDate); pErr == nil {
+			wd := int(parsedDate.Weekday())
+			isWeekday = wd >= 1 && wd <= 5
+		}
+
+		for i := range txTeachers {
+			tid := txTeachers[i].ID
+			wasSel := prevSet[tid]
+			nowSel := nextSet[tid]
+			if !wasSel && nowSel {
+				txTeachers[i].ExternalExamCount++
+				if loaded.ExamDate > txTeachers[i].LastExternalDispatch {
+					txTeachers[i].LastExternalDispatch = loaded.ExamDate
+				}
+				if sErr := tx.SaveRecord("teachers", tid, txTeachers[i]); sErr != nil {
+					return sErr
+				}
+			} else if wasSel && !nowSel {
+				if txTeachers[i].ExternalExamCount > 0 {
+					txTeachers[i].ExternalExamCount--
+				}
+				if txTeachers[i].LastExternalDispatch == loaded.ExamDate {
+					maxDate := ""
+					for _, other := range allNotices {
+						if other.ID != loaded.ID && other.IsConfirmed && slices.Contains(other.ConfirmedIDs, tid) {
+							if other.ExamDate > maxDate {
+								maxDate = other.ExamDate
+							}
+						}
+					}
+					txTeachers[i].LastExternalDispatch = maxDate
+				}
+				if sErr := tx.SaveRecord("teachers", tid, txTeachers[i]); sErr != nil {
+					return sErr
+				}
+			}
+		}
+
+		loaded.ConfirmedIDs = deduped
+		loaded.IsConfirmed = true
+		loaded.LinkedToTimetable = isWeekday
+		if sErr := tx.SaveRecord("external_exams", loaded.ID, *loaded); sErr != nil {
+			return sErr
+		}
+		notice = loaded
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
 	if s.bus != nil {
+		msg := fmt.Sprintf("파견 명단 %d명 확정이 완료되었습니다.", len(deduped))
+		if isWeekday {
+			msg = fmt.Sprintf("파견 교사의 %s 평일 수업이 시간표 결보강 대기열과 동기화되었습니다.", notice.ExamDate)
+		}
 		s.bus.Publish(protocol.DomainEvent{
 			Type:      protocol.EventExternalExamConfirmed,
-			Title:     fmt.Sprintf("[%s] 외부 시험감독 파견 명단 확정 (%d명)", notice.Title, len(selectedIDs)),
-			Message:   fmt.Sprintf("파견 교사의 %s 평일 수업은 시간표 담당교사 결보강 대기열로 자동 이관되었습니다.", notice.ExamDate),
+			Title:     fmt.Sprintf("[%s] 외부 시험감독 파견 명단 확정 (%d명)", notice.Title, len(deduped)),
+			Message:   msg,
 			Urgent:    true,
-			TargetIDs: selectedIDs,
+			TargetIDs: deduped,
 			ActorName: actorName,
 			Payload:   *notice,
 		})
 	}
 	return notice, nil
-}
-
-func compareByCriteria(a, b protocol.ExternalExamCandidate, crit protocol.ExternalExamCriteria) int {
-	switch crit {
-	case protocol.CriteriaVolunteer:
-		if a.IsVolunteer != b.IsVolunteer {
-			if a.IsVolunteer {
-				return -1
-			}
-			return 1
-		}
-	case protocol.CriteriaLowCount:
-		if a.Teacher.ExternalExamCount != b.Teacher.ExternalExamCount {
-			if a.Teacher.ExternalExamCount < b.Teacher.ExternalExamCount {
-				return -1
-			}
-			return 1
-		}
-	case protocol.CriteriaLateTransfer:
-		// 전입일이 더 늦을수록(문자열 날짜가 클수록) 우선
-		if a.Teacher.TransferDate != b.Teacher.TransferDate {
-			if a.Teacher.TransferDate > b.Teacher.TransferDate {
-				return -1
-			}
-			return 1
-		}
-	case protocol.CriteriaOldestDispatch:
-		// 경과 일수가 클수록(미파견 99999 포함) 우선
-		if a.DaysSinceLast != b.DaysSinceLast {
-			if a.DaysSinceLast > b.DaysSinceLast {
-				return -1
-			}
-			return 1
-		}
-	case protocol.CriteriaNonHomeroom:
-		aNon := a.Teacher.HomeroomClass == ""
-		bNon := b.Teacher.HomeroomClass == ""
-		if aNon != bNon {
-			if aNon {
-				return -1
-			}
-			return 1
-		}
-	case protocol.CriteriaNonDeptHead:
-		if a.Teacher.IsDepartmentHead != b.Teacher.IsDepartmentHead {
-			if !a.Teacher.IsDepartmentHead {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
-}
-
-func daysSince(dateStr string, now time.Time) int {
-	if strings.TrimSpace(dateStr) == "" {
-		return 99999 // 미경험자(미파견) 최우선
-	}
-	parsed, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		return 99999
-	}
-	days := int(now.Sub(parsed).Hours() / 24)
-	if days < 0 {
-		return 0
-	}
-	return days
-}
-
-func buildReasonBadge(c protocol.ExternalExamCandidate, draftSeq int) string {
-	if c.IsExempt {
-		return fmt.Sprintf("[면제 대상: %s]", strings.Join(c.Teacher.ExemptReasons, ", "))
-	}
-	if c.IsVolunteer {
-		return fmt.Sprintf("[1순위: 자발적 지원 · 누적 %d회]", c.Teacher.ExternalExamCount)
-	}
-	lastTxt := "미파견"
-	if c.Teacher.LastExternalDispatch != "" {
-		lastTxt = fmt.Sprintf("최근 %s (%d일 경과)", c.Teacher.LastExternalDispatch, c.DaysSinceLast)
-	}
-	return fmt.Sprintf("[차출후보 %d번: %s 전입 · 누적 %d회 · %s]", draftSeq, c.Teacher.TransferDate, c.Teacher.ExternalExamCount, lastTxt)
 }

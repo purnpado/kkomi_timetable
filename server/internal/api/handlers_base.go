@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/internal_exam"
@@ -72,15 +73,21 @@ func (a *ServerApp) handleAutoGenerateBaseTimetable(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var (
-		created []protocol.TimetableCell
-		err     error
-	)
 	if body.UseCurriculum {
-		created, err = a.Timetable.AutoGenerateFromCurriculum(body.ClearExisting)
-	} else {
-		created, err = a.Timetable.AutoGenerateBaseTimetable(body.Grades, body.ClassesPerGrade, body.ClearExisting)
+		res, gErr := a.Timetable.AutoGenerateFromCurriculumDetailed(body.ClearExisting)
+		if gErr != nil {
+			writeError(w, http.StatusBadRequest, gErr.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"createdCount":  len(res.Cells),
+			"cells":         res.Cells,
+			"unplacedCount": res.UnplacedCount,
+			"warnings":      res.Warnings,
+		})
+		return
 	}
+	created, err := a.Timetable.AutoGenerateBaseTimetable(body.Grades, body.ClassesPerGrade, body.ClearExisting)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -123,7 +130,16 @@ func (a *ServerApp) handleBellSchedule(w http.ResponseWriter, r *http.Request) {
 		if _, ok := a.requireAuth(w, r); !ok {
 			return
 		}
-		bells, err := a.Calendar.ListBellSchedule()
+		dateStr := strings.TrimSpace(r.URL.Query().Get("date"))
+		var (
+			bells []protocol.BellPeriod
+			err   error
+		)
+		if dateStr != "" {
+			bells, err = a.Calendar.EffectiveBellSchedule(dateStr)
+		} else {
+			bells, err = a.Calendar.ListBellSchedule()
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

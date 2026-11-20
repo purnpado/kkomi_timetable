@@ -63,10 +63,11 @@ func SeedIfEmpty(s *Store) error {
 	}
 
 	today := time.Now().Format("2006-01-02")
+	upcomingExamDate := time.Now().AddDate(0, 0, 2).Format("2006-01-02")
 	examCfg := protocol.ExamConfig{
 		ID:                   "exam-2026-2-final",
 		Title:                "2026학년도 2학기 기말고사",
-		ExamDate:             today,
+		ExamDate:             upcomingExamDate,
 		UnsealTime:           "08:20",
 		IsSealed:             true,
 		InstantRevealMode:    false,

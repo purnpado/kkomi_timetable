@@ -3,120 +3,34 @@ package timetable
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/database"
 )
 
-type allocUnit struct {
-	Load      protocol.TeachingLoad
-	ClassName string
-	Hours     int
-}
-
-type schedState struct {
-	cfg         protocol.SchoolConfig
-	tMap        map[string]protocol.Teacher
-	slotBusy    map[string]bool
-	teacherBusy map[string]bool
-	roomBusy    map[string]bool
-	dayHasSubj  map[string]int
-	streakMap   map[string]map[int]bool
-}
-
-func newSchedState(cfg protocol.SchoolConfig, tMap map[string]protocol.Teacher) *schedState {
-	return &schedState{
-		cfg:         cfg,
-		tMap:        tMap,
-		slotBusy:    make(map[string]bool),
-		teacherBusy: make(map[string]bool),
-		roomBusy:    make(map[string]bool),
-		dayHasSubj:  make(map[string]int),
-		streakMap:   make(map[string]map[int]bool),
-	}
-}
-
-func (st *schedState) mark(c protocol.TimetableCell, add bool) {
-	st.slotBusy[fmt.Sprintf("%s-%d-%d", c.ClassName, c.DayOfWeek, c.Period)] = add
-	st.teacherBusy[fmt.Sprintf("%s-%d-%d", c.TeacherID, c.DayOfWeek, c.Period)] = add
-	if c.CoTeacherID != "" {
-		st.teacherBusy[fmt.Sprintf("%s-%d-%d", c.CoTeacherID, c.DayOfWeek, c.Period)] = add
-	}
-	if c.Room != "" && c.Room != c.ClassName+"교실" {
-		st.roomBusy[fmt.Sprintf("%s-%d-%d", c.Room, c.DayOfWeek, c.Period)] = add
-	}
-	dk := fmt.Sprintf("%s-%d-%s", c.ClassName, c.DayOfWeek, c.Subject)
-	if add {
-		st.dayHasSubj[dk]++
-	} else if st.dayHasSubj[dk] > 0 {
-		st.dayHasSubj[dk]--
-	}
-	if st.streakMap[c.TeacherID] == nil {
-		st.streakMap[c.TeacherID] = make(map[int]bool)
-	}
-	st.streakMap[c.TeacherID][c.DayOfWeek*10+c.Period] = add
-}
-
-func (st *schedState) maxPeriod(grade, day int) int {
-	if mp := st.cfg.DailyPeriodLimits[grade][day]; mp > 0 {
-		return mp
-	}
-	return 6
-}
-
-func (st *schedState) canPlace(u allocUnit, day, startP int, allowSameDayDup bool) bool {
-	teacher := st.tMap[u.Load.TeacherID]
-	if len(teacher.ItinerantDays) > 0 && !slices.Contains(teacher.ItinerantDays, day) {
-		return false
-	}
-	grade := parseGrade(u.ClassName, u.Load.Grade)
-	if startP+u.Hours-1 > st.maxPeriod(grade, day) {
-		return false
-	}
-	roomName := effectiveRoom(u.Load, teacher, u.ClassName)
-	if !allowSameDayDup && st.dayHasSubj[fmt.Sprintf("%s-%d-%s", u.ClassName, day, u.Load.Subject)] > 0 {
-		return false
-	}
-	for offset := 0; offset < u.Hours; offset++ {
-		p := startP + offset
-		if st.slotBusy[fmt.Sprintf("%s-%d-%d", u.ClassName, day, p)] {
-			return false
-		}
-		if st.teacherBusy[fmt.Sprintf("%s-%d-%d", u.Load.TeacherID, day, p)] {
-			return false
-		}
-		if u.Load.CoTeacherID != "" && st.teacherBusy[fmt.Sprintf("%s-%d-%d", u.Load.CoTeacherID, day, p)] {
-			return false
-		}
-		if roomName != u.ClassName+"교실" && st.roomBusy[fmt.Sprintf("%s-%d-%d", roomName, day, p)] {
-			return false
-		}
-		if wouldExceedThree(st.streakMap[u.Load.TeacherID], day, p) {
-			return false
-		}
-	}
-	return true
-}
-
-// AutoGenerateFromCurriculum은 등록된 교사별 시수표·요일별 기준시수·교과교실 제약을 모두 반영하고,
-// 미배정 발생 시 1단계 스왑 복구 패스까지 수행해 충돌 없는 정규 시간표를 자동 편성합니다.
+// AutoGenerateFromCurriculum은 등록된 교사별 시수표·요일별 기준시수·교과교실 제약을 모두 반영해
+// 충돌 없는 정규 시간표를 자동 편성합니다.
 func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.TimetableCell, error) {
+	res, err := s.AutoGenerateFromCurriculumDetailed(clearExisting)
+	return res.Cells, err
+}
+
+// AutoGenerateFromCurriculumDetailed는 자동 편성 결과와 함께 미배정 건수·상세 경고를 반환합니다.
+func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGenerateResult, error) {
 	cfg, _ := s.GetSchoolConfig()
 	loads, err := s.ListTeachingLoads()
 	if err != nil {
-		return nil, err
+		return AutoGenerateResult{}, err
 	}
 	if len(loads) == 0 {
-		return nil, errors.New("등록된 교사별 시수표가 없습니다. 시수표 등록부에서 먼저 교과별 시수를 입력해 주세요")
+		return AutoGenerateResult{}, errors.New("등록된 교사별 시수표가 없습니다. 시수표 등록부에서 먼저 교과별 시수를 입력해 주세요")
 	}
 
 	teachersList, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
 	if err != nil {
-		return nil, err
+		return AutoGenerateResult{}, err
 	}
 	tMap := make(map[string]protocol.Teacher, len(teachersList))
 	for _, t := range teachersList {
@@ -125,18 +39,35 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 
 	existing, _ := s.ListCells()
 	st := newSchedState(cfg, tMap)
+	var deleteIDs []string
+	keptHours := make(map[string]int)
 	for _, c := range existing {
 		if clearExisting && !c.IsLocked {
-			_ = s.store.DeleteRecord("timetable_cells", c.ID)
+			deleteIDs = append(deleteIDs, c.ID)
 			continue
 		}
 		st.mark(c, true)
+		keptHours[fmt.Sprintf("%s|%s|%s", c.ClassName, c.Subject, c.TeacherID)]++
 	}
 
 	var units []allocUnit
 	for _, ld := range loads {
-		for cls, total := range ld.ClassHours {
-			rem := total
+		if t, ok := tMap[ld.TeacherID]; ok && (protocol.IsSystemAdminAccount(t) || t.IsParentHonorary) {
+			continue
+		}
+		clsKeys := make([]string, 0, len(ld.ClassHours))
+		for cls := range ld.ClassHours {
+			clsKeys = append(clsKeys, cls)
+		}
+		sort.Strings(clsKeys)
+		for _, cls := range clsKeys {
+			k := fmt.Sprintf("%s|%s|%s", cls, ld.Subject, ld.TeacherID)
+			rem := ld.ClassHours[cls] - keptHours[k]
+			if rem <= 0 {
+				keptHours[k] = -rem
+				continue
+			}
+			keptHours[k] = 0
 			if ld.BlockHours >= 2 {
 				for rem >= ld.BlockHours {
 					units = append(units, allocUnit{Load: ld, ClassName: cls, Hours: ld.BlockHours})
@@ -150,7 +81,6 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 		}
 	}
 
-	// 제약 강도 우선순위 정렬: 동시수업 -> 순회교사 -> 연속 블록 -> 교과교실 -> 일반 단시간
 	sort.SliceStable(units, func(i, j int) bool {
 		score := func(u allocUnit) int {
 			p := 0
@@ -171,11 +101,14 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 		if score(units[i]) != score(units[j]) {
 			return score(units[i]) > score(units[j])
 		}
-		return units[i].ClassName < units[j].ClassName
+		if units[i].ClassName != units[j].ClassName {
+			return units[i].ClassName < units[j].ClassName
+		}
+		return units[i].Load.ID < units[j].Load.ID
 	})
 
 	var created []protocol.TimetableCell
-	placeUnitAt := func(u allocUnit, day, startP int) error {
+	placeUnitInMem := func(u allocUnit, day, startP int) {
 		roomName := effectiveRoom(u.Load, tMap[u.Load.TeacherID], u.ClassName)
 		blockID := ""
 		if u.Hours >= 2 {
@@ -197,55 +130,91 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 				ElectiveGroup: u.Load.SimultaneousGroup,
 				BlockGroupID:  blockID,
 			}
-			if err := s.store.SaveRecord("timetable_cells", cell.ID, cell); err != nil {
-				return err
-			}
 			st.mark(cell, true)
 			created = append(created, cell)
 		}
-		return nil
 	}
 
-	// 1. 동시수업 그룹 배치
-	simGroups := make(map[string][]allocUnit)
+	// 1. 동시수업 그룹: 멤버별 회차(1시간차, 2시간차...) 단위로 묶어 동일 교시 동시 배치
+	simQueues := make(map[string]map[string][]allocUnit)
 	var simOrder []string
 	var normalUnits []allocUnit
 	for _, u := range units {
 		if g := strings.TrimSpace(u.Load.SimultaneousGroup); g != "" {
-			if _, ok := simGroups[g]; !ok {
+			if _, ok := simQueues[g]; !ok {
 				simOrder = append(simOrder, g)
+				simQueues[g] = make(map[string][]allocUnit)
 			}
-			simGroups[g] = append(simGroups[g], u)
+			mk := u.Load.ID + "|" + u.ClassName
+			simQueues[g][mk] = append(simQueues[g][mk], u)
 		} else {
 			normalUnits = append(normalUnits, u)
 		}
 	}
+
+	var warnings []string
+	var unplaced []allocUnit
+	simDayOffset := 0
 	for _, gKey := range simOrder {
-		grp := simGroups[gKey]
-		placedGrp := false
-		for day := 1; day <= 5 && !placedGrp; day++ {
-			for p := 1; p <= 6 && !placedGrp; p++ {
-				allOK := true
-				for _, u := range grp {
-					if !st.canPlace(u, day, p, true) {
-						allOK = false
-						break
-					}
+		memberMap := simQueues[gKey]
+		memberKeys := make([]string, 0, len(memberMap))
+		maxRounds := 0
+		for mk, q := range memberMap {
+			memberKeys = append(memberKeys, mk)
+			if len(q) > maxRounds {
+				maxRounds = len(q)
+			}
+		}
+		sort.Strings(memberKeys)
+
+		for round := 0; round < maxRounds; round++ {
+			var roundUnits []allocUnit
+			for _, mk := range memberKeys {
+				if round < len(memberMap[mk]) {
+					roundUnits = append(roundUnits, memberMap[mk][round])
 				}
-				if allOK {
-					for _, u := range grp {
-						if err := placeUnitAt(u, day, p); err != nil {
-							return created, err
+			}
+			if hasIntraGroupConflict(roundUnits, tMap) {
+				warnings = append(warnings, fmt.Sprintf("동시수업 그룹 '%s' %d회차 내부 교사/학급/교실 중복으로 일반 배치 전환", gKey, round+1))
+				normalUnits = append(normalUnits, roundUnits...)
+				continue
+			}
+			placedGrp := false
+			for _, allowDup := range []bool{false, true} {
+				if placedGrp {
+					break
+				}
+				for step := 0; step < 5 && !placedGrp; step++ {
+					day := ((simDayOffset + step) % 5) + 1
+					for p := 1; p <= 7 && !placedGrp; p++ {
+						allOK := true
+						for _, u := range roundUnits {
+							if !st.canPlace(u, day, p, allowDup) {
+								allOK = false
+								break
+							}
+						}
+						if allOK {
+							for _, u := range roundUnits {
+								placeUnitInMem(u, day, p)
+							}
+							placedGrp = true
+							simDayOffset = (simDayOffset + 1) % 5
 						}
 					}
-					placedGrp = true
+				}
+			}
+			if !placedGrp {
+				for _, u := range roundUnits {
+					for k := 0; k < u.Hours; k++ {
+						unplaced = append(unplaced, allocUnit{Load: u.Load, ClassName: u.ClassName, Hours: 1})
+					}
 				}
 			}
 		}
 	}
 
 	// 2. 일반·연속·전용실 단위 배치
-	var unplaced []allocUnit
 	dayOffset := 0
 	for _, u := range normalUnits {
 		placed := false
@@ -260,9 +229,7 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 					if !st.canPlace(u, day, p, allowDup) {
 						continue
 					}
-					if err := placeUnitAt(u, day, p); err != nil {
-						return created, err
-					}
+					placeUnitInMem(u, day, p)
 					placed = true
 					dayOffset = (dayOffset + 1) % 5
 					break
@@ -276,7 +243,8 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 		}
 	}
 
-	// 3. 미배정 시수 1단계 스왑 복구 패스 (빈 교시 확보를 위한 동일 학급 내 재배치)
+	// 3. 미배정 시수 1단계 스왑 복구 패스
+	var finalUnplaced []allocUnit
 	for _, u := range unplaced {
 		grade := parseGrade(u.ClassName, u.Load.Grade)
 		repaired := false
@@ -299,18 +267,13 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 						ClassName: other.ClassName, Hours: 1,
 					}
 					if st.canPlace(otherUnit, ed, ep, true) && st.canPlace(u, other.DayOfWeek, other.Period, true) {
-						oldID := other.ID
-						_ = s.store.DeleteRecord("timetable_cells", oldID)
 						targetD, targetP := other.DayOfWeek, other.Period
 						other.DayOfWeek = ed
 						other.Period = ep
 						other.ID = fmt.Sprintf("c-%d-%d-%s", ed, ep, other.ClassName)
-						_ = s.store.SaveRecord("timetable_cells", other.ID, other)
 						created[idx] = other
 						st.mark(other, true)
-						if err := placeUnitAt(u, targetD, targetP); err != nil {
-							return created, err
-						}
+						placeUnitInMem(u, targetD, targetP)
 						repaired = true
 						break
 					}
@@ -318,27 +281,39 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 				}
 			}
 		}
+		if !repaired {
+			finalUnplaced = append(finalUnplaced, u)
+			warnings = append(warnings, fmt.Sprintf("[미배정] %s반 %s(%s) 1시간", u.ClassName, u.Subject(), tMap[u.Load.TeacherID].Name))
+		}
 	}
 
-	return created, nil
-}
+	if err := s.store.WithTx(func(tx *database.TxStore) error {
+		for _, id := range deleteIDs {
+			if dErr := tx.DeleteRecord("timetable_cells", id); dErr != nil {
+				return dErr
+			}
+		}
+		for _, c := range created {
+			if sErr := tx.SaveRecord("timetable_cells", c.ID, c); sErr != nil {
+				return sErr
+			}
+		}
+		return nil
+	}); err != nil {
+		return AutoGenerateResult{}, err
+	}
 
-func effectiveRoom(ld protocol.TeachingLoad, teacher protocol.Teacher, className string) string {
-	if strings.TrimSpace(ld.DedicatedRoom) != "" {
-		return strings.TrimSpace(ld.DedicatedRoom)
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventTimetableCellsUpdated,
+			Title:   "시수표 기반 정규 시간표 자동 편성 완료",
+			Message: fmt.Sprintf("총 %d교시 배정 (미배정 %d건)", len(created), len(finalUnplaced)),
+			Payload: map[string]int{"createdCount": len(created), "unplacedCount": len(finalUnplaced)},
+		})
 	}
-	if strings.TrimSpace(teacher.DefaultRoom) != "" {
-		return strings.TrimSpace(teacher.DefaultRoom)
-	}
-	return className + "교실"
-}
-
-func parseGrade(className string, fallback int) int {
-	if g, err := strconv.Atoi(strings.Split(className, "-")[0]); err == nil && g > 0 {
-		return g
-	}
-	if fallback > 0 {
-		return fallback
-	}
-	return 1
+	return AutoGenerateResult{
+		Cells:         created,
+		UnplacedCount: len(finalUnplaced),
+		Warnings:      warnings,
+	}, nil
 }

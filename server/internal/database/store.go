@@ -253,6 +253,45 @@ func (t *TxStore) ClearCollections(collections ...string) error {
 	return nil
 }
 
+// LoadRecordTx는 이미 획득한 트랜잭션(TxStore) 내부에서 단일 JSON 레코드를 조회합니다.
+// 주의: Store.WithTx 내부에서는 데드락 방지를 위해 반드시 이 함수를 사용해야 합니다.
+func LoadRecordTx[T any](tx *TxStore, collection, id string) (*T, error) {
+	var payload string
+	err := tx.tx.QueryRow(`SELECT payload FROM kv_records WHERE collection = ? AND id = ?`, collection, id).Scan(&payload)
+	if err != nil {
+		return nil, err
+	}
+	var item T
+	if jsonErr := json.Unmarshal([]byte(payload), &item); jsonErr != nil {
+		return nil, jsonErr
+	}
+	return &item, nil
+}
+
+// LoadCollectionTx는 이미 획득한 트랜잭션(TxStore) 내부에서 컬렉션 전체 레코드를 조회합니다.
+// 주의: Store.WithTx 내부에서는 데드락 방지를 위해 반드시 이 함수를 사용해야 합니다.
+func LoadCollectionTx[T any](tx *TxStore, collection string) ([]T, error) {
+	rows, err := tx.tx.Query(`SELECT payload FROM kv_records WHERE collection = ? ORDER BY id ASC`, collection)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []T
+	for rows.Next() {
+		var payload string
+		if scanErr := rows.Scan(&payload); scanErr != nil {
+			return nil, scanErr
+		}
+		var item T
+		if jsonErr := json.Unmarshal([]byte(payload), &item); jsonErr != nil {
+			return nil, jsonErr
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 // LoadRecord는 기본 키(collection, id)로 단일 JSON 레코드를 빠르게 조회합니다.
 func LoadRecord[T any](s *Store, collection, id string) (*T, error) {
 	s.mu.RLock()

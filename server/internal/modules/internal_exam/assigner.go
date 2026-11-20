@@ -47,6 +47,9 @@ func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
 		}
 		return true, "특수보직·학교 지정 교내 감독 제외"
 	}
+	if strings.EqualFold(strings.TrimSpace(t.InternalExamExemptReason), "제외해제") {
+		return false, ""
+	}
 	joined := strings.Join([]string{t.Position, t.Subject, t.InternalExamExemptReason}, " ")
 	for _, kw := range []string{"특수반", "특수학급", "특수교육", "특수"} {
 		if strings.Contains(joined, kw) {
@@ -57,7 +60,7 @@ func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
 }
 
 func isIsolatedExamRoom(roomLabel string) bool {
-	for _, kw := range []string{"별도고사실", "별도 고사실", "별독고사실", "별독 고사실", "독감", "감염병"} {
+	for _, kw := range []string{"별도고사실", "별도 고사실", "별독고사실", "별독 고사실", "특수학급고사실", "특수학급 고사실", "독감", "감염병"} {
 		if strings.Contains(roomLabel, kw) {
 			return true
 		}
@@ -118,9 +121,19 @@ func EffectiveBaseCounts(t protocol.Teacher) (mainCnt, subCnt, corrCnt, totalCnt
 	return 0, 0, 0, 0
 }
 
-// AssignSlots는 핵심 배제 규칙(담임 자기반 제외, 시험과목 고사장 제외, 특수반·보건실 제외)을 준수하면서
-// 1년 동안 전교원의 감독 시수가 균등(정감독 단독 및 정·부감독 동시 운영 모두 지원)하도록 배정표를 생성합니다.
+// AssignSlots는 핵심 배제 규칙(담임 자기반 제외, 시험과목 고사장 제외, 특수반·관리자 제외)을 준수하면서
+// 1년 동안 전교원의 감독 시수가 균등하도록 배정표를 생성합니다.
 func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []protocol.Teacher) []protocol.ExamSlot {
+	return AssignSlotsWithUnavailable(cfg, specs, teachers, nil)
+}
+
+// AssignSlotsWithUnavailable은 당일 부재 교사(순회 비출강·외부감독·행사출장)까지 제외하고 감독 배정표를 생성합니다.
+func AssignSlotsWithUnavailable(
+	cfg protocol.ExamConfig,
+	specs []ExamPeriodSpec,
+	teachers []protocol.Teacher,
+	unavailable map[string]string,
+) []protocol.ExamSlot {
 	var slots []protocol.ExamSlot
 	load := make(map[string]*roleLoad, len(teachers))
 	var regularTeachers, honoraryParents []protocol.Teacher
@@ -131,6 +144,9 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 			continue
 		}
 		if protocol.IsSystemAdminAccount(t) {
+			continue
+		}
+		if unavailable != nil && unavailable[t.ID] != "" {
 			continue
 		}
 		m, s, c, tot := EffectiveBaseCounts(t)
@@ -145,8 +161,14 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 		balanceMode = "TOTAL_AND_ROLE"
 	}
 
+	// 동일 날짜·교시에 동시 진행되는 다학년/다과목 시험끼리 교사 중복 배정 방지
+	usedPerPeriod := make(map[string]map[string]bool)
 	for _, spec := range specs {
-		usedInPeriod := make(map[string]bool)
+		periodKey := fmt.Sprintf("%s#%d", cfg.ExamDate, spec.Period)
+		if usedPerPeriod[periodKey] == nil {
+			usedPerPeriod[periodKey] = make(map[string]bool)
+		}
+		usedInPeriod := usedPerPeriod[periodKey]
 
 		// 1단계: 해당 교시 시험 과목 담당교사를 해당 학년 층 복도감독으로 최우선 배치
 		corridorAssigned := false
@@ -192,7 +214,7 @@ func AssignSlots(cfg protocol.ExamConfig, specs []ExamPeriodSpec, teachers []pro
 			}
 		}
 
-		// 3단계: 학부모 명예감독 또는 부감독(SUB) 배정 (단, 별도고사실은 1인 정감독만 배정)
+		// 3단계: 학부모 명예감독 또는 부감독(SUB) 배정 (단, 별도/특수학급고사실은 1인 정감독만 배정)
 		for _, room := range spec.ClassRooms {
 			if isIsolatedExamRoom(room) {
 				continue
@@ -232,7 +254,7 @@ func buildExamSlot(cfg protocol.ExamConfig, spec ExamPeriodSpec, role, roomName 
 	}
 	roomCode := strings.TrimSuffix(roomName, " 고사장")
 	return protocol.ExamSlot{
-		ID:     fmt.Sprintf("slot-%s-p%d-%s-%s", cfg.ID, spec.Period, roomCode, suffix),
+		ID:     fmt.Sprintf("slot-%s-p%d-g%d-%s-%s", cfg.ID, spec.Period, spec.Grade, roomCode, suffix),
 		ExamID: cfg.ID, ExamDate: cfg.ExamDate, Period: spec.Period, StartTime: spec.StartTime,
 		EndTime: spec.EndTime, DurationMinutes: spec.DurationMinutes, Grade: spec.Grade, Subject: spec.Subject,
 		SlotRole: role, RoomName: roomName, TeacherID: t.ID, TeacherName: t.Name, Note: note,

@@ -234,7 +234,7 @@ func TestFullAPIEndpointsE2E(t *testing.T) {
 
 	// 7. 클라이언트에서 마스터/시간표 담당 권한으로 기초 시간표 셀 저장·삭제·일괄 자동 편성
 	code, raw = doRecorderReq(t, h, http.MethodPost, "/api/timetable/cells", tokAdmin, protocol.TimetableCell{
-		DayOfWeek: 4, Period: 6, ClassName: "1-3", Grade: 1, Subject: "국어", TeacherID: "t06",
+		DayOfWeek: 4, Period: 7, ClassName: "1-3", Grade: 1, Subject: "국어", TeacherID: "t06",
 	})
 	if code != http.StatusOK {
 		t.Fatalf("기초 시간표 셀 저장 실패: status=%d, body=%s", code, string(raw))

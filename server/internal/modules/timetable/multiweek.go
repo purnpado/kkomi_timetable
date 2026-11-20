@@ -3,7 +3,6 @@ package timetable
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -96,7 +95,7 @@ func buildEffectiveWeekCells(
 		}
 		wd := int(parsed.Weekday())
 		for i := range out {
-			if out[i].DayOfWeek != wd || !slices.Contains(ev.TargetGrades, out[i].Grade) {
+			if out[i].DayOfWeek != wd || !matchesEventTarget(ev, out[i].Grade, out[i].ClassName) {
 				continue
 			}
 			if ev.StartPeriod == 0 || (out[i].Period >= ev.StartPeriod && out[i].Period <= ev.EndPeriod) {
@@ -106,11 +105,21 @@ func buildEffectiveWeekCells(
 		}
 	}
 
-	// 2. 확정된 일자·주차별 변경 요청(CROSS_WEEK_SWAP / DATE_ONLY 보강)을 시간순 오버레이
+	// 2. 확정된 일자·주차별 변경 요청(CROSS_WEEK_SWAP / DATE_ONLY 보강)을 확정 시각순 오버레이
 	ordered := make([]protocol.TimetableChangeRequest, len(reqs))
 	copy(ordered, reqs)
+	orderKey := func(r protocol.TimetableChangeRequest) string {
+		if r.CommittedAt != "" {
+			return r.CommittedAt
+		}
+		return r.CreatedAt
+	}
 	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].CreatedAt < ordered[j].CreatedAt
+		ki, kj := orderKey(ordered[i]), orderKey(ordered[j])
+		if ki != kj {
+			return ki < kj
+		}
+		return ordered[i].ID < ordered[j].ID
 	})
 
 	for _, rq := range ordered {
@@ -140,8 +149,14 @@ func buildEffectiveWeekCells(
 			if applyDate >= monStr && applyDate <= friStr {
 				if idx := findEffectiveSlot(out, applyDate, rq.SourceCell.ClassName, rq.SourceCell.Period); idx >= 0 {
 					if rq.PartnerID != "" {
-						out[idx].TeacherID = rq.PartnerID
-						out[idx].CoTeacherID = ""
+						if out[idx].CoTeacherID != "" && out[idx].CoTeacherID == rq.RequesterID && out[idx].TeacherID != rq.RequesterID {
+							out[idx].CoTeacherID = rq.PartnerID
+						} else {
+							out[idx].TeacherID = rq.PartnerID
+							if out[idx].CoTeacherID == rq.PartnerID {
+								out[idx].CoTeacherID = ""
+							}
+						}
 					}
 					if rq.TargetCell.Subject != "" {
 						out[idx].Subject = rq.TargetCell.Subject
@@ -249,7 +264,8 @@ func findCrossWeekForCell(
 		if sameWeek && cand.DayOfWeek == src.DayOfWeek && cand.Period == src.Period {
 			continue
 		}
-		if cand.TeacherID == src.TeacherID && !sameWeek && cand.DayOfWeek == src.DayOfWeek && cand.Period == src.Period {
+		// 다른 주차와 맞교환할 때 본인(주담당/코티칭)의 수업과는 교환할 수 없음
+		if !sameWeek && hasTeacherOverlap(src, cand) {
 			continue
 		}
 
@@ -264,10 +280,10 @@ func findCrossWeekForCell(
 		srcEvents := filterDateEvents(events, src.LessonDate)
 		tgtEvents := filterDateEvents(events, cand.LessonDate)
 
-		if reason1 := slotConflictReason(cand, src.DayOfWeek, src.Period, srcIgnore, srcWeekCells, tMap, srcEvents); reason1 != "" {
+		if reason1 := slotConflictReason(cand, src.DayOfWeek, src.Period, src.LessonDate, srcIgnore, srcWeekCells, tMap, srcEvents); reason1 != "" {
 			continue
 		}
-		if reason2 := slotConflictReason(src, cand.DayOfWeek, cand.Period, tgtIgnore, tgtWeekCells, tMap, tgtEvents); reason2 != "" {
+		if reason2 := slotConflictReason(src, cand.DayOfWeek, cand.Period, cand.LessonDate, tgtIgnore, tgtWeekCells, tMap, tgtEvents); reason2 != "" {
 			continue
 		}
 
@@ -295,6 +311,16 @@ func findCrossWeekForCell(
 		})
 	}
 	return cands
+}
+
+func hasTeacherOverlap(a, b protocol.TimetableCell) bool {
+	if a.TeacherID != "" && (a.TeacherID == b.TeacherID || a.TeacherID == b.CoTeacherID) {
+		return true
+	}
+	if a.CoTeacherID != "" && (a.CoTeacherID == b.TeacherID || a.CoTeacherID == b.CoTeacherID) {
+		return true
+	}
+	return false
 }
 
 func filterDateEvents(events []protocol.SchoolEvent, dateStr string) []protocol.SchoolEvent {

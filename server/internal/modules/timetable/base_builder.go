@@ -86,6 +86,14 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 	if err := s.store.SaveRecord("timetable_cells", cell.ID, cell); err != nil {
 		return cell, err
 	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventTimetableCellsUpdated,
+			Title:   "기초 시간표 셀 저장",
+			Message: fmt.Sprintf("%s반 %s %d교시 (%s) 저장", cell.ClassName, dayNames[cell.DayOfWeek], cell.Period, cell.Subject),
+			Payload: cell,
+		})
+	}
 	return cell, nil
 }
 
@@ -94,7 +102,18 @@ func (s *Service) DeleteCell(cellID string) error {
 	if strings.TrimSpace(cellID) == "" {
 		return errors.New("삭제할 셀 ID가 필요합니다")
 	}
-	return s.store.DeleteRecord("timetable_cells", cellID)
+	if err := s.store.DeleteRecord("timetable_cells", cellID); err != nil {
+		return err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventTimetableCellsUpdated,
+			Title:   "기초 시간표 셀 삭제",
+			Message: fmt.Sprintf("셀(%s)이 기초 시간표에서 삭제되었습니다", cellID),
+			Payload: map[string]string{"deletedId": cellID},
+		})
+	}
+	return nil
 }
 
 // AutoGenerateBaseTimetable은 학년별 학급 수에 맞춰 교사 중복, 순회교사 출강일,
@@ -116,7 +135,7 @@ func (s *Service) AutoGenerateBaseTimetable(grades []int, classesPerGrade int, c
 	}
 	var regular []protocol.Teacher
 	for _, t := range teachersList {
-		if !t.IsParentHonorary {
+		if !t.IsParentHonorary && !protocol.IsSystemAdminAccount(t) {
 			regular = append(regular, t)
 		}
 	}
@@ -125,9 +144,10 @@ func (s *Service) AutoGenerateBaseTimetable(grades []int, classesPerGrade int, c
 	}
 
 	existing, _ := s.ListCells()
+	var deleteIDs []string
 	if clearExisting {
 		for _, c := range existing {
-			_ = s.store.DeleteRecord("timetable_cells", c.ID)
+			deleteIDs = append(deleteIDs, c.ID)
 		}
 		existing = nil
 	}
@@ -200,9 +220,6 @@ func (s *Service) AutoGenerateBaseTimetable(grades []int, classesPerGrade int, c
 						TeacherID:   picked.ID,
 						Room:        className + "교실",
 					}
-					if err := s.store.SaveRecord("timetable_cells", cell.ID, cell); err != nil {
-						return created, err
-					}
 					created = append(created, cell)
 					occupiedSlot[slotKey] = true
 					teacherBusy[fmt.Sprintf("%s-%d-%d", picked.ID, day, period)] = true
@@ -215,10 +232,33 @@ func (s *Service) AutoGenerateBaseTimetable(grades []int, classesPerGrade int, c
 			}
 		}
 	}
+	if err := s.store.WithTx(func(tx *database.TxStore) error {
+		for _, id := range deleteIDs {
+			if dErr := tx.DeleteRecord("timetable_cells", id); dErr != nil {
+				return dErr
+			}
+		}
+		for _, c := range created {
+			if sErr := tx.SaveRecord("timetable_cells", c.ID, c); sErr != nil {
+				return sErr
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventTimetableCellsUpdated,
+			Title:   "기초 시간표 자동 편성 완료",
+			Message: fmt.Sprintf("총 %d개 수업 셀이 편성되었습니다", len(created)),
+			Payload: map[string]int{"createdCount": len(created)},
+		})
+	}
 	return created, nil
 }
 
-// ImportTimetableXLSX는 엑셀(.xlsx) 기초 시간표 파일을 읽어 학년·학급별 기초 시간표에 일괄 반영합니다.
+// ImportTimetableXLSX는 실학교 엑셀(.xlsx) 기초 시간표를 스마트 헤더 탐색·전수 검증 후 원자적으로 일괄 반영합니다.
 func (s *Service) ImportTimetableXLSX(r io.Reader) (int, error) {
 	f, err := excelize.OpenReader(r)
 	if err != nil {
@@ -230,44 +270,91 @@ func (s *Service) ImportTimetableXLSX(r io.Reader) (int, error) {
 	if sheet == "" {
 		return 0, errors.New("시트가 비어 있습니다")
 	}
-	rows, err := f.GetRows(sheet)
-	if err != nil || len(rows) < 2 {
+	grid, err := readSheetExpandedGrid(f, sheet)
+	if err != nil || len(grid) < 2 {
 		return 0, errors.New("데이터 행(헤더 제외 최소 1행)이 필요합니다")
 	}
 
-	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
-	byNameOrID := make(map[string]string, len(teachers)*2)
-	for _, t := range teachers {
-		byNameOrID[t.ID] = t.ID
-		byNameOrID[t.Name] = t.ID
-		byNameOrID[t.Username] = t.ID
+	headerIdx := detectHeaderRow(grid, []string{"학급", "반", "요일", "교시", "과목", "교사"}, 3)
+	if headerIdx < 0 {
+		headerIdx = 0
+	}
+	colMap := buildColumnMap(grid[headerIdx], map[string][]string{
+		"grade":   {"학년"},
+		"class":   {"학급", "반"},
+		"day":     {"요일"},
+		"period":  {"교시"},
+		"subject": {"과목", "교과", "정식과목명"},
+		"teacher": {"담당교사", "교사명", "교사", "성명"},
+		"room":    {"교실", "특별실", "강의실"},
+		"code":    {"나이스과목코드", "과목코드"},
+	})
+	useColMap := len(colMap) >= 3
+	defCol := func(k string, fallback int) int {
+		if idx, ok := colMap[k]; ok {
+			return idx
+		}
+		if useColMap {
+			return -1
+		}
+		return fallback
 	}
 
-	imported := 0
-	for idx, row := range rows[1:] {
-		if len(row) < 6 {
+	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
+	tMap := make(map[string]protocol.Teacher, len(teachers))
+	for _, t := range teachers {
+		tMap[t.ID] = t
+	}
+	existingCells, _ := s.ListCells()
+	cellState := make(map[string]protocol.TimetableCell, len(existingCells))
+	for _, c := range existingCells {
+		cellState[c.ID] = c
+	}
+
+	var parsed []protocol.TimetableCell
+	for rIdx := headerIdx + 1; rIdx < len(grid); rIdx++ {
+		row := grid[rIdx]
+		rawClass := gridCell(row, defCol("class", 1))
+		rawDay := gridCell(row, defCol("day", 2))
+		rawPeriod := gridCell(row, defCol("period", 3))
+		subject := gridCell(row, defCol("subject", 4))
+		teacherKey := gridCell(row, defCol("teacher", 5))
+		if rawClass == "" && rawDay == "" && subject == "" && teacherKey == "" {
 			continue
 		}
-		grade, _ := strconv.Atoi(strings.TrimSpace(row[0]))
-		className := strings.TrimSpace(row[1])
-		day := parseDayOfWeek(row[2])
-		period, _ := strconv.Atoi(strings.TrimSpace(row[3]))
-		subject := strings.TrimSpace(row[4])
-		teacherKey := strings.TrimSpace(row[5])
-		room := ""
-		if len(row) >= 7 {
-			room = strings.TrimSpace(row[6])
-		}
-		subjectCode := ""
-		if len(row) >= 8 {
-			subjectCode = strings.TrimSpace(row[7])
-		}
 
-		tid := byNameOrID[teacherKey]
-		if tid == "" || className == "" || day == 0 || period == 0 || subject == "" {
-			return imported, fmt.Errorf("%d행(%s %s)의 교사 또는 시간표 값이 유효하지 않습니다", idx+2, className, subject)
+		grade, _ := strconv.Atoi(gridCell(row, defCol("grade", 0)))
+		className := normalizeClassName(rawClass, grade)
+		if grade == 0 {
+			grade = parseGrade(className, 1)
 		}
-		if _, err := s.SaveCell(protocol.TimetableCell{
+		day := parseDayOfWeek(rawDay)
+		period := normalizePeriod(rawPeriod)
+		tid, rErr := resolveTeacherSafe(teachers, teacherKey, subject)
+		if rErr != nil {
+			return 0, fmt.Errorf("%d행 오류: %w", rIdx+1, rErr)
+		}
+		if className == "" || day < 1 || day > 5 || period < 1 || period > 7 || subject == "" {
+			return 0, fmt.Errorf("%d행(%s %s)의 학급·요일·교시·과목 값이 유효하지 않습니다", rIdx+1, rawClass, subject)
+		}
+		teacher := tMap[tid]
+		if len(teacher.ItinerantDays) > 0 && !slices.Contains(teacher.ItinerantDays, day) {
+			return 0, fmt.Errorf("%d행 오류: 순회교사 %s 선생님은 해당 요일에 출강하지 않습니다", rIdx+1, teacher.Name)
+		}
+		room := gridCell(row, defCol("room", 6))
+		if room == "" {
+			if teacher.DefaultRoom != "" {
+				room = teacher.DefaultRoom
+			} else {
+				room = className + "교실"
+			}
+		}
+		subjectCode := gridCell(row, defCol("code", 7))
+		if subjectCode == "" {
+			subjectCode = subjectToCode(subject, grade)
+		}
+		cell := protocol.TimetableCell{
+			ID:          fmt.Sprintf("c-%d-%d-%s", day, period, className),
 			DayOfWeek:   day,
 			Period:      period,
 			ClassName:   className,
@@ -276,12 +363,47 @@ func (s *Service) ImportTimetableXLSX(r io.Reader) (int, error) {
 			SubjectCode: subjectCode,
 			TeacherID:   tid,
 			Room:        room,
-		}); err != nil {
-			return imported, fmt.Errorf("%d행 반영 오류: %w", idx+2, err)
 		}
-		imported++
+		for _, other := range cellState {
+			if other.ID == cell.ID || (other.ClassName == cell.ClassName && other.DayOfWeek == cell.DayOfWeek && other.Period == cell.Period) {
+				cell.ID = other.ID
+				continue
+			}
+			if other.DayOfWeek == cell.DayOfWeek && other.Period == cell.Period {
+				if other.TeacherID == cell.TeacherID || other.CoTeacherID == cell.TeacherID {
+					return 0, fmt.Errorf("%d행 오류: %s 선생님이 동시간대 %s반과 중복됩니다", rIdx+1, teacher.Name, other.ClassName)
+				}
+				if cell.Room != cell.ClassName+"교실" && other.Room == cell.Room {
+					return 0, fmt.Errorf("%d행 오류: 교과교실(%s)이 %s반과 중복됩니다", rIdx+1, cell.Room, other.ClassName)
+				}
+			}
+		}
+		cellState[cell.ID] = cell
+		parsed = append(parsed, cell)
 	}
-	return imported, nil
+	if len(parsed) == 0 {
+		return 0, errors.New("반영할 유효한 시간표 행이 없습니다")
+	}
+
+	if err := s.store.WithTx(func(tx *database.TxStore) error {
+		for _, c := range parsed {
+			if sErr := tx.SaveRecord("timetable_cells", c.ID, c); sErr != nil {
+				return sErr
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:    protocol.EventTimetableCellsUpdated,
+			Title:   "엑셀 기초 시간표 일괄 반영 완료",
+			Message: fmt.Sprintf("총 %d교시 수업이 반영되었습니다", len(parsed)),
+			Payload: map[string]int{"importedCount": len(parsed)},
+		})
+	}
+	return len(parsed), nil
 }
 
 // BuildBaseTemplateXLSX는 기초 시간표 일괄 업로드용 표준 엑셀 양식을 생성합니다.
@@ -328,12 +450,14 @@ func parseDayOfWeek(raw string) int {
 }
 
 func wouldExceedThree(slots map[int]bool, day, period int) bool {
-	if slots == nil {
-		return false
-	}
+	return wouldBlockExceedThree(slots, day, period, 1)
+}
+
+func wouldBlockExceedThree(slots map[int]bool, day, startP, hours int) bool {
 	streak := 0
 	for p := 1; p <= 7; p++ {
-		if p == period || slots[day*10+p] {
+		inNew := p >= startP && p < startP+hours
+		if inNew || (slots != nil && slots[day*10+p]) {
 			streak++
 			if streak > 3 {
 				return true

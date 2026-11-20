@@ -12,6 +12,11 @@ func (a *ServerApp) handleExportHWPX(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.requireAuth(w, r); !ok {
 		return
 	}
+	cfg, _ := a.Timetable.GetSchoolConfig()
+	schoolName := cfg.SchoolName
+	if schoolName == "" {
+		schoolName = "꼬미중·고등학교"
+	}
 	kind := r.URL.Query().Get("kind")
 	var data exporter.HWPXDocumentData
 	fileName := "꼬미시간_보고서.hwpx"
@@ -24,11 +29,11 @@ func (a *ServerApp) handleExportHWPX(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, []string{
 				fmt.Sprintf("%d", i+1), rq.TargetDate, rq.SourceCell.ClassName,
 				fmt.Sprintf("%d교시 %s(%s)", rq.SourceCell.Period, rq.SourceCell.Subject, rq.RequesterName),
-				fmt.Sprintf("%s (%s)", rq.Reason, rq.Status),
+				fmt.Sprintf("%s (%s)", rq.Reason, exporter.StatusLabel(rq.Status)),
 			})
 		}
 		data = exporter.HWPXDocumentData{
-			SchoolName: "꼬미중·고등학교", DocTitle: "일일 결보강 및 수업교환 대장",
+			SchoolName: schoolName, DocTitle: "일일 결보강 및 수업교환 대장",
 			PeriodText: "교무실 공식 기록", Headers: []string{"순번", "적용일", "학급", "수업내역", "사유 및 상태"}, Rows: rows,
 		}
 		fileName = "결보강_수업교환_대장.hwpx"
@@ -37,11 +42,11 @@ func (a *ServerApp) handleExportHWPX(w http.ResponseWriter, r *http.Request) {
 		var rows [][]string
 		for i, ev := range events {
 			rows = append(rows, []string{
-				fmt.Sprintf("%d", i+1), ev.EventDate, ev.Department, ev.Title, string(ev.LinkType),
+				fmt.Sprintf("%d", i+1), ev.EventDate, ev.Department, ev.Title, exporter.EventLinkTypeLabel(ev.LinkType),
 			})
 		}
 		data = exporter.HWPXDocumentData{
-			SchoolName: "꼬미중·고등학교", DocTitle: "주중·월중 학사일정 및 행사표",
+			SchoolName: schoolName, DocTitle: "주중·월중 학사일정 및 행사표",
 			PeriodText: "전체 확정 및 취합 일정", Headers: []string{"순번", "행사일", "부서", "행사명", "연동속성"}, Rows: rows,
 		}
 		fileName = "주중월중_학사일정표.hwpx"
@@ -110,14 +115,21 @@ func (a *ServerApp) handleExportPrint(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.requireAuth(w, r); !ok {
 		return
 	}
+	cfg, _ := a.Timetable.GetSchoolConfig()
+	titlePrefix := cfg.SchoolName
+	if titlePrefix == "" {
+		titlePrefix = "꼬미중·고등학교"
+	}
 	events, _ := a.Calendar.ListEvents()
 	var rows [][]string
 	for i, ev := range events {
 		rows = append(rows, []string{
-			fmt.Sprintf("%d", i+1), ev.EventDate, ev.Department, ev.Title, string(ev.LinkType), string(ev.Status),
+			fmt.Sprintf("%d", i+1), ev.EventDate, ev.Department, ev.Title,
+			exporter.EventLinkTypeLabel(ev.LinkType), exporter.StatusLabel(ev.Status),
 		})
 	}
-	htmlDoc := exporter.BuildHighContrastPrintHTML("교무실 대형 현황판 (주중·월중 행사 & 학사일정)",
+	htmlDoc := exporter.BuildHighContrastPrintHTML(
+		fmt.Sprintf("[%s] 교무실 대형 현황판 (주중·월중 행사 & 학사일정)", titlePrefix),
 		[]string{"순번", "일자", "부서", "행사명", "연동속성", "상태"}, rows)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(htmlDoc))

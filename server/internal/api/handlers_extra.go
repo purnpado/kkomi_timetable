@@ -113,7 +113,8 @@ func (a *ServerApp) handleApplySubstitute(w http.ResponseWriter, r *http.Request
 }
 
 func (a *ServerApp) handleExternalExamNotices(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		if _, ok := a.requireAuth(w, r); !ok {
 			return
 		}
@@ -123,9 +124,7 @@ func (a *ServerApp) handleExternalExamNotices(w http.ResponseWriter, r *http.Req
 			return
 		}
 		writeJSON(w, http.StatusOK, notices)
-		return
-	}
-	if r.Method == http.MethodPost {
+	case http.MethodPost:
 		if _, ok := a.requireRole(w, r, protocol.RoleExternalExamAdmin); !ok {
 			return
 		}
@@ -136,13 +135,39 @@ func (a *ServerApp) handleExternalExamNotices(w http.ResponseWriter, r *http.Req
 		}
 		saved, err := a.ExternalExam.CreateNotice(notice)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, saved)
-		return
+	case http.MethodPut:
+		if _, ok := a.requireRole(w, r, protocol.RoleExternalExamAdmin); !ok {
+			return
+		}
+		var notice protocol.ExternalExamNotice
+		if err := json.NewDecoder(r.Body).Decode(&notice); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updated, err := a.ExternalExam.UpdateNotice(notice)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, updated)
+	case http.MethodDelete:
+		actor, ok := a.requireRole(w, r, protocol.RoleExternalExamAdmin)
+		if !ok {
+			return
+		}
+		id := r.URL.Query().Get("id")
+		if err := a.ExternalExam.DeleteNotice(id, actor.Name); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": id})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "지원하지 않는 메서드입니다")
 	}
-	writeError(w, http.StatusMethodNotAllowed, "지원하지 않는 메서드입니다")
 }
 
 func (a *ServerApp) handleExternalExamVolunteer(w http.ResponseWriter, r *http.Request) {
@@ -276,10 +301,23 @@ func (a *ServerApp) handleCalendarEvents(w http.ResponseWriter, r *http.Request)
 		ev.ProposedBy = actor.Name
 		saved, err := a.Calendar.ProposeEvent(ev)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		actor, ok := a.requireRole(w, r, protocol.RoleEventAdmin)
+		if !ok {
+			return
+		}
+		id := r.URL.Query().Get("id")
+		if err := a.Calendar.DeleteEvent(id, actor.Name); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": id})
 		return
 	}
 	writeError(w, http.StatusMethodNotAllowed, "지원하지 않는 메서드입니다")

@@ -35,12 +35,16 @@ func equalizeAnnualLoads(
 	for _, t := range regularTeachers {
 		tByID[t.ID] = t
 	}
-	usedPerPeriod := make(map[int]map[string]bool)
+	slotKey := func(sl protocol.ExamSlot) string {
+		return fmt.Sprintf("%s#%d", sl.ExamDate, sl.Period)
+	}
+	usedPerPeriod := make(map[string]map[string]bool)
 	for _, sl := range slots {
-		if usedPerPeriod[sl.Period] == nil {
-			usedPerPeriod[sl.Period] = make(map[string]bool)
+		k := slotKey(sl)
+		if usedPerPeriod[k] == nil {
+			usedPerPeriod[k] = make(map[string]bool)
 		}
-		usedPerPeriod[sl.Period][sl.TeacherID] = true
+		usedPerPeriod[k][sl.TeacherID] = true
 	}
 
 	canFit := func(t protocol.Teacher, sl protocol.ExamSlot, allowSubjectCorridor bool) bool {
@@ -70,9 +74,9 @@ func equalizeAnnualLoads(
 	moveSlot := func(idx int, newT protocol.Teacher) {
 		oldID := slots[idx].TeacherID
 		role := slots[idx].SlotRole
-		p := slots[idx].Period
-		usedPerPeriod[p][oldID] = false
-		usedPerPeriod[p][newT.ID] = true
+		k := slotKey(slots[idx])
+		usedPerPeriod[k][oldID] = false
+		usedPerPeriod[k][newT.ID] = true
 		load[oldID].add(role, -1)
 		load[newT.ID].add(role, 1)
 		slots[idx].TeacherID = newT.ID
@@ -104,8 +108,9 @@ func equalizeAnnualLoads(
 			if load[oldID].Total < minTot+2 {
 				continue
 			}
+			k := slotKey(slots[i])
 			for _, cand := range regularTeachers {
-				if load[cand.ID].Total > load[oldID].Total-2 || usedPerPeriod[slots[i].Period][cand.ID] {
+				if load[cand.ID].Total > load[oldID].Total-2 || usedPerPeriod[k][cand.ID] {
 					continue
 				}
 				if canFit(cand, slots[i], true) {
@@ -127,20 +132,22 @@ func equalizeAnnualLoads(
 			if _, ok := tByID[hID]; !ok || load[hID].Total < minTot+2 {
 				continue
 			}
+			ki := slotKey(slots[i])
 			for j := range slots {
 				mID := slots[j].TeacherID
 				if i == j || mID == hID {
 					continue
 				}
 				midT, ok := tByID[mID]
-				if !ok || usedPerPeriod[slots[i].Period][midT.ID] || !canFit(midT, slots[i], true) {
+				if !ok || usedPerPeriod[ki][midT.ID] || !canFit(midT, slots[i], true) {
 					continue
 				}
+				kj := slotKey(slots[j])
 				for _, lowT := range regularTeachers {
 					if lowT.ID == hID || lowT.ID == mID || load[lowT.ID].Total > load[hID].Total-2 {
 						continue
 					}
-					if !usedPerPeriod[slots[j].Period][lowT.ID] && canFit(lowT, slots[j], true) {
+					if !usedPerPeriod[kj][lowT.ID] && canFit(lowT, slots[j], true) {
 						moveSlot(j, lowT)
 						moveSlot(i, midT)
 						moved = true
@@ -182,7 +189,7 @@ func equalizeAnnualLoads(
 			break
 		}
 		swapped := false
-		// 동일 교시 내 MAIN(고정감독 교사) <-> SUB(저정감독 교사) 역할 맞교환
+		// 동일 날짜·교시 내 MAIN(고정감독 교사) <-> SUB(저정감독 교사) 역할 맞교환
 		for i := range slots {
 			if slots[i].SlotRole != "MAIN" {
 				continue
@@ -192,8 +199,9 @@ func equalizeAnnualLoads(
 			if !okA || load[aID].Main < minM+2 {
 				continue
 			}
+			ki := slotKey(slots[i])
 			for j := range slots {
-				if slots[j].SlotRole != "SUB" || slots[j].Period != slots[i].Period {
+				if slots[j].SlotRole != "SUB" || slotKey(slots[j]) != ki {
 					continue
 				}
 				bID := slots[j].TeacherID
@@ -228,8 +236,9 @@ func equalizeAnnualLoads(
 			if _, ok := tByID[aID]; !ok || load[aID].Main < minM+2 {
 				continue
 			}
+			k := slotKey(slots[i])
 			for _, bT := range regularTeachers {
-				if load[bT.ID].Main > load[aID].Main-2 || usedPerPeriod[slots[i].Period][bT.ID] {
+				if load[bT.ID].Main > load[aID].Main-2 || usedPerPeriod[k][bT.ID] {
 					continue
 				}
 				if load[bT.ID].Total+1 > minTot+1 {
@@ -359,37 +368,87 @@ func (s *Service) UpdateTeacherExamPolicy(req TeacherExamPolicyUpdate) ([]protoc
 		return nil, err
 	}
 	if req.ResetAllBaseCounts {
-		for i := range teachers {
-			teachers[i].AnnualMainCount = 0
-			teachers[i].AnnualSubCount = 0
-			teachers[i].AnnualCorridorCount = 0
-			teachers[i].InternalExamCount = 0
-			if err := s.store.SaveRecord("teachers", teachers[i].ID, teachers[i]); err != nil {
-				return nil, err
+		err := s.store.WithTx(func(tx *database.TxStore) error {
+			txTeachers, tErr := database.LoadCollectionTx[protocol.Teacher](tx, "teachers")
+			if tErr != nil {
+				return tErr
 			}
+			for i := range txTeachers {
+				txTeachers[i].AnnualMainCount = 0
+				txTeachers[i].AnnualSubCount = 0
+				txTeachers[i].AnnualCorridorCount = 0
+				txTeachers[i].InternalExamCount = 0
+				if sErr := tx.SaveRecord("teachers", txTeachers[i].ID, txTeachers[i]); sErr != nil {
+					return sErr
+				}
+			}
+			cfgs, _ := database.LoadCollectionTx[protocol.ExamConfig](tx, "exam_configs")
+			if len(cfgs) > 0 && cfgs[0].CountsCommitted {
+				cfgs[0].CountsCommitted = false
+				_ = tx.SaveRecord("exam_configs", cfgs[0].ID, cfgs[0])
+			}
+			teachers = txTeachers
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 		return teachers, nil
 	}
 	if req.CommitCurrentToBase {
-		slots, _ := database.LoadCollection[protocol.ExamSlot](s.store, "exam_slots")
-		curMap := make(map[string]*roleLoad)
-		for _, sl := range slots {
-			if curMap[sl.TeacherID] == nil {
-				curMap[sl.TeacherID] = &roleLoad{}
+		err := s.store.WithTx(func(tx *database.TxStore) error {
+			cfgs, _ := database.LoadCollectionTx[protocol.ExamConfig](tx, "exam_configs")
+			if len(cfgs) > 0 && cfgs[0].CountsCommitted {
+				return fmt.Errorf("이번 시험(%s)의 감독 시수는 이미 연간 누적에 확정 반영되었습니다", cfgs[0].Title)
 			}
-			curMap[sl.TeacherID].add(sl.SlotRole, 1)
-		}
-		for i := range teachers {
-			if cur := curMap[teachers[i].ID]; cur != nil {
-				bm, bs, bc, _ := EffectiveBaseCounts(teachers[i])
-				teachers[i].AnnualMainCount = bm + cur.Main
-				teachers[i].AnnualSubCount = bs + cur.Sub
-				teachers[i].AnnualCorridorCount = bc + cur.Corridor
-				teachers[i].InternalExamCount = teachers[i].AnnualMainCount + teachers[i].AnnualSubCount + teachers[i].AnnualCorridorCount
-				if err := s.store.SaveRecord("teachers", teachers[i].ID, teachers[i]); err != nil {
-					return nil, err
+			slots, sErr := database.LoadCollectionTx[protocol.ExamSlot](tx, "exam_slots")
+			if sErr != nil {
+				return sErr
+			}
+			if len(slots) == 0 {
+				return fmt.Errorf("연간 누적에 반영할 감독 배정 슬롯이 없습니다")
+			}
+			curMap := make(map[string]*roleLoad)
+			for _, sl := range slots {
+				if curMap[sl.TeacherID] == nil {
+					curMap[sl.TeacherID] = &roleLoad{}
+				}
+				curMap[sl.TeacherID].add(sl.SlotRole, 1)
+			}
+			txTeachers, tErr := database.LoadCollectionTx[protocol.Teacher](tx, "teachers")
+			if tErr != nil {
+				return tErr
+			}
+			for i := range txTeachers {
+				if cur := curMap[txTeachers[i].ID]; cur != nil {
+					bm, bs, bc, _ := EffectiveBaseCounts(txTeachers[i])
+					txTeachers[i].AnnualMainCount = bm + cur.Main
+					txTeachers[i].AnnualSubCount = bs + cur.Sub
+					txTeachers[i].AnnualCorridorCount = bc + cur.Corridor
+					txTeachers[i].InternalExamCount = txTeachers[i].AnnualMainCount + txTeachers[i].AnnualSubCount + txTeachers[i].AnnualCorridorCount
+					if saveErr := tx.SaveRecord("teachers", txTeachers[i].ID, txTeachers[i]); saveErr != nil {
+						return saveErr
+					}
 				}
 			}
+			if len(cfgs) > 0 {
+				cfgs[0].CountsCommitted = true
+				if saveErr := tx.SaveRecord("exam_configs", cfgs[0].ID, cfgs[0]); saveErr != nil {
+					return saveErr
+				}
+			}
+			teachers = txTeachers
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if s.bus != nil {
+			s.bus.Publish(protocol.DomainEvent{
+				Type:    protocol.EventExamScheduleUpdated,
+				Title:   "교내 시험감독 연간 누적 시수 반영 완료",
+				Message: "이번 시험 감독 시수가 전 교원 연간 누적 횟수에 확정 합산되었습니다.",
+			})
 		}
 		return teachers, nil
 	}

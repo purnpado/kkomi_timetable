@@ -136,7 +136,14 @@ func (s *Service) SaveTeachingLoad(ld protocol.TeachingLoad) (protocol.TeachingL
 		}
 	}
 	if ld.ID == "" {
-		ld.ID = fmt.Sprintf("ld-%d-%s-%s", ld.Grade, ld.TeacherID, strings.ReplaceAll(ld.Subject, " ", ""))
+		base := fmt.Sprintf("ld-%d-%s-%s", ld.Grade, ld.TeacherID, strings.ReplaceAll(ld.Subject, " ", ""))
+		if ld.SimultaneousGroup != "" || ld.DedicatedRoom != "" {
+			clean := func(s string) string {
+				return strings.NewReplacer(" ", "", "/", "-", "\\", "-").Replace(strings.TrimSpace(s))
+			}
+			base = fmt.Sprintf("%s-%s-%s", base, clean(ld.SimultaneousGroup), clean(ld.DedicatedRoom))
+		}
+		ld.ID = base
 	}
 	if err := s.store.SaveRecord("teaching_loads", ld.ID, ld); err != nil {
 		return ld, err

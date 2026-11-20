@@ -122,7 +122,7 @@ func rankSubstituteCandidates(
 ) []protocol.AbsenceSubCandidate {
 	var list []protocol.AbsenceSubCandidate
 	for _, t := range teachers {
-		if t.IsParentHonorary || t.ID == absentID {
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || t.ID == absentID {
 			continue
 		}
 		if len(t.ItinerantDays) > 0 && !slices.Contains(t.ItinerantDays, slot.DayOfWeek) {
@@ -181,6 +181,28 @@ func rankSubstituteCandidates(
 func (s *Service) ApplyAbsenceResolutions(req protocol.AbsenceApplyRequest, reviewerName string, canApprove bool) ([]protocol.TimetableChangeRequest, error) {
 	if len(req.Items) == 0 {
 		return nil, errors.New("적용할 결근 대책 항목이 없습니다")
+	}
+	// 일괄 적용 전 동일 일자·교시 대타 교사 중복 배정 및 동일 타 주차 슬롯 중복 사용 사전 차단
+	usedSubSlot := make(map[string]bool)
+	usedCrossTarget := make(map[string]bool)
+	for _, it := range req.Items {
+		if it.Mode == "CROSS_WEEK_SWAP" {
+			tKey := fmt.Sprintf("%s#%s#%d", it.TargetDate, it.TargetCell.ClassName, it.TargetCell.Period)
+			if usedCrossTarget[tKey] {
+				return nil, fmt.Errorf("%s %s반 %d교시 주차 맞교환 슬롯이 중복 지정되었습니다", it.TargetDate, it.TargetCell.ClassName, it.TargetCell.Period)
+			}
+			usedCrossTarget[tKey] = true
+		} else if strings.TrimSpace(it.PartnerID) != "" {
+			d := strings.TrimSpace(it.TargetDate)
+			if d == "" {
+				d = strings.TrimSpace(it.SourceDate)
+			}
+			sKey := fmt.Sprintf("%s#%d#%s", d, it.SourceCell.Period, it.PartnerID)
+			if usedSubSlot[sKey] {
+				return nil, fmt.Errorf("%s %d교시에 동일 보강 교사(%s)가 중복 배정되었습니다", d, it.SourceCell.Period, it.PartnerName)
+			}
+			usedSubSlot[sKey] = true
+		}
 	}
 	var results []protocol.TimetableChangeRequest
 	for _, it := range req.Items {

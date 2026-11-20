@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"kkomi-timetable/pkg/protocol"
@@ -14,9 +15,10 @@ import (
 // Service는 교내 지필고사 감독 배정, 사전 봉인(Sealed)/당일 아침 일괄 공개(Unseal),
 // 그리고 당일 돌발 결원 긴급 대타 추천/교체를 담당합니다.
 type Service struct {
-	store *database.Store
-	bus   *eventbus.Bus
-	stop  chan struct{}
+	store    *database.Store
+	bus      *eventbus.Bus
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewService는 교내 시험감독 서비스를 생성합니다.
@@ -79,6 +81,7 @@ func (s *Service) ListSpecs() []ExamPeriodSpec {
 
 // StartScheduler는 시험 당일 지정 시각(기본 08:20) 도래 시 봉인된 고사장을 자동 일괄 공개하는 백그라운드 워커를 시작합니다.
 func (s *Service) StartScheduler() {
+	s.checkAndUnsealDue(time.Now())
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -87,41 +90,52 @@ func (s *Service) StartScheduler() {
 			case <-s.stop:
 				return
 			case now := <-ticker.C:
-				cfgs, err := database.LoadCollection[protocol.ExamConfig](s.store, "exam_configs")
-				if err != nil {
-					continue
-				}
-				today := now.Format("2006-01-02")
-				hhmm := now.Format("15:04")
-				for _, cfg := range cfgs {
-					if cfg.IsSealed && !cfg.InstantRevealMode && cfg.ExamDate == today && cfg.UnsealTime != "" && hhmm >= cfg.UnsealTime {
-						_, _ = s.UnsealExam(cfg.ID, "자동공개 스케줄러")
-					}
-				}
+				s.checkAndUnsealDue(now)
 			}
 		}
 	}()
 }
 
-// StopScheduler는 스케줄러 고루틴을 안전하게 종료합니다.
-func (s *Service) StopScheduler() {
-	select {
-	case <-s.stop:
-	default:
-		close(s.stop)
+func (s *Service) checkAndUnsealDue(now time.Time) {
+	cfgs, err := database.LoadCollection[protocol.ExamConfig](s.store, "exam_configs")
+	if err != nil {
+		return
+	}
+	today := now.Format("2006-01-02")
+	hhmm := now.Format("15:04")
+	for _, cfg := range cfgs {
+		if cfg.IsSealed && !cfg.InstantRevealMode && cfg.ExamDate == today && cfg.UnsealTime != "" && hhmm >= cfg.UnsealTime {
+			_, _ = s.UnsealExam(cfg.ID, "자동공개 스케줄러")
+		}
 	}
 }
 
-// GetConfig는 현재 교내 시험 설정을 조회합니다.
+// StopScheduler는 스케줄러 고루틴을 안전하게 종료합니다.
+func (s *Service) StopScheduler() {
+	s.stopOnce.Do(func() {
+		close(s.stop)
+	})
+}
+
+// GetConfig는 현재 교내 시험 설정을 조회합니다. (초기화 직후 설정이 없으면 안전한 기본 초안을 반환)
 func (s *Service) GetConfig() (protocol.ExamConfig, error) {
 	cfgs, err := database.LoadCollection[protocol.ExamConfig](s.store, "exam_configs")
-	if err != nil || len(cfgs) == 0 {
-		return protocol.ExamConfig{}, fmt.Errorf("교내 지필고사 설정이 없습니다")
+	if err != nil {
+		return protocol.ExamConfig{}, err
+	}
+	if len(cfgs) == 0 {
+		return protocol.ExamConfig{
+			ID:                   "exam-draft",
+			Title:                "신규 지필고사 (편성 대기)",
+			UnsealTime:           "08:20",
+			IsSealed:             true,
+			SubjectTeacherPolicy: protocol.SubjectModeCorridorFirst,
+		}, nil
 	}
 	return cfgs[0], nil
 }
 
-// GenerateAndSave는 배정 옵션(복도감독 우선배치, 정/부감독, 학부모 명예감독 On/Off, 즉시공개/사전봉인)으로 감독 배정표를 생성합니다.
+// GenerateAndSave는 배정 옵션 및 당일 부재 교사 제약을 반영해 감독 배정표를 원자적으로 생성합니다.
 func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpec) ([]protocol.ExamSlot, error) {
 	if cfg.ID == "" {
 		cfg.ID = "exam-2026-2-final"
@@ -135,36 +149,54 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 	if cfg.InstantRevealMode {
 		cfg.IsSealed = false
 	}
+	cfg.CountsCommitted = false
 	if len(specs) == 0 {
 		specs = s.ListSpecs()
-	}
-
-	// 기존 시험 설정·시간 편성안 및 슬롯 정리 후 재생성
-	_ = s.store.ClearCollections("exam_specs", "exam_configs", "exam_slots")
-	for i, sp := range specs {
-		_ = s.store.SaveRecord("exam_specs", fmt.Sprintf("spec-%d", i+1), sp)
 	}
 
 	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
 	if err != nil {
 		return nil, err
 	}
-	slots := AssignSlots(cfg, specs, teachers)
-	if err := s.store.SaveRecord("exam_configs", cfg.ID, cfg); err != nil {
+	unavail := buildUnavailableTeachersForDate(s.store, cfg.ExamDate)
+	slots := AssignSlotsWithUnavailable(cfg, specs, teachers, unavail)
+
+	if err := s.store.WithTx(func(tx *database.TxStore) error {
+		if cErr := tx.ClearCollections("exam_specs", "exam_configs", "exam_slots"); cErr != nil {
+			return cErr
+		}
+		for i, sp := range specs {
+			if sErr := tx.SaveRecord("exam_specs", fmt.Sprintf("spec-%d", i+1), sp); sErr != nil {
+				return sErr
+			}
+		}
+		if sErr := tx.SaveRecord("exam_configs", cfg.ID, cfg); sErr != nil {
+			return sErr
+		}
+		for _, slot := range slots {
+			if sErr := tx.SaveRecord("exam_slots", slot.ID, slot); sErr != nil {
+				return sErr
+			}
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	for _, slot := range slots {
-		if err := s.store.SaveRecord("exam_slots", slot.ID, slot); err != nil {
-			return nil, err
-		}
-	}
 
-	if s.bus != nil && cfg.IsSealed {
+	if s.bus != nil {
+		if cfg.IsSealed {
+			s.bus.Publish(protocol.DomainEvent{
+				Type:    protocol.EventExamSealed,
+				Title:   fmt.Sprintf("[%s] 감독 배정 사전 봉인 완료", cfg.Title),
+				Message: fmt.Sprintf("감독 교시만 안내되며 고사장은 %s 당일 %s에 일괄 공개됩니다.", cfg.ExamDate, cfg.UnsealTime),
+				Payload: cfg,
+			})
+		}
 		s.bus.Publish(protocol.DomainEvent{
-			Type:    protocol.EventExamSealed,
-			Title:   fmt.Sprintf("[%s] 감독 배정 사전 봉인 완료", cfg.Title),
-			Message: fmt.Sprintf("감독 교시만 안내되며 고사장은 %s 당일 %s에 일괄 공개됩니다.", cfg.ExamDate, cfg.UnsealTime),
-			Payload: cfg,
+			Type:    protocol.EventExamScheduleUpdated,
+			Title:   fmt.Sprintf("[%s] 교내 시험감독 배정표 갱신", cfg.Title),
+			Message: fmt.Sprintf("총 %d개 감독 슬롯이 생성되었습니다.", len(slots)),
+			Payload: map[string]interface{}{"examId": cfg.ID, "slotCount": len(slots)},
 		})
 	}
 	return slots, nil
@@ -238,9 +270,10 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 		return nil, fmt.Errorf("감독 슬롯(%s)을 찾을 수 없습니다", slotID)
 	}
 
+	unavail := buildUnavailableTeachersForDate(s.store, target.ExamDate)
 	busyTeachers := make(map[string]bool)
 	for _, sl := range slots {
-		if sl.Period == target.Period {
+		if sl.Period == target.Period && (target.ExamDate == "" || sl.ExamDate == "" || sl.ExamDate == target.ExamDate) {
 			busyTeachers[sl.TeacherID] = true
 		}
 	}
@@ -252,13 +285,13 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 	roomPrefix := extractRoomBaseClass(target.RoomName)
 	var recs []protocol.Teacher
 	for _, t := range teachers {
-		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || busyTeachers[t.ID] {
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || busyTeachers[t.ID] || unavail[t.ID] != "" {
 			continue
 		}
 		if exempt, _ := IsEffectiveExamExempt(t); exempt {
 			continue
 		}
-		if t.HomeroomClass != "" && roomPrefix != "" && strings.EqualFold(t.HomeroomClass, roomPrefix) {
+		if target.SlotRole != "CORRIDOR" && t.HomeroomClass != "" && roomPrefix != "" && strings.EqualFold(t.HomeroomClass, roomPrefix) {
 			continue
 		}
 		if target.SlotRole != "CORRIDOR" && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, t.Subject) {
@@ -275,7 +308,7 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 	return recs, nil
 }
 
-// ApplySubstitute는 당일 돌발 결원 슬롯을 대체 교사로 원클릭 교체하고 긴급 알림을 보냅니다.
+// ApplySubstitute는 당일 돌발 결원 슬롯을 검증 후 대체 교사로 교체하고, 봉인 상태를 준수하며 알림을 보냅니다.
 func (s *Service) ApplySubstitute(slotID, newTeacherID, actorName string) (*protocol.ExamSlot, error) {
 	slots, err := database.LoadCollection[protocol.ExamSlot](s.store, "exam_slots")
 	if err != nil {
@@ -298,6 +331,11 @@ func (s *Service) ApplySubstitute(slotID, newTeacherID, actorName string) (*prot
 
 	for i := range slots {
 		if slots[i].ID == slotID {
+			unavail := buildUnavailableTeachersForDate(s.store, slots[i].ExamDate)
+			if vErr := validateSubstituteTeacher(slots[i], *newTeacher, slots, unavail); vErr != nil {
+				return nil, vErr
+			}
+			oldTeacherID := slots[i].TeacherID
 			oldName := slots[i].TeacherName
 			slots[i].TeacherID = newTeacher.ID
 			slots[i].TeacherName = newTeacher.Name
@@ -306,14 +344,29 @@ func (s *Service) ApplySubstitute(slotID, newTeacherID, actorName string) (*prot
 				return nil, err
 			}
 			if s.bus != nil {
+				cfg, _ := s.GetConfig()
+				evtSlot := slots[i]
+				roomText := evtSlot.RoomName
+				if cfg.IsSealed {
+					roomText = fmt.Sprintf("🔒 당일 %s 공개", cfg.UnsealTime)
+					evtSlot.RoomName = roomText
+					evtSlot.ActualRoomHidden = true
+				}
+				var targetIDs []string
+				if newTeacher.ID != "" {
+					targetIDs = append(targetIDs, newTeacher.ID)
+				}
+				if oldTeacherID != "" && oldTeacherID != newTeacher.ID {
+					targetIDs = append(targetIDs, oldTeacherID)
+				}
 				s.bus.Publish(protocol.DomainEvent{
 					Type:      protocol.EventExamSubstituted,
-					Title:     fmt.Sprintf("🚨 [긴급 대타 배정] %d교시 %s", slots[i].Period, slots[i].RoomName),
+					Title:     fmt.Sprintf("🚨 [긴급 대타 배정] %d교시 %s", evtSlot.Period, roomText),
 					Message:   fmt.Sprintf("%s 선생님 결원으로 %s 선생님이 긴급 감독 배정되었습니다.", oldName, newTeacher.Name),
 					Urgent:    true,
-					TargetIDs: []string{newTeacher.ID},
+					TargetIDs: targetIDs,
 					ActorName: actorName,
-					Payload:   slots[i],
+					Payload:   evtSlot,
 				})
 			}
 			return &slots[i], nil

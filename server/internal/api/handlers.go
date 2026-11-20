@@ -8,6 +8,7 @@ import (
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/auth"
+	"kkomi-timetable/server/internal/modules/timetable"
 	"kkomi-timetable/server/internal/ws"
 )
 
@@ -190,8 +191,10 @@ func (a *ServerApp) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if wd == 0 || wd == 6 {
 		wd = 1 // 주말 시연 시 월요일 시간표 미리보기 제공
 	}
+	weekMon := timetable.NormalizeMonday(today)
+	weekSun := timetable.DateForWeekday(weekMon, 7)
 
-	cells, _ := a.Timetable.ListCells()
+	cells, _ := a.Timetable.ListWeekCells(weekMon)
 	var myLessons, homeroomLessons []protocol.TimetableCell
 	for _, c := range cells {
 		if c.DayOfWeek == wd && (c.TeacherID == teacherID || c.CoTeacherID == teacherID) {
@@ -213,7 +216,9 @@ func (a *ServerApp) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			if ev.EventDate == today {
 				todayEvents = append(todayEvents, ev)
 			}
-			weekEvents = append(weekEvents, ev)
+			if ev.EventDate >= weekMon && ev.EventDate <= weekSun {
+				weekEvents = append(weekEvents, ev)
+			}
 		}
 	}
 
@@ -240,7 +245,7 @@ func (a *ServerApp) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			openExternal = append(openExternal, ex)
 		}
 	}
-	bells, _ := a.Calendar.ListBellSchedule()
+	bells, _ := a.Calendar.EffectiveBellSchedule(today)
 
 	summary := protocol.DashboardSummary{
 		ServerVersion:     ws.ServerVersion,

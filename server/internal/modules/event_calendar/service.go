@@ -3,6 +3,7 @@ package event_calendar
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"kkomi-timetable/pkg/protocol"
@@ -37,7 +38,7 @@ func (s *Service) ListEvents() ([]protocol.SchoolEvent, error) {
 	return events, nil
 }
 
-// ListBellSchedule은 현재 적용 중인 교시별 시종시간표를 반환합니다.
+// ListBellSchedule은 현재 적용 중인 정규 교시별 시종시간표를 반환합니다.
 func (s *Service) ListBellSchedule() ([]protocol.BellPeriod, error) {
 	bells, err := database.LoadCollection[protocol.BellPeriod](s.store, "bell_schedule")
 	if err != nil {
@@ -49,22 +50,80 @@ func (s *Service) ListBellSchedule() ([]protocol.BellPeriod, error) {
 	return bells, nil
 }
 
+// EffectiveBellSchedule은 정규 시종시간표를 바탕으로 지정 일자(dateStr)에 확정된
+// [시종시간 변경] 행사 오버라이드를 동적으로 합성해 반환합니다. (정규 마스터 DB는 오염되지 않음)
+func (s *Service) EffectiveBellSchedule(dateStr string) ([]protocol.BellPeriod, error) {
+	targetDate := strings.TrimSpace(dateStr)
+	if targetDate == "" {
+		targetDate = time.Now().Format("2006-01-02")
+	}
+	base, err := s.ListBellSchedule()
+	if err != nil {
+		return nil, err
+	}
+	events, err := s.ListEvents()
+	if err != nil {
+		return base, nil
+	}
+
+	merged := make(map[int]protocol.BellPeriod, len(base))
+	for _, b := range base {
+		if b.Period > 0 {
+			merged[b.Period] = b
+		}
+	}
+	for _, ev := range events {
+		if ev.Status != protocol.StatusApproved || ev.LinkType != protocol.EventLinkBellChange || ev.EventDate != targetDate {
+			continue
+		}
+		for _, ov := range ev.BellOverride {
+			if ov.Period <= 0 {
+				continue
+			}
+			if ov.Label == "" {
+				if prev, ok := merged[ov.Period]; ok && prev.Label != "" {
+					ov.Label = prev.Label
+				} else {
+					ov.Label = fmt.Sprintf("%d교시", ov.Period)
+				}
+			}
+			merged[ov.Period] = ov
+		}
+	}
+
+	out := make([]protocol.BellPeriod, 0, len(merged))
+	for _, b := range merged {
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Period < out[j].Period
+	})
+	return out, nil
+}
+
 // SaveBellSchedule은 마스터 또는 시간표 담당교사가 정규 일과시간(1~7교시 시작·종료 시각)을 저장합니다.
 func (s *Service) SaveBellSchedule(bells []protocol.BellPeriod, actorName string) ([]protocol.BellPeriod, error) {
 	if len(bells) == 0 {
 		return nil, fmt.Errorf("저장할 일과시간 데이터가 비어 있습니다")
 	}
-	_ = s.store.ClearCollections("bell_schedule")
-	for _, b := range bells {
-		if b.Period <= 0 {
-			continue
+	if err := s.store.WithTx(func(tx *database.TxStore) error {
+		if err := tx.ClearCollections("bell_schedule"); err != nil {
+			return err
 		}
-		if b.Label == "" {
-			b.Label = fmt.Sprintf("%d교시", b.Period)
+		for _, b := range bells {
+			if b.Period <= 0 {
+				continue
+			}
+			if b.Label == "" {
+				b.Label = fmt.Sprintf("%d교시", b.Period)
+			}
+			if err := tx.SaveRecord("bell_schedule", fmt.Sprintf("period-%d", b.Period), b); err != nil {
+				return err
+			}
 		}
-		if err := s.store.SaveRecord("bell_schedule", fmt.Sprintf("period-%d", b.Period), b); err != nil {
-			return nil, err
-		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	saved, err := s.ListBellSchedule()
 	if err != nil {
@@ -84,6 +143,26 @@ func (s *Service) SaveBellSchedule(bells []protocol.BellPeriod, actorName string
 
 // ProposeEvent는 부서별로 행사를 등록(STAGING 대기열)합니다.
 func (s *Service) ProposeEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, error) {
+	ev.Title = strings.TrimSpace(ev.Title)
+	ev.EventDate = strings.TrimSpace(ev.EventDate)
+	if ev.Title == "" {
+		return ev, fmt.Errorf("행사명을 입력해 주세요")
+	}
+	if _, err := time.Parse("2006-01-02", ev.EventDate); err != nil {
+		return ev, fmt.Errorf("행사 일자(YYYY-MM-DD) 형식이 올바르지 않습니다")
+	}
+	if ev.StartPeriod < 0 || ev.EndPeriod < 0 {
+		return ev, fmt.Errorf("교시는 0(종일) 이상이어야 합니다")
+	}
+	if ev.StartPeriod > 0 && ev.EndPeriod == 0 {
+		ev.EndPeriod = ev.StartPeriod
+	}
+	if ev.StartPeriod > 0 && ev.EndPeriod < ev.StartPeriod {
+		return ev, fmt.Errorf("종료 교시(%d)는 시작 교시(%d)보다 크거나 같아야 합니다", ev.EndPeriod, ev.StartPeriod)
+	}
+	if ev.LinkType == "" {
+		ev.LinkType = protocol.EventLinkSimpleNotice
+	}
 	if ev.ID == "" {
 		ev.ID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
 	}
@@ -94,62 +173,91 @@ func (s *Service) ProposeEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, e
 	return ev, nil
 }
 
-// CommitEvent는 행사 담당교사가 [최종 선택(서버 반영)]을 클릭하여 행사를 확정할 때 호출됩니다.
+// CommitEvent는 행사 담당교사가 [최종 선택(서버 반영)]을 클릭하여 행사를 확정·반려할 때 호출됩니다.
 func (s *Service) CommitEvent(eventID, reviewerName string, approve bool) (*protocol.SchoolEvent, error) {
-	events, err := s.ListEvents()
+	var target *protocol.SchoolEvent
+	err := s.store.WithTx(func(tx *database.TxStore) error {
+		loaded, lErr := database.LoadRecordTx[protocol.SchoolEvent](tx, "school_events", eventID)
+		if lErr != nil {
+			return fmt.Errorf("행사(%s)를 찾을 수 없습니다", eventID)
+		}
+		if loaded.Status != protocol.StatusStaging {
+			return fmt.Errorf("이미 처리된 행사입니다 (현재 상태: %s)", loaded.Status)
+		}
+		loaded.CommittedBy = reviewerName
+		if approve {
+			loaded.Status = protocol.StatusApproved
+		} else {
+			loaded.Status = protocol.StatusRejected
+		}
+		if sErr := tx.SaveRecord("school_events", loaded.ID, *loaded); sErr != nil {
+			return sErr
+		}
+		target = loaded
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	var target *protocol.SchoolEvent
-	for i := range events {
-		if events[i].ID == eventID {
-			target = &events[i]
-			break
-		}
-	}
-	if target == nil {
-		return nil, fmt.Errorf("행사(%s)를 찾을 수 없습니다", eventID)
-	}
-
-	target.CommittedBy = reviewerName
 	if !approve {
-		target.Status = protocol.StatusRejected
-		if err := s.store.SaveRecord("school_events", target.ID, *target); err != nil {
-			return nil, err
-		}
 		return target, nil
 	}
 
-	target.Status = protocol.StatusApproved
-	if err := s.store.SaveRecord("school_events", target.ID, *target); err != nil {
-		return nil, err
-	}
-
-	// [시종시간 변경] 속성인 경우 시종시간 마스터 업데이트
-	if target.LinkType == protocol.EventLinkBellChange && len(target.BellOverride) > 0 {
-		for _, b := range target.BellOverride {
-			_ = s.store.SaveRecord("bell_schedule", fmt.Sprintf("period-%d", b.Period), b)
-		}
-		if s.bus != nil {
-			s.bus.Publish(protocol.DomainEvent{
-				Type:      protocol.EventBellScheduleChanged,
-				Title:     fmt.Sprintf("⏰ [%s] 시종시간 변경 적용", target.Title),
-				Message:   "단축/변경된 시종시간표가 전 교원 클라이언트(방해 금지 모드 포함)에 반영되었습니다.",
-				Urgent:    true,
-				ActorName: reviewerName,
-				Payload:   target.BellOverride,
-			})
-		}
+	// [시종시간 변경] 행사도 정규 bell_schedule 마스터는 덮어쓰지 않고 해당 일자 동적 오버레이로 적용
+	if target.LinkType == protocol.EventLinkBellChange && len(target.BellOverride) > 0 && s.bus != nil {
+		effective, _ := s.EffectiveBellSchedule(target.EventDate)
+		s.bus.Publish(protocol.DomainEvent{
+			Type:      protocol.EventBellScheduleChanged,
+			Title:     fmt.Sprintf("⏰ [%s] %s 일자 시종시간 변경 적용", target.Title, target.EventDate),
+			Message:   fmt.Sprintf("%s 하루 동안 단축/변경된 시종시간표가 적용됩니다. (정규 시종표 보존)", target.EventDate),
+			Urgent:    true,
+			ActorName: reviewerName,
+			Payload:   effective,
+		})
 	}
 
 	if s.bus != nil {
 		s.bus.Publish(protocol.DomainEvent{
 			Type:      protocol.EventSchoolEventPublished,
 			Title:     fmt.Sprintf("📅 [%s] 학사 행사 확정 반영", target.Title),
-			Message:   fmt.Sprintf("%s (%s) 행사가 확정되어 시간표와 연동되었습니다.", target.EventDate, target.Department),
+			Message:   fmt.Sprintf("%s (%s) 행사가 확정되어 해당 일자 시간표와 연동되었습니다.", target.EventDate, target.Department),
 			ActorName: reviewerName,
 			Payload:   *target,
 		})
 	}
 	return target, nil
+}
+
+// DeleteEvent는 행사를 삭제하고 연동된 대기열·당일 시종 상태를 정리하도록 도메인 이벤트를 발행합니다.
+func (s *Service) DeleteEvent(eventID, actorName string) error {
+	if strings.TrimSpace(eventID) == "" {
+		return fmt.Errorf("삭제할 행사 ID가 필요합니다")
+	}
+	target, err := database.LoadRecord[protocol.SchoolEvent](s.store, "school_events", eventID)
+	if err != nil || target == nil {
+		return fmt.Errorf("행사(%s)를 찾을 수 없습니다", eventID)
+	}
+	if err := s.store.DeleteRecord("school_events", eventID); err != nil {
+		return err
+	}
+	if s.bus != nil {
+		s.bus.Publish(protocol.DomainEvent{
+			Type:      protocol.EventSchoolEventDeleted,
+			Title:     fmt.Sprintf("🗑 [%s] 학사 행사 삭제", target.Title),
+			Message:   fmt.Sprintf("%s 행사가 삭제되어 해당 일자 수업·결보강 대기가 자동 정리되었습니다.", target.EventDate),
+			ActorName: actorName,
+			Payload:   *target,
+		})
+		if target.Status == protocol.StatusApproved && target.LinkType == protocol.EventLinkBellChange {
+			effective, _ := s.EffectiveBellSchedule(time.Now().Format("2006-01-02"))
+			s.bus.Publish(protocol.DomainEvent{
+				Type:      protocol.EventBellScheduleChanged,
+				Title:     "⏰ 시종시간 변경 행사 삭제로 시종표 원복",
+				Message:   fmt.Sprintf("%s 시종 변경 행사가 삭제되어 해당 일자 시종시간표가 복원되었습니다.", target.EventDate),
+				ActorName: actorName,
+				Payload:   effective,
+			})
+		}
+	}
+	return nil
 }
