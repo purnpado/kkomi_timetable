@@ -8,8 +8,9 @@ import (
 	"kkomi-timetable/pkg/protocol"
 )
 
-// ExamPeriodSpec은 지필고사 교시별 시험 과목, 과목별 시험시간 및 고사실 정의입니다.
+// ExamPeriodSpec은 지필고사 일자·교시별 시험 과목, 과목별 시험시간 및 고사실 정의입니다.
 type ExamPeriodSpec struct {
+	ExamDate        string   `json:"examDate,omitempty"` // 다중일 시험 시 해당 교시의 시험 일자 (YYYY-MM-DD)
 	Period          int      `json:"period"`
 	Grade           int      `json:"grade"`
 	Subject         string   `json:"subject"`
@@ -134,6 +135,45 @@ func AssignSlotsWithUnavailable(
 	teachers []protocol.Teacher,
 	unavailable map[string]string,
 ) []protocol.ExamSlot {
+	var unavailByDate map[string]map[string]string
+	if len(unavailable) > 0 {
+		unavailByDate = make(map[string]map[string]string)
+		dates := collectExamDates(cfg, specs)
+		if len(dates) == 0 {
+			dates = []string{""}
+		}
+		for _, d := range dates {
+			unavailByDate[d] = unavailable
+		}
+	}
+	return AssignSlotsMultiDay(cfg, specs, teachers, unavailByDate)
+}
+
+// AssignSlotsMultiDay는 다중일(3~5일) 지필고사를 통합 편성하면서 일자별 부재 교사,
+// 연속 교시(연강) 감독 방지 및 1일 최대 감독 상한·연간 균등화를 동시 보장합니다.
+func AssignSlotsMultiDay(
+	cfg protocol.ExamConfig,
+	specs []ExamPeriodSpec,
+	teachers []protocol.Teacher,
+	unavailByDate map[string]map[string]string,
+) []protocol.ExamSlot {
+	sortedSpecs := append([]ExamPeriodSpec(nil), specs...)
+	sort.SliceStable(sortedSpecs, func(i, j int) bool {
+		di, dj := effectiveSpecDate(cfg, sortedSpecs[i]), effectiveSpecDate(cfg, sortedSpecs[j])
+		if di != dj {
+			return di < dj
+		}
+		if sortedSpecs[i].Period != sortedSpecs[j].Period {
+			return sortedSpecs[i].Period < sortedSpecs[j].Period
+		}
+		return sortedSpecs[i].Grade < sortedSpecs[j].Grade
+	})
+
+	allDates := collectExamDates(cfg, sortedSpecs)
+	if len(allDates) == 0 {
+		allDates = []string{""}
+	}
+
 	var slots []protocol.ExamSlot
 	load := make(map[string]*roleLoad, len(teachers))
 	var regularTeachers, honoraryParents []protocol.Teacher
@@ -146,8 +186,17 @@ func AssignSlotsWithUnavailable(
 		if protocol.IsSystemAdminAccount(t) {
 			continue
 		}
-		if unavailable != nil && unavailable[t.ID] != "" {
-			continue
+		if len(unavailByDate) > 0 {
+			availAny := false
+			for _, d := range allDates {
+				if !isUnavailableOnDate(unavailByDate, d, t.ID) {
+					availAny = true
+					break
+				}
+			}
+			if !availAny {
+				continue
+			}
 		}
 		m, s, c, tot := EffectiveBaseCounts(t)
 		load[t.ID] = &roleLoad{Main: m, Sub: s, Corridor: c, Total: tot}
@@ -161,25 +210,45 @@ func AssignSlotsWithUnavailable(
 		balanceMode = "TOTAL_AND_ROLE"
 	}
 
-	// 동일 날짜·교시에 동시 진행되는 다학년/다과목 시험끼리 교사 중복 배정 방지
-	usedPerPeriod := make(map[string]map[string]bool)
-	for _, spec := range specs {
-		periodKey := fmt.Sprintf("%s#%d", cfg.ExamDate, spec.Period)
-		if usedPerPeriod[periodKey] == nil {
-			usedPerPeriod[periodKey] = make(map[string]bool)
+	usage := &slotUsageMaps{
+		usedPerPeriod: make(map[string]map[string]bool),
+		dailyPeriods:  make(map[string]map[string]map[int]bool),
+		dailyCount:    make(map[string]map[string]int),
+	}
+
+	for _, spec := range sortedSpecs {
+		examDate := effectiveSpecDate(cfg, spec)
+		periodKey := fmt.Sprintf("%s#%d", examDate, spec.Period)
+		if usage.usedPerPeriod[periodKey] == nil {
+			usage.usedPerPeriod[periodKey] = make(map[string]bool)
 		}
-		usedInPeriod := usedPerPeriod[periodKey]
+		usedInPeriod := usage.usedPerPeriod[periodKey]
+		ctx := rolePickCtx{
+			examDate:      examDate,
+			period:        spec.Period,
+			balanceMode:   balanceMode,
+			avoidConsec:   cfg.AvoidConsecutive,
+			maxDaily:      cfg.MaxDailyPerTeacher,
+			unavailByDate: unavailByDate,
+			usage:         usage,
+		}
 
 		// 1단계: 해당 교시 시험 과목 담당교사를 해당 학년 층 복도감독으로 최우선 배치
 		corridorAssigned := false
 		if cfg.SubjectTeacherPolicy == "" || cfg.SubjectTeacherPolicy == protocol.SubjectModeCorridorFirst {
 			var subjCands []protocol.Teacher
 			for _, t := range regularTeachers {
-				if roomOrSpecMatchesTeacherSubject("", spec.Subject, t.Subject) && !usedInPeriod[t.ID] {
+				if !usedInPeriod[t.ID] && !isUnavailableOnDate(unavailByDate, examDate, t.ID) &&
+					roomOrSpecMatchesTeacherSubject("", spec.Subject, t.Subject) {
 					subjCands = append(subjCands, t)
 				}
 			}
 			sort.Slice(subjCands, func(i, j int) bool {
+				ci := ctx.penalty(subjCands[i].ID)
+				cj := ctx.penalty(subjCands[j].ID)
+				if ci != cj {
+					return ci < cj
+				}
 				li, lj := load[subjCands[i].ID], load[subjCands[j].ID]
 				if li.Total != lj.Total {
 					return li.Total < lj.Total
@@ -187,19 +256,23 @@ func AssignSlotsWithUnavailable(
 				if li.Corridor != lj.Corridor {
 					return li.Corridor < lj.Corridor
 				}
+				di, dj := usage.dailyCount[examDate][subjCands[i].ID], usage.dailyCount[examDate][subjCands[j].ID]
+				if di != dj {
+					return di < dj
+				}
 				return subjCands[i].ID < subjCands[j].ID
 			})
 			if len(subjCands) > 0 {
 				t := subjCands[0]
-				usedInPeriod[t.ID] = true
+				usage.mark(t.ID, examDate, spec.Period, true)
 				load[t.ID].add("CORRIDOR", 1)
 				slots = append(slots, buildExamSlot(cfg, spec, "CORRIDOR", fmt.Sprintf("%d학년 층 복도감독 (%s 과목 질의응답)", spec.Grade, spec.Subject), t, "담당과목 시험 교시 복도감독 우선배치"))
 				corridorAssigned = true
 			}
 		}
 		if !corridorAssigned {
-			if cand := pickBestTeacherForRole(regularTeachers, usedInPeriod, load, "", spec.Subject, true, "CORRIDOR", balanceMode); cand != nil {
-				usedInPeriod[cand.ID] = true
+			if cand := pickBestTeacherForRole(regularTeachers, load, "", spec.Subject, true, "CORRIDOR", ctx); cand != nil {
+				usage.mark(cand.ID, examDate, spec.Period, true)
 				load[cand.ID].add("CORRIDOR", 1)
 				slots = append(slots, buildExamSlot(cfg, spec, "CORRIDOR", fmt.Sprintf("%d학년 층 복도감독", spec.Grade), *cand, "복도감독 배치"))
 			}
@@ -207,8 +280,8 @@ func AssignSlotsWithUnavailable(
 
 		// 2단계: 모든 고사장의 정감독(MAIN)을 우선 일괄 선발 (정·부감독 균형 보장)
 		for _, room := range spec.ClassRooms {
-			if mainT := pickBestTeacherForRole(regularTeachers, usedInPeriod, load, room, spec.Subject, false, "MAIN", balanceMode); mainT != nil {
-				usedInPeriod[mainT.ID] = true
+			if mainT := pickBestTeacherForRole(regularTeachers, load, room, spec.Subject, false, "MAIN", ctx); mainT != nil {
+				usage.mark(mainT.ID, examDate, spec.Period, true)
 				load[mainT.ID].add("MAIN", 1)
 				slots = append(slots, buildExamSlot(cfg, spec, "MAIN", room+" 고사장", *mainT, ""))
 			}
@@ -220,15 +293,15 @@ func AssignSlotsWithUnavailable(
 				continue
 			}
 			if cfg.HonoraryParentOn {
-				if parent := pickHonoraryParent(honoraryParents, usedInPeriod, room, spec.Grade); parent != nil {
-					usedInPeriod[parent.ID] = true
+				if parent := pickHonoraryParent(honoraryParents, usedInPeriod, unavailByDate, examDate, room, spec.Grade); parent != nil {
+					usage.mark(parent.ID, examDate, spec.Period, true)
 					slots = append(slots, buildExamSlot(cfg, spec, "HONORARY", room+" 고사장", *parent, "학부모 명예감독 (자녀 학년/반 자동 배제)"))
 					continue
 				}
 			}
 			if cfg.DeputyMode {
-				if subT := pickBestTeacherForRole(regularTeachers, usedInPeriod, load, room, spec.Subject, false, "SUB", balanceMode); subT != nil {
-					usedInPeriod[subT.ID] = true
+				if subT := pickBestTeacherForRole(regularTeachers, load, room, spec.Subject, false, "SUB", ctx); subT != nil {
+					usage.mark(subT.ID, examDate, spec.Period, true)
 					load[subT.ID].add("SUB", 1)
 					slots = append(slots, buildExamSlot(cfg, spec, "SUB", room+" 고사장", *subT, ""))
 				}
@@ -236,26 +309,56 @@ func AssignSlotsWithUnavailable(
 		}
 	}
 
-	// 4단계: 연간 총 감독횟수 및 정·부감독 역할 편차 평탄화 패스
-	equalizeAnnualLoads(slots, regularTeachers, load, cfg.DeputyMode)
+	// 4단계: 연간 총 감독횟수·정/부감독 편차 평탄화 (일자별 부재·일일 상한·연강 제약 준수)
+	equalizeAnnualLoadsWithConstraints(slots, regularTeachers, load, cfg.DeputyMode, unavailByDate, cfg.AvoidConsecutive, cfg.MaxDailyPerTeacher)
+	// 5단계: 연강 감독 방지 옵션 시 잔여 연강 쌍 해소
+	if cfg.AvoidConsecutive {
+		resolveConsecutivePairs(slots, regularTeachers, load, unavailByDate, cfg.MaxDailyPerTeacher)
+	}
 	sortSlotsOrder(slots)
 	return slots
 }
 
+type rolePickCtx struct {
+	examDate      string
+	period        int
+	balanceMode   string
+	avoidConsec   bool
+	maxDaily      int
+	unavailByDate map[string]map[string]string
+	usage         *slotUsageMaps
+}
+
+func (c rolePickCtx) penalty(teacherID string) int {
+	p := 0
+	if c.maxDaily > 0 && c.usage.dailyCount[c.examDate][teacherID] >= c.maxDaily {
+		p += 10
+	}
+	if c.avoidConsec && isConsecutivePeriod(c.usage.dailyPeriods[c.examDate][teacherID], c.period) {
+		p += 4
+	}
+	return p
+}
+
 func buildExamSlot(cfg protocol.ExamConfig, spec ExamPeriodSpec, role, roomName string, t protocol.Teacher, note string) protocol.ExamSlot {
 	suffix := strings.ToLower(role)
+	examDate := effectiveSpecDate(cfg, spec)
+	dateSeg := examDate
+	if dateSeg == "" {
+		dateSeg = "d0"
+	}
 	if role == "CORRIDOR" {
 		return protocol.ExamSlot{
-			ID:     fmt.Sprintf("slot-%s-p%d-g%d-corr-%s", cfg.ID, spec.Period, spec.Grade, t.ID),
-			ExamID: cfg.ID, ExamDate: cfg.ExamDate, Period: spec.Period, StartTime: spec.StartTime,
+			ID:     fmt.Sprintf("slot-%s-%s-p%d-g%d-corr-%s", cfg.ID, dateSeg, spec.Period, spec.Grade, t.ID),
+			ExamID: cfg.ID, ExamDate: examDate, Period: spec.Period, StartTime: spec.StartTime,
 			EndTime: spec.EndTime, DurationMinutes: spec.DurationMinutes, Grade: spec.Grade, Subject: spec.Subject,
 			SlotRole: role, RoomName: roomName, TeacherID: t.ID, TeacherName: t.Name, Note: note,
 		}
 	}
 	roomCode := strings.TrimSuffix(roomName, " 고사장")
 	return protocol.ExamSlot{
-		ID:     fmt.Sprintf("slot-%s-p%d-g%d-%s-%s", cfg.ID, spec.Period, spec.Grade, roomCode, suffix),
-		ExamID: cfg.ID, ExamDate: cfg.ExamDate, Period: spec.Period, StartTime: spec.StartTime,
+		ID:     fmt.Sprintf("slot-%s-%s-p%d-g%d-%s-%s", cfg.ID, dateSeg, spec.Period, spec.Grade, roomCode, suffix),
+		ExamID: cfg.ID, ExamDate: examDate, Period: spec.Period, StartTime: spec.StartTime,
 		EndTime: spec.EndTime, DurationMinutes: spec.DurationMinutes, Grade: spec.Grade, Subject: spec.Subject,
 		SlotRole: role, RoomName: roomName, TeacherID: t.ID, TeacherName: t.Name, Note: note,
 	}
@@ -263,18 +366,19 @@ func buildExamSlot(cfg protocol.ExamConfig, spec ExamPeriodSpec, role, roomName 
 
 func pickBestTeacherForRole(
 	teachers []protocol.Teacher,
-	used map[string]bool,
 	load map[string]*roleLoad,
 	roomLabel string,
 	forbiddenSubject string,
 	allowSubject bool,
 	targetRole string,
-	balanceMode string,
+	ctx rolePickCtx,
 ) *protocol.Teacher {
 	baseClass := extractRoomBaseClass(roomLabel)
+	pk := fmt.Sprintf("%s#%d", ctx.examDate, ctx.period)
+	used := ctx.usage.usedPerPeriod[pk]
 	var candidates []protocol.Teacher
 	for _, t := range teachers {
-		if used[t.ID] {
+		if used[t.ID] || isUnavailableOnDate(ctx.unavailByDate, ctx.examDate, t.ID) {
 			continue
 		}
 		if baseClass != "" && strings.EqualFold(strings.TrimSpace(t.HomeroomClass), baseClass) {
@@ -289,8 +393,12 @@ func pickBestTeacherForRole(
 		return nil
 	}
 	sort.Slice(candidates, func(i, j int) bool {
+		pi, pj := ctx.penalty(candidates[i].ID), ctx.penalty(candidates[j].ID)
+		if pi != pj {
+			return pi < pj
+		}
 		li, lj := load[candidates[i].ID], load[candidates[j].ID]
-		if balanceMode == "STRICT_ROLE" {
+		if ctx.balanceMode == "STRICT_ROLE" {
 			ri, rj := roleCount(li, targetRole), roleCount(lj, targetRole)
 			if ri != rj {
 				return ri < rj
@@ -306,6 +414,10 @@ func pickBestTeacherForRole(
 			if ri != rj {
 				return ri < rj
 			}
+		}
+		di, dj := ctx.usage.dailyCount[ctx.examDate][candidates[i].ID], ctx.usage.dailyCount[ctx.examDate][candidates[j].ID]
+		if di != dj {
+			return di < dj
 		}
 		if (candidates[i].HomeroomClass == "") != (candidates[j].HomeroomClass == "") {
 			return candidates[i].HomeroomClass == ""
@@ -328,11 +440,17 @@ func roleCount(l *roleLoad, role string) int {
 	return l.Total
 }
 
-func pickHonoraryParent(parents []protocol.Teacher, used map[string]bool, roomClass string, grade int) *protocol.Teacher {
+func pickHonoraryParent(
+	parents []protocol.Teacher,
+	used map[string]bool,
+	unavailByDate map[string]map[string]string,
+	examDate, roomClass string,
+	grade int,
+) *protocol.Teacher {
 	gradePrefix := fmt.Sprintf("%d-", grade)
 	for i := range parents {
 		p := parents[i]
-		if used[p.ID] {
+		if used[p.ID] || isUnavailableOnDate(unavailByDate, examDate, p.ID) {
 			continue
 		}
 		childClass := strings.TrimSpace(p.ParentOfStudentClass)
@@ -347,6 +465,9 @@ func pickHonoraryParent(parents []protocol.Teacher, used map[string]bool, roomCl
 func sortSlotsOrder(slots []protocol.ExamSlot) {
 	roleRank := map[string]int{"CORRIDOR": 0, "MAIN": 1, "SUB": 2, "HONORARY": 3}
 	sort.SliceStable(slots, func(i, j int) bool {
+		if slots[i].ExamDate != slots[j].ExamDate {
+			return slots[i].ExamDate < slots[j].ExamDate
+		}
 		if slots[i].Period != slots[j].Period {
 			return slots[i].Period < slots[j].Period
 		}

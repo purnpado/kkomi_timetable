@@ -81,17 +81,20 @@ type ExamFairnessStat struct {
 
 // ExamFairnessSummary는 1년간 전교원 감독 횟수 균등 배정 통계 및 교사별 시수표입니다.
 type ExamFairnessSummary struct {
-	EligibleCount int                `json:"eligibleCount"`
-	ExemptCount   int                `json:"exemptCount"`
-	DeputyMode    bool               `json:"deputyMode"`
-	BalanceMode   string             `json:"balanceMode"`
-	MinTotal      int                `json:"minTotal"`
-	MaxTotal      int                `json:"maxTotal"`
-	MaxGap        int                `json:"maxGap"`
-	MinMain       int                `json:"minMain"`
-	MaxMain       int                `json:"maxMain"`
-	MainGap       int                `json:"mainGap"`
-	Stats         []ExamFairnessStat `json:"stats"`
+	EligibleCount        int                `json:"eligibleCount"`
+	ExemptCount          int                `json:"exemptCount"`
+	DeputyMode           bool               `json:"deputyMode"`
+	BalanceMode          string             `json:"balanceMode"`
+	ExamDayCount         int                `json:"examDayCount"`
+	ConsecutivePairCount int                `json:"consecutivePairCount"`
+	MaxDailyAssigned     int                `json:"maxDailyAssigned"`
+	MinTotal             int                `json:"minTotal"`
+	MaxTotal             int                `json:"maxTotal"`
+	MaxGap               int                `json:"maxGap"`
+	MinMain              int                `json:"minMain"`
+	MaxMain              int                `json:"maxMain"`
+	MainGap              int                `json:"mainGap"`
+	Stats                []ExamFairnessStat `json:"stats"`
 }
 
 // ConstraintType은 교사별 시간표 배정 제약(절대 금지·회의 고정 공강·희망 공강) 유형입니다.

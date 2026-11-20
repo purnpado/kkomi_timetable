@@ -2,6 +2,7 @@ package internal_exam
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -71,6 +72,9 @@ func (s *Service) ListSpecs() []ExamPeriodSpec {
 		return DefaultPeriodSpecs()
 	}
 	sort.Slice(specs, func(i, j int) bool {
+		if specs[i].ExamDate != specs[j].ExamDate {
+			return specs[i].ExamDate < specs[j].ExamDate
+		}
 		if specs[i].Period != specs[j].Period {
 			return specs[i].Period < specs[j].Period
 		}
@@ -104,7 +108,15 @@ func (s *Service) checkAndUnsealDue(now time.Time) {
 	today := now.Format("2006-01-02")
 	hhmm := now.Format("15:04")
 	for _, cfg := range cfgs {
-		if cfg.IsSealed && !cfg.InstantRevealMode && cfg.ExamDate == today && cfg.UnsealTime != "" && hhmm >= cfg.UnsealTime {
+		if !cfg.IsSealed || cfg.InstantRevealMode || cfg.UnsealTime == "" || hhmm < cfg.UnsealTime {
+			continue
+		}
+		dates := collectExamDates(cfg, nil)
+		if len(dates) > 1 {
+			if slices.Contains(dates, today) && !slices.Contains(cfg.UnsealedDates, today) {
+				_, _ = s.UnsealExamDate(today, "자동공개 스케줄러")
+			}
+		} else if cfg.ExamDate == today {
 			_, _ = s.UnsealExam(cfg.ID, "자동공개 스케줄러")
 		}
 	}
@@ -150,16 +162,27 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 		cfg.IsSealed = false
 	}
 	cfg.CountsCommitted = false
+	cfg.UnsealedDates = nil
+	cfg.MaxDailyPerTeacher = max(0, cfg.MaxDailyPerTeacher)
 	if len(specs) == 0 {
 		specs = s.ListSpecs()
+	}
+	for i := range specs {
+		if strings.TrimSpace(specs[i].ExamDate) == "" && strings.TrimSpace(cfg.ExamDate) != "" {
+			specs[i].ExamDate = strings.TrimSpace(cfg.ExamDate)
+		}
+	}
+	cfg.ExamDates = collectExamDates(cfg, specs)
+	if strings.TrimSpace(cfg.ExamDate) == "" && len(cfg.ExamDates) > 0 {
+		cfg.ExamDate = cfg.ExamDates[0]
 	}
 
 	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
 	if err != nil {
 		return nil, err
 	}
-	unavail := buildUnavailableTeachersForDate(s.store, cfg.ExamDate)
-	slots := AssignSlotsWithUnavailable(cfg, specs, teachers, unavail)
+	unavailByDate := buildUnavailableByDate(s.store, cfg.ExamDates)
+	slots := AssignSlotsMultiDay(cfg, specs, teachers, unavailByDate)
 
 	if err := s.store.WithTx(func(tx *database.TxStore) error {
 		if cErr := tx.ClearCollections("exam_specs", "exam_configs", "exam_slots"); cErr != nil {
@@ -185,10 +208,14 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 
 	if s.bus != nil {
 		if cfg.IsSealed {
+			msg := fmt.Sprintf("감독 교시만 안내되며 고사장은 %s 당일 %s에 일괄 공개됩니다.", cfg.ExamDate, cfg.UnsealTime)
+			if len(cfg.ExamDates) > 1 {
+				msg = fmt.Sprintf("%d일간 시험(%s~) 감독 배정이 봉인되었으며 각 시험 당일 %s에 순차 공개됩니다.", len(cfg.ExamDates), cfg.ExamDates[0], cfg.UnsealTime)
+			}
 			s.bus.Publish(protocol.DomainEvent{
 				Type:    protocol.EventExamSealed,
 				Title:   fmt.Sprintf("[%s] 감독 배정 사전 봉인 완료", cfg.Title),
-				Message: fmt.Sprintf("감독 교시만 안내되며 고사장은 %s 당일 %s에 일괄 공개됩니다.", cfg.ExamDate, cfg.UnsealTime),
+				Message: msg,
 				Payload: cfg,
 			})
 		}
@@ -203,7 +230,7 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 }
 
 // ListSlotsForViewer는 조회자의 권한(교내 시험감독 관리자 vs 일반 교사)에 따라
-// 봉인 상태일 경우 서버 패킷 레벨에서 고사장명을 마스킹("🔒 당일 08:20 공개")해 반환합니다.
+// 봉인 상태인 시험일의 고사장명을 서버 패킷 레벨에서 마스킹("🔒 당일 08:20 공개")해 반환합니다.
 func (s *Service) ListSlotsForViewer(isExamAdmin bool) ([]protocol.ExamSlot, protocol.ExamConfig, error) {
 	cfg, err := s.GetConfig()
 	if err != nil {
@@ -214,6 +241,9 @@ func (s *Service) ListSlotsForViewer(isExamAdmin bool) ([]protocol.ExamSlot, pro
 		return nil, cfg, err
 	}
 	sort.Slice(slots, func(i, j int) bool {
+		if slots[i].ExamDate != slots[j].ExamDate {
+			return slots[i].ExamDate < slots[j].ExamDate
+		}
 		if slots[i].Period != slots[j].Period {
 			return slots[i].Period < slots[j].Period
 		}
@@ -223,8 +253,10 @@ func (s *Service) ListSlotsForViewer(isExamAdmin bool) ([]protocol.ExamSlot, pro
 	if cfg.IsSealed && !isExamAdmin {
 		maskedMsg := fmt.Sprintf("🔒 당일 %s 공개", cfg.UnsealTime)
 		for i := range slots {
-			slots[i].RoomName = maskedMsg
-			slots[i].ActualRoomHidden = true
+			if isSlotSealed(cfg, slots[i].ExamDate) {
+				slots[i].RoomName = maskedMsg
+				slots[i].ActualRoomHidden = true
+			}
 		}
 	}
 	return slots, cfg, nil
@@ -299,7 +331,21 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 		}
 		recs = append(recs, t)
 	}
+	usage := buildSlotUsageMaps(slots)
+	cfg, _ := s.GetConfig()
 	sort.Slice(recs, func(i, j int) bool {
+		if cfg.MaxDailyPerTeacher > 0 {
+			capI := usage.dailyCount[target.ExamDate][recs[i].ID] >= cfg.MaxDailyPerTeacher
+			capJ := usage.dailyCount[target.ExamDate][recs[j].ID] >= cfg.MaxDailyPerTeacher
+			if capI != capJ {
+				return !capI
+			}
+		}
+		consecI := isConsecutivePeriod(usage.dailyPeriods[target.ExamDate][recs[i].ID], target.Period)
+		consecJ := isConsecutivePeriod(usage.dailyPeriods[target.ExamDate][recs[j].ID], target.Period)
+		if consecI != consecJ {
+			return !consecI
+		}
 		if (recs[i].HomeroomClass == "") != (recs[j].HomeroomClass == "") {
 			return recs[i].HomeroomClass == ""
 		}
@@ -347,7 +393,7 @@ func (s *Service) ApplySubstitute(slotID, newTeacherID, actorName string) (*prot
 				cfg, _ := s.GetConfig()
 				evtSlot := slots[i]
 				roomText := evtSlot.RoomName
-				if cfg.IsSealed {
+				if isSlotSealed(cfg, evtSlot.ExamDate) {
 					roomText = fmt.Sprintf("🔒 당일 %s 공개", cfg.UnsealTime)
 					evtSlot.RoomName = roomText
 					evtSlot.ActualRoomHidden = true
@@ -373,108 +419,4 @@ func (s *Service) ApplySubstitute(slotID, newTeacherID, actorName string) (*prot
 		}
 	}
 	return nil, fmt.Errorf("감독 슬롯(%s)을 찾을 수 없습니다", slotID)
-}
-
-// ElectiveRoomItem은 고교학점제 선택과목 분반 또는 교과교실 기반 시험 고사실 항목입니다.
-type ElectiveRoomItem struct {
-	Label     string `json:"label"`
-	Subject   string `json:"subject"`
-	Grade     int    `json:"grade"`
-	GroupName string `json:"groupName"`
-}
-
-// ExamRoomCatalog는 학급 고사실, 교과교실, 고교선택과목 고사실 및 별도고사실 목록입니다.
-type ExamRoomCatalog struct {
-	GradeClassRooms map[int][]string   `json:"gradeClassRooms"`
-	SpecialRooms    []string           `json:"specialRooms"`
-	ElectiveRooms   []ElectiveRoomItem `json:"electiveRooms"`
-	IsolatedRooms   []string           `json:"isolatedRooms"`
-}
-
-// BuildRoomCatalog는 학교 기본설정·시수표·시간표에서 정규반, 교과교실, 고교선택과목 고사실 및 별도 고사실 목록을 수집합니다.
-func (s *Service) BuildRoomCatalog() ExamRoomCatalog {
-	cat := ExamRoomCatalog{
-		GradeClassRooms: map[int][]string{},
-		IsolatedRooms:   []string{"별도고사실(독감·감염병)", "특수학급고사실"},
-	}
-	cfgs, _ := database.LoadCollection[protocol.SchoolConfig](s.store, "school_configs")
-	specialSet := make(map[string]bool)
-	classSets := map[int]map[string]bool{1: {}, 2: {}, 3: {}}
-	for _, sc := range cfgs {
-		for g, cnt := range sc.GradeClassCounts {
-			if classSets[g] == nil {
-				classSets[g] = map[string]bool{}
-			}
-			for i := 1; i <= cnt; i++ {
-				classSets[g][fmt.Sprintf("%d-%d", g, i)] = true
-			}
-		}
-		for _, rm := range sc.SpecialRooms {
-			if rm.Name != "" {
-				specialSet[rm.Name] = true
-			}
-		}
-	}
-
-	electiveSeen := make(map[string]bool)
-	cells, _ := database.LoadCollection[protocol.TimetableCell](s.store, "timetable_cells")
-	for _, c := range cells {
-		if c.Grade >= 1 && c.Grade <= 3 && c.ClassName != "" {
-			classSets[c.Grade][c.ClassName] = true
-		}
-		if c.Room != "" && c.Room != c.ClassName+"교실" {
-			specialSet[c.Room] = true
-		}
-		if c.ElectiveGroup != "" || (c.Room != "" && c.Room != c.ClassName+"교실") {
-			roomHost := c.Room
-			if roomHost == "" {
-				roomHost = c.ClassName
-			}
-			label := fmt.Sprintf("%s(%s)", roomHost, c.Subject)
-			if !electiveSeen[label] {
-				electiveSeen[label] = true
-				cat.ElectiveRooms = append(cat.ElectiveRooms, ElectiveRoomItem{
-					Label: label, Subject: c.Subject, Grade: c.Grade, GroupName: c.ElectiveGroup,
-				})
-			}
-		}
-	}
-
-	loads, _ := database.LoadCollection[protocol.TeachingLoad](s.store, "teaching_loads")
-	for _, ld := range loads {
-		if ld.DedicatedRoom != "" {
-			specialSet[ld.DedicatedRoom] = true
-		}
-		if ld.SimultaneousGroup != "" || ld.DedicatedRoom != "" {
-			host := ld.DedicatedRoom
-			if host == "" {
-				host = fmt.Sprintf("%d학년분반", ld.Grade)
-			}
-			label := fmt.Sprintf("%s(%s)", host, ld.Subject)
-			if !electiveSeen[label] {
-				electiveSeen[label] = true
-				cat.ElectiveRooms = append(cat.ElectiveRooms, ElectiveRoomItem{
-					Label: label, Subject: ld.Subject, Grade: ld.Grade, GroupName: ld.SimultaneousGroup,
-				})
-			}
-		}
-	}
-
-	for g := 1; g <= 3; g++ {
-		for cls := range classSets[g] {
-			cat.GradeClassRooms[g] = append(cat.GradeClassRooms[g], cls)
-		}
-		sort.Strings(cat.GradeClassRooms[g])
-	}
-	for rm := range specialSet {
-		cat.SpecialRooms = append(cat.SpecialRooms, rm)
-	}
-	sort.Strings(cat.SpecialRooms)
-	sort.Slice(cat.ElectiveRooms, func(i, j int) bool {
-		if cat.ElectiveRooms[i].Grade != cat.ElectiveRooms[j].Grade {
-			return cat.ElectiveRooms[i].Grade < cat.ElectiveRooms[j].Grade
-		}
-		return cat.ElectiveRooms[i].Label < cat.ElectiveRooms[j].Label
-	})
-	return cat
 }

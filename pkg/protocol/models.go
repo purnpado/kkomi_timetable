@@ -182,16 +182,20 @@ const (
 // ExamConfig는 교내 지필고사 감독 배정 옵션 설정입니다.
 type ExamConfig struct {
 	ID                   string              `json:"id"`
-	Title                string              `json:"title"`                 // 예: "2026학년도 2학기 기말고사"
-	ExamDate             string              `json:"examDate"`              // 시험 일자 (YYYY-MM-DD)
-	UnsealTime           string              `json:"unsealTime"`            // 당일 고사장 자동 공개 시각 (기본 "08:20")
-	IsSealed             bool                `json:"isSealed"`              // 사전 봉인 여부 (true면 고사장 비공개)
-	InstantRevealMode    bool                `json:"instantRevealMode"`     // 학교 설정: 즉시 공개 모드 여부
-	DeputyMode           bool                `json:"deputyMode"`            // 정·부감독 2인 선택 운영 (false면 1인 단독)
-	BalanceMode          string              `json:"balanceMode,omitempty"`     // "TOTAL_AND_ROLE"(연간총계+역할균형) | "STRICT_ROLE"(정·부 각각 균등)
-	HonoraryParentOn     bool                `json:"honoraryParentOn"`          // 학부모 명예감독 선택적(On/Off) 투입
-	SubjectTeacherPolicy SubjectHandlingMode `json:"subjectTeacherPolicy"`      // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
-	CountsCommitted      bool                `json:"countsCommitted,omitempty"` // 이번 시험 감독 횟수가 연간 누적에 확정 반영되었는지 여부 (이중 누적 방지)
+	Title                string              `json:"title"`                       // 예: "2026학년도 2학기 기말고사"
+	ExamDate             string              `json:"examDate"`                    // 시험 일자 (YYYY-MM-DD, 다중일 시 시작일)
+	ExamDates            []string            `json:"examDates,omitempty"`         // 다중일(3~5일) 지필고사 일자 목록
+	UnsealedDates        []string            `json:"unsealedDates,omitempty"`     // 일자별 부분 공개가 완료된 시험 날짜 목록
+	AvoidConsecutive     bool                `json:"avoidConsecutive,omitempty"`  // 동일 일자 연속 교시(연강) 감독 방지
+	MaxDailyPerTeacher   int                 `json:"maxDailyPerTeacher,omitempty"` // 1일 1교사 최대 감독 교시 상한(0=무제한)
+	UnsealTime           string              `json:"unsealTime"`                  // 당일 고사장 자동 공개 시각 (기본 "08:20")
+	IsSealed             bool                `json:"isSealed"`                    // 사전 봉인 여부 (true면 고사장 비공개)
+	InstantRevealMode    bool                `json:"instantRevealMode"`           // 학교 설정: 즉시 공개 모드 여부
+	DeputyMode           bool                `json:"deputyMode"`                  // 정·부감독 2인 선택 운영 (false면 1인 단독)
+	BalanceMode          string              `json:"balanceMode,omitempty"`       // "TOTAL_AND_ROLE"(연간총계+역할균형) | "STRICT_ROLE"(정·부 각각 균등)
+	HonoraryParentOn     bool                `json:"honoraryParentOn"`            // 학부모 명예감독 선택적(On/Off) 투입
+	SubjectTeacherPolicy SubjectHandlingMode `json:"subjectTeacherPolicy"`        // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
+	CountsCommitted      bool                `json:"countsCommitted,omitempty"`   // 이번 시험 감독 횟수가 연간 누적에 확정 반영되었는지 여부 (이중 누적 방지)
 }
 
 // ExamSlot은 지필고사 교시별 고사장/복도감독 배정 항목입니다.

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/auth"
@@ -63,7 +64,21 @@ func (a *ServerApp) handleUnsealInternalExam(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	cfg, err := a.InternalExam.UnsealExam("", actor.Name)
+	var body struct {
+		ExamDate string `json:"examDate"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	var (
+		cfg protocol.ExamConfig
+		err error
+	)
+	if strings.TrimSpace(body.ExamDate) != "" {
+		cfg, err = a.InternalExam.UnsealExamDate(body.ExamDate, actor.Name)
+	} else {
+		cfg, err = a.InternalExam.UnsealExam("", actor.Name)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

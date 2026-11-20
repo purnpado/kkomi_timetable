@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from "react";
-import { Clock, Lock, Plus, RefreshCw, Shield, Trash2, Unlock, UserCheck } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FileSpreadsheet, FileText, Lock, Printer, RefreshCw, Shield, Unlock, UserCheck } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
+import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import ExamFairnessPanel from "./ExamFairnessPanel";
+import MultiDayExamEditor from "./MultiDayExamEditor";
 
 function calcMinutes(start, end) {
   if (!start || !end) return 45;
@@ -11,21 +13,24 @@ function calcMinutes(start, end) {
   return diff > 0 ? diff : 45;
 }
 
-// InternalExamView는 교내 지필고사 과목별 상이한 시험시간 편성, 복도감독 우선배치,
-// 사전 봉인/당일 아침 발표 및 당일 아침 긴급 대타를 제어합니다.
+// InternalExamView는 다중일(3~5일) 교내 지필고사 통합 편성, 연강 감독 방지,
+// 일자별 사전 봉인·공개, 당일 아침 긴급 대타 및 한글/엑셀 배정표 출력을 제어합니다.
 export default function InternalExamView({ serverUrl, user, onNotify }) {
   const [config, setConfig] = useState(null);
   const [slots, setSlots] = useState([]);
   const [specs, setSpecs] = useState([]);
   const [fairness, setFairness] = useState(null);
   const [roomCatalog, setRoomCatalog] = useState(null);
+  const [slotFilterDate, setSlotFilterDate] = useState("ALL");
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [subCandidates, setSubCandidates] = useState([]);
   const [newSubId, setNewSubId] = useState("");
 
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
   const isExamAdmin = hasRole(user, "INTERNAL_EXAM_ADMIN");
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const res = await apiFetch(serverUrl, "/api/internal-exam/slots", user.id);
       setConfig(res.config);
@@ -34,34 +39,38 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
       setFairness(res.fairness || null);
       setRoomCatalog(res.roomCatalog || null);
     } catch (err) {
-      onNotify("시험감독 조회 오류", err.message, true);
+      onNotifyRef.current?.("시험감독 조회 오류", err.message, true);
     }
-  };
+  }, [serverUrl, user?.id]);
 
-  useEffect(() => { loadData(); }, [user?.id]);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-  const updateSpec = (idx, field, val) => {
-    setSpecs((prev) =>
-      prev.map((sp, i) => {
-        if (i !== idx) return sp;
-        const next = { ...sp, [field]: val };
-        if (field === "startTime" || field === "endTime") {
-          next.durationMinutes = calcMinutes(next.startTime, next.endTime);
-        }
-        return next;
-      })
-    );
-  };
+  const examDates = useMemo(() => {
+    const set = new Set(config?.examDates || []);
+    if (config?.examDate) set.add(config.examDate);
+    slots.forEach((s) => {
+      if (s.examDate) set.add(s.examDate);
+    });
+    return Array.from(set).filter(Boolean).sort();
+  }, [config?.examDate, config?.examDates, slots]);
+
+  const visibleSlots = useMemo(
+    () => (slotFilterDate === "ALL" ? slots : slots.filter((s) => s.examDate === slotFilterDate)),
+    [slots, slotFilterDate]
+  );
 
   const handleRegenerate = async () => {
     try {
       const normalizedSpecs = specs.map((sp) => ({
         ...sp,
+        examDate: sp.examDate || config?.examDate || "",
         period: Number(sp.period),
         grade: Number(sp.grade),
         durationMinutes: Number(sp.durationMinutes) || calcMinutes(sp.startTime, sp.endTime),
         classRooms: Array.isArray(sp.classRooms)
-          ? sp.classRooms
+          ? sp.classRooms.filter(Boolean)
           : String(sp.classRooms || "")
               .split(",")
               .map((s) => s.trim())
@@ -71,20 +80,27 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
         method: "POST",
         body: JSON.stringify({ config, specs: normalizedSpecs }),
       });
-      onNotify("교내 감독 배정 완료", "과목별 시험시간과 담임 자기반 배제·복도감독 우선배치가 반영되었습니다.");
+      onNotifyRef.current?.("교내 감독 배정 완료", "다중일 시험시간·연강 방지·담임 배제 및 연간 균등화가 반영되었습니다.");
       loadData();
     } catch (err) {
-      onNotify("배정 실패", err.message, true);
+      onNotifyRef.current?.("배정 실패", err.message, true);
     }
   };
 
-  const handleUnseal = async () => {
+  const handleUnseal = async (targetDate = "") => {
     try {
-      await apiFetch(serverUrl, "/api/internal-exam/unseal", user.id, { method: "POST" });
-      onNotify("오늘 시험 고사장 발표 완료", "전 교원 PC에 고사장 배정이 일괄 공개되었습니다.", true);
+      await apiFetch(serverUrl, "/api/internal-exam/unseal", user.id, {
+        method: "POST",
+        body: JSON.stringify(targetDate ? { examDate: targetDate } : {}),
+      });
+      onNotifyRef.current?.(
+        targetDate ? `${targetDate} 고사장 발표 완료` : "전체 시험 고사장 발표 완료",
+        "전 교원 PC에 고사장 배정이 일괄 공개되었습니다.",
+        true
+      );
       loadData();
     } catch (err) {
-      onNotify("발표 실패", err.message, true);
+      onNotifyRef.current?.("발표 실패", err.message, true);
     }
   };
 
@@ -95,7 +111,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
       setSubCandidates(recs || []);
       if (recs?.length > 0) setNewSubId(recs[0].id);
     } catch (err) {
-      onNotify("대타 추천 오류", err.message, true);
+      onNotifyRef.current?.("대타 추천 오류", err.message, true);
     }
   };
 
@@ -106,13 +122,15 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
         method: "POST",
         body: JSON.stringify({ slotId: selectedSlotId, newTeacherId: newSubId }),
       });
-      onNotify("긴급 대타 교체 완료", "대체 교사에게 최상단 긴급 알림이 전송되었습니다.", true);
+      onNotifyRef.current?.("긴급 대타 교체 완료", "대체 교사에게 최상단 긴급 알림이 전송되었습니다.", true);
       setSelectedSlotId("");
       loadData();
     } catch (err) {
-      onNotify("대타 교체 실패", err.message, true);
+      onNotifyRef.current?.("대타 교체 실패", err.message, true);
     }
   };
+
+  const unsealedSet = useMemo(() => new Set(config?.unsealedDates || []), [config?.unsealedDates]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -120,207 +138,106 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: 17 }}>{config.title} ({config.examDate})</h2>
+              <h2 style={{ margin: 0, fontSize: 17 }}>
+                {config.title} (
+                {examDates.length > 1 ? `${examDates[0]} ~ ${examDates[examDates.length - 1]} · ${examDates.length}일간` : config.examDate}
+                )
+              </h2>
               <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 4 }}>
-                핵심 규칙: <b>담임 자기 반 제외</b> · <b>담당과목 교시 복도감독 우선 배치</b> · 과목별 상이 시험시간 지원
+                핵심 규칙: <b>담임 자기 반 제외</b> · <b>담당과목 교시 복도감독 우선</b> · 다중일 연강 감독 방지
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=internal-exam", "교내시험감독_배정표.hwpx").catch((err) => onNotifyRef.current?.("출력 실패", err.message, true))}
+              >
+                <FileText size={14} /> 배정표 (.hwpx)
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=internal-exam", "교내시험감독_배정_시수표.xlsx").catch((err) => onNotifyRef.current?.("엑셀 실패", err.message, true))}
+              >
+                <FileSpreadsheet size={14} /> 시수·배정 (.xlsx)
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/print?kind=internal-exam", "시험감독_인쇄판.html", { openInTab: true }).catch((err) => onNotifyRef.current?.("인쇄 실패", err.message, true))}
+              >
+                <Printer size={14} /> 인쇄판
+              </button>
               <span className={`badge ${config.isSealed ? "badge-amber" : "badge-green"}`}>
                 {config.isSealed ? <Lock size={12} /> : <Unlock size={12} />}
-                {config.isSealed ? `사전 봉인 중 (${config.unsealTime} 공개)` : "고사장 공개 상태"}
+                {config.isSealed ? `사전 봉인 (${config.unsealTime} 공개)` : "전체 공개"}
               </span>
               {isExamAdmin && config.isSealed && (
-                <button className="btn btn-primary" onClick={handleUnseal}>
-                  <Unlock size={15} /> 오늘 시험 고사장 발표하기
+                <button className="btn btn-primary btn-sm" onClick={() => handleUnseal("")}>
+                  <Unlock size={14} /> 전체 고사장 일괄 발표
                 </button>
               )}
             </div>
           </div>
 
+          {isExamAdmin && config.isSealed && examDates.length > 1 && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>일자별 부분 공개:</span>
+              {examDates.map((d) =>
+                unsealedSet.has(d) ? (
+                  <span key={d} className="badge badge-green">{d} 공개됨</span>
+                ) : (
+                  <button key={d} type="button" className="btn btn-sm" onClick={() => handleUnseal(d)}>
+                    <Unlock size={12} /> {d} 고사장 공개
+                  </button>
+                )
+              )}
+            </div>
+          )}
+
           {isExamAdmin && (
             <>
-              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center" }}>
-                <select
-                  className="select"
-                  style={{ width: 215 }}
-                  value={config.deputyMode ? "DEPUTY" : "SINGLE"}
-                  onChange={(e) => setConfig({ ...config, deputyMode: e.target.value === "DEPUTY" })}
-                >
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                <select className="select" style={{ width: 210 }} value={config.deputyMode ? "DEPUTY" : "SINGLE"} onChange={(e) => setConfig({ ...config, deputyMode: e.target.value === "DEPUTY" })}>
                   <option value="SINGLE">운영 방식: 정감독 1인 단독</option>
                   <option value="DEPUTY">운영 방식: 정·부감독 2인 공동</option>
                 </select>
-                <select
-                  className="select"
-                  style={{ width: 245 }}
-                  value={config.balanceMode || "TOTAL_AND_ROLE"}
-                  onChange={(e) => setConfig({ ...config, balanceMode: e.target.value })}
-                >
+                <select className="select" style={{ width: 240 }} value={config.balanceMode || "TOTAL_AND_ROLE"} onChange={(e) => setConfig({ ...config, balanceMode: e.target.value })}>
                   <option value="TOTAL_AND_ROLE">균등 기준: 1년 총 횟수 + 정·부 교차</option>
                   <option value="STRICT_ROLE">균등 기준: 정감독·부감독 각각 균등</option>
                 </select>
-                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={config.honoraryParentOn} onChange={(e) => setConfig({ ...config, honoraryParentOn: e.target.checked })} />
-                  학부모 명예감독 투입 (자녀 학년/반 자동 배제)
+                  학부모 명예감독 투입
                 </label>
-                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
                   <input
                     type="checkbox"
                     checked={specs.some((sp) => Array.isArray(sp.classRooms) && sp.classRooms.includes("별도고사실(독감·감염병)"))}
                     onChange={(e) => {
                       const tag = "별도고사실(독감·감염병)";
-                      setSpecs((prev) =>
-                        prev.map((sp) => {
-                          const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
-                          return {
-                            ...sp,
-                            classRooms: e.target.checked ? Array.from(new Set([...cur, tag])) : cur.filter((r) => r !== tag),
-                          };
-                        })
-                      );
+                      setSpecs((prev) => prev.map((sp) => {
+                        const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
+                        return { ...sp, classRooms: e.target.checked ? Array.from(new Set([...cur, tag])) : cur.filter((r) => r !== tag) };
+                      }));
                     }}
                   />
-                  별도 고사실(독감·감염병) 개설 (없으면 해제 · 일반교사 순환)
+                  별도 고사실 개설
                 </label>
-                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={!config.instantRevealMode} onChange={(e) => setConfig({ ...config, instantRevealMode: !e.target.checked, isSealed: !e.target.checked })} />
-                  사전 봉인 후 당일 아침 발표
+                  사전 봉인 후 당일 발표
                 </label>
-                <select
-                  className="select"
-                  style={{ width: 230 }}
-                  value={config.subjectTeacherPolicy || "CORRIDOR_FIRST"}
-                  onChange={(e) => setConfig({ ...config, subjectTeacherPolicy: e.target.value })}
-                >
-                  <option value="CORRIDOR_FIRST">담당과목 교시: 복도감독 우선 배치</option>
-                  <option value="HQ_STANDBY">담당과목 교시: 평가본부 대기/공강</option>
+                <select className="select" style={{ width: 220 }} value={config.subjectTeacherPolicy || "CORRIDOR_FIRST"} onChange={(e) => setConfig({ ...config, subjectTeacherPolicy: e.target.value })}>
+                  <option value="CORRIDOR_FIRST">담당과목: 복도감독 우선</option>
+                  <option value="HQ_STANDBY">담당과목: 평가본부 대기/공강</option>
                 </select>
                 <button className="btn btn-green btn-sm" onClick={handleRegenerate}>
-                  <RefreshCw size={14} /> 규칙·시험시간 적용 자동 배정
+                  <RefreshCw size={14} /> 규칙·다중일 통합 자동 배정
                 </button>
               </div>
-
-              <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-                  <b style={{ fontSize: 13 }}><Clock size={14} style={{ verticalAlign: "middle" }} /> 교시·과목별 시험시간 및 고사실 편성 (선택과목·교과교실·별도고사실 지원)</b>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => {
-                        const electives = roomCatalog?.electiveRooms || [];
-                        const firstG = electives[0]?.grade || 2;
-                        const roomList = electives.length > 0
-                          ? electives.slice(0, 3).map((e) => e.label)
-                          : ["세미나실A(심화수학)", "수학전용1실(심화수학)"];
-                        const subjList = electives.length > 0
-                          ? Array.from(new Set(electives.slice(0, 3).map((e) => e.subject))).join(", ")
-                          : "심화수학";
-                        setSpecs((prev) => [
-                          ...prev,
-                          { period: prev.length + 1, grade: firstG, subject: subjList, startTime: "13:10", endTime: "14:00", durationMinutes: 50, classRooms: roomList },
-                        ]);
-                      }}
-                    >
-                      <Plus size={13} /> 고교선택과목·교과교실 교시 추가
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() =>
-                        setSpecs((prev) => [
-                          ...prev,
-                          { period: prev.length + 1, grade: 1, subject: "과학", startTime: "11:45", endTime: "12:25", durationMinutes: 40, classRooms: ["1-1", "1-2"] },
-                        ])
-                      }
-                    >
-                      <Plus size={13} /> 일반 교시 추가
-                    </button>
-                  </div>
-                </div>
-                <table className="table">
-                  <thead>
-                    <tr><th>교시</th><th>학년</th><th>시험과목</th><th>시작 시각</th><th>종료 시각</th><th>시험시간(분)</th><th>고사실(쉼표 구분)</th><th>삭제</th></tr>
-                  </thead>
-                  <tbody>
-                    {specs.map((sp, idx) => (
-                      <tr key={idx}>
-                        <td><input className="input" type="number" min={1} max={7} style={{ width: 56 }} value={sp.period} onChange={(e) => updateSpec(idx, "period", e.target.value)} /></td>
-                        <td><input className="input" type="number" min={1} max={3} style={{ width: 56 }} value={sp.grade} onChange={(e) => updateSpec(idx, "grade", e.target.value)} /></td>
-                        <td><input className="input" style={{ width: 95 }} value={sp.subject} onChange={(e) => updateSpec(idx, "subject", e.target.value)} /></td>
-                        <td><input className="input" type="time" style={{ width: 118 }} value={sp.startTime || "08:50"} onChange={(e) => updateSpec(idx, "startTime", e.target.value)} /></td>
-                        <td><input className="input" type="time" style={{ width: 118 }} value={sp.endTime || "09:35"} onChange={(e) => updateSpec(idx, "endTime", e.target.value)} /></td>
-                        <td><input className="input" type="number" min={10} max={120} style={{ width: 68 }} value={sp.durationMinutes || 45} onChange={(e) => updateSpec(idx, "durationMinutes", e.target.value)} /></td>
-                        <td>
-                          <input
-                            className="input"
-                            value={Array.isArray(sp.classRooms) ? sp.classRooms.join(",") : sp.classRooms}
-                            onChange={(e) => updateSpec(idx, "classRooms", e.target.value.split(",").map((s) => s.trim()))}
-                          />
-                          <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
-                            <select
-                              className="select"
-                              style={{ fontSize: 11, padding: "2px 6px", height: 24, maxWidth: 210 }}
-                              value=""
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (!v) return;
-                                const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
-                                if (v === "__FILL_GRADE__") {
-                                  const clsList = roomCatalog?.gradeClassRooms?.[Number(sp.grade)] || [];
-                                  updateSpec(idx, "classRooms", Array.from(new Set([...cur, ...clsList])));
-                                } else {
-                                  updateSpec(idx, "classRooms", Array.from(new Set([...cur, v])));
-                                }
-                              }}
-                            >
-                              <option value="">+ 고사실 빠른 추가 (선택·교과·별도)...</option>
-                              <option value="__FILL_GRADE__">{sp.grade}학년 전체 정규반 일괄 추가</option>
-                              {(roomCatalog?.electiveRooms || []).length > 0 && (
-                                <optgroup label="고교선택과목 · 이동수업 분반">
-                                  {(roomCatalog.electiveRooms || []).map((el) => (
-                                    <option key={el.label} value={el.label}>{el.label}</option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              {(roomCatalog?.specialRooms || []).length > 0 && (
-                                <optgroup label="교과교실 · 특별실">
-                                  {(roomCatalog.specialRooms || []).map((rm) => (
-                                    <option key={rm} value={rm}>{rm}</option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              <optgroup label="특수 · 분리 고사실">
-                                {(roomCatalog?.isolatedRooms || ["별도고사실(독감·감염병)", "특수학급고사실"]).map((ir) => (
-                                  <option key={ir} value={ir}>{ir}</option>
-                                ))}
-                              </optgroup>
-                            </select>
-                            <button
-                              type="button"
-                              className="btn btn-sm"
-                              style={{ fontSize: 11, padding: "2px 6px", height: 24 }}
-                              onClick={() => {
-                                const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
-                                const tag = "별도고사실(독감·감염병)";
-                                const next = cur.includes(tag) ? cur.filter((r) => r !== tag) : [...cur, tag];
-                                updateSpec(idx, "classRooms", next);
-                              }}
-                            >
-                              + 별도고사실
-                            </button>
-                          </div>
-                        </td>
-                        <td>
-                          <button type="button" className="btn btn-sm btn-danger" onClick={() => setSpecs((prev) => prev.filter((_, i) => i !== idx))}>
-                            <Trash2 size={12} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <MultiDayExamEditor config={config} setConfig={setConfig} specs={specs} setSpecs={setSpecs} roomCatalog={roomCatalog} />
             </>
           )}
         </div>
@@ -328,7 +245,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
 
       {isExamAdmin && selectedSlotId && (
         <div className="card" style={{ background: "#fff9db", borderColor: "#ffd43b" }}>
-          <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>당일 아침 돌발 결원 긴급 대타 추천</h3>
+          <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>당일 아침 돌발 결원 긴급 대타 추천 (연강·일일상한 회피 우선)</h3>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <select className="select" style={{ width: 320 }} value={newSubId} onChange={(e) => setNewSubId(e.target.value)}>
               {subCandidates.map((t) => (
@@ -346,17 +263,32 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
       )}
 
       <div className="card">
-        <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
-          <Shield size={15} style={{ verticalAlign: "middle" }} /> 교시·과목별 시험감독 배정표
-        </h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>
+            <Shield size={15} style={{ verticalAlign: "middle" }} /> 일자·교시별 시험감독 배정표 ({visibleSlots.length}건)
+          </h3>
+          {examDates.length > 1 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button type="button" className={`btn btn-sm ${slotFilterDate === "ALL" ? "btn-primary" : ""}`} onClick={() => setSlotFilterDate("ALL")}>
+                전체 일자
+              </button>
+              {examDates.map((d, idx) => (
+                <button key={d} type="button" className={`btn btn-sm ${slotFilterDate === d ? "btn-primary" : ""}`} onClick={() => setSlotFilterDate(d)}>
+                  {idx + 1}일차 ({d})
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <table className="table">
           <thead>
-            <tr><th>교시 · 시험시간</th><th>학년/과목</th><th>역할</th><th>배정 고사장 / 복도</th><th>감독교사</th><th>비고</th>{isExamAdmin && <th>긴급대타</th>}</tr>
+            <tr><th>시험일자 · 교시 · 시험시간</th><th>학년/과목</th><th>역할</th><th>배정 고사장 / 복도</th><th>감독교사</th><th>비고</th>{isExamAdmin && <th>긴급대타</th>}</tr>
           </thead>
           <tbody>
-            {slots.map((s) => (
+            {visibleSlots.map((s) => (
               <tr key={s.id}>
                 <td>
+                  <span style={{ fontSize: 12, color: "#475569", marginRight: 6 }}>{s.examDate}</span>
                   <b>{s.period}교시</b>{" "}
                   {s.startTime && (
                     <span className="badge badge-blue" style={{ marginLeft: 4 }}>
@@ -370,15 +302,11 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
                     {s.slotRole === "MAIN" ? "정감독" : s.slotRole === "SUB" ? "부감독" : s.slotRole === "CORRIDOR" ? "복도감독" : "학부모명예"}
                   </span>
                 </td>
-                <td>
-                  {s.actualRoomHidden ? <span className="badge badge-amber">{s.roomName}</span> : <b>{s.roomName}</b>}
-                </td>
+                <td>{s.actualRoomHidden ? <span className="badge badge-amber">{s.roomName}</span> : <b>{s.roomName}</b>}</td>
                 <td><b>{s.teacherName}</b></td>
                 <td style={{ fontSize: 12, color: "#64748b" }}>{s.note || "-"}</td>
                 {isExamAdmin && (
-                  <td>
-                    <button className="btn btn-sm" onClick={() => handleLoadSubCandidates(s.id)}>대타 교체</button>
-                  </td>
+                  <td><button className="btn btn-sm" onClick={() => handleLoadSubCandidates(s.id)}>대타 교체</button></td>
                 )}
               </tr>
             ))}
@@ -386,14 +314,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
         </table>
       </div>
 
-      <ExamFairnessPanel
-        serverUrl={serverUrl}
-        user={user}
-        fairness={fairness}
-        isExamAdmin={isExamAdmin}
-        onRefresh={loadData}
-        onNotify={onNotify}
-      />
+      <ExamFairnessPanel serverUrl={serverUrl} user={user} fairness={fairness} isExamAdmin={isExamAdmin} onRefresh={loadData} onNotify={onNotify} />
     </div>
   );
 }

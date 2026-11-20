@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CalendarDays, ClipboardList, Columns, Download, Globe, KeyRound, LayoutDashboard,
+  BarChart3, CalendarDays, ClipboardList, Columns, Download, Globe, KeyRound, LayoutDashboard,
   LogOut, Search, ServerCog, ShieldCheck, TableProperties,
 } from "lucide-react";
 import {
@@ -20,6 +20,7 @@ import TimetableView from "./features/timetable/TimetableView";
 import InternalExamView from "./features/internal-exam/InternalExamView";
 import ExternalExamView from "./features/external-exam/ExternalExamView";
 import CalendarView from "./features/calendar/CalendarView";
+import ReportsSettlementView from "./features/reports/ReportsSettlementView";
 import AdminRemoteView from "./features/admin-remote/AdminRemoteView";
 
 const NAV_ITEMS = [
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { id: "internal-exam", label: "교내 시험감독", icon: ShieldCheck },
   { id: "external-exam", label: "외부 시험감독", icon: Globe },
   { id: "calendar", label: "주중·월중 행사", icon: CalendarDays },
+  { id: "reports", label: "통계·정산·공문", icon: BarChart3 },
   { id: "admin-remote", label: "시스템·초기화·권한", icon: ServerCog, adminOnly: true },
 ];
 
@@ -405,6 +407,9 @@ export default function App() {
           )}
           {activeTab === "calendar" && (
             <CalendarView serverUrl={serverUrl} user={user} events={events} teachers={teachers} onRefresh={() => refreshAll()} onNotify={pushToast} />
+          )}
+          {activeTab === "reports" && (
+            <ReportsSettlementView serverUrl={serverUrl} user={user} teachers={teachers} onNotify={pushToast} />
           )}
           {activeTab === "admin-remote" && (
             <AdminRemoteView

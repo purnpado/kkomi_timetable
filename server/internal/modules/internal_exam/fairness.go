@@ -3,30 +3,28 @@ package internal_exam
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/database"
 )
-
-// TeacherExamPolicyUpdate는 교사별 교내 시험감독 제외(특수반·보건실 등) 및
-// 연간 누적 감독횟수 설정/초기화 요청 구조체입니다.
-type TeacherExamPolicyUpdate struct {
-	TeacherID                string `json:"teacherId"`
-	InternalExamExempt       bool   `json:"internalExamExempt"`
-	InternalExamExemptReason string `json:"internalExamExemptReason"`
-	AnnualMainCount          int    `json:"annualMainCount"`
-	AnnualSubCount           int    `json:"annualSubCount"`
-	AnnualCorridorCount      int    `json:"annualCorridorCount"`
-	ResetAllBaseCounts       bool   `json:"resetAllBaseCounts"`
-	CommitCurrentToBase      bool   `json:"commitCurrentToBase"`
-}
 
 func equalizeAnnualLoads(
 	slots []protocol.ExamSlot,
 	regularTeachers []protocol.Teacher,
 	load map[string]*roleLoad,
 	deputyMode bool,
+) {
+	equalizeAnnualLoadsWithConstraints(slots, regularTeachers, load, deputyMode, nil, false, 0)
+}
+
+func equalizeAnnualLoadsWithConstraints(
+	slots []protocol.ExamSlot,
+	regularTeachers []protocol.Teacher,
+	load map[string]*roleLoad,
+	deputyMode bool,
+	unavailByDate map[string]map[string]string,
+	avoidConsecutive bool,
+	maxDaily int,
 ) {
 	if len(regularTeachers) < 2 || len(slots) == 0 {
 		return
@@ -38,45 +36,32 @@ func equalizeAnnualLoads(
 	slotKey := func(sl protocol.ExamSlot) string {
 		return fmt.Sprintf("%s#%d", sl.ExamDate, sl.Period)
 	}
-	usedPerPeriod := make(map[string]map[string]bool)
-	for _, sl := range slots {
-		k := slotKey(sl)
-		if usedPerPeriod[k] == nil {
-			usedPerPeriod[k] = make(map[string]bool)
-		}
-		usedPerPeriod[k][sl.TeacherID] = true
-	}
+	usage := buildSlotUsageMaps(slots)
 
-	canFit := func(t protocol.Teacher, sl protocol.ExamSlot, allowSubjectCorridor bool) bool {
-		if sl.SlotRole == "HONORARY" {
+	canAssignTo := func(t protocol.Teacher, sl protocol.ExamSlot, removeSlot *protocol.ExamSlot, allowSubjectCorridor bool) bool {
+		if !canTeacherFitSlot(t, sl, allowSubjectCorridor, tByID, unavailByDate) {
 			return false
 		}
-		if sl.SlotRole == "CORRIDOR" {
-			if !allowSubjectCorridor {
+		exclP := -1
+		if removeSlot == nil || removeSlot.ExamDate != sl.ExamDate {
+			if maxDaily > 0 && usage.dailyCount[sl.ExamDate][t.ID] >= maxDaily {
 				return false
 			}
-			// 교과 질문 담당 복도감독일 때는 동일 과목 교사에게만 이관
-			if curT, ok := tByID[sl.TeacherID]; ok && roomOrSpecMatchesTeacherSubject("", sl.Subject, curT.Subject) {
-				return roomOrSpecMatchesTeacherSubject("", sl.Subject, t.Subject)
-			}
-			return true
+		} else {
+			exclP = removeSlot.Period
 		}
-		roomClass := extractRoomBaseClass(sl.RoomName)
-		if roomClass != "" && strings.EqualFold(strings.TrimSpace(t.HomeroomClass), roomClass) {
-			return false
-		}
-		if roomOrSpecMatchesTeacherSubject(sl.RoomName, sl.Subject, t.Subject) {
+		if avoidConsecutive && isConsecutiveExcluding(usage.dailyPeriods[sl.ExamDate][t.ID], sl.Period, exclP) {
 			return false
 		}
 		return true
 	}
 
 	moveSlot := func(idx int, newT protocol.Teacher) {
-		oldID := slots[idx].TeacherID
-		role := slots[idx].SlotRole
-		k := slotKey(slots[idx])
-		usedPerPeriod[k][oldID] = false
-		usedPerPeriod[k][newT.ID] = true
+		sl := slots[idx]
+		oldID := sl.TeacherID
+		role := sl.SlotRole
+		usage.mark(oldID, sl.ExamDate, sl.Period, false)
+		usage.mark(newT.ID, sl.ExamDate, sl.Period, true)
 		load[oldID].add(role, -1)
 		load[newT.ID].add(role, 1)
 		slots[idx].TeacherID = newT.ID
@@ -110,10 +95,10 @@ func equalizeAnnualLoads(
 			}
 			k := slotKey(slots[i])
 			for _, cand := range regularTeachers {
-				if load[cand.ID].Total > load[oldID].Total-2 || usedPerPeriod[k][cand.ID] {
+				if load[cand.ID].Total > load[oldID].Total-2 || usage.usedPerPeriod[k][cand.ID] {
 					continue
 				}
-				if canFit(cand, slots[i], true) {
+				if canAssignTo(cand, slots[i], nil, true) {
 					moveSlot(i, cand)
 					moved = true
 					break
@@ -139,7 +124,7 @@ func equalizeAnnualLoads(
 					continue
 				}
 				midT, ok := tByID[mID]
-				if !ok || usedPerPeriod[ki][midT.ID] || !canFit(midT, slots[i], true) {
+				if !ok || usage.usedPerPeriod[ki][midT.ID] || !canAssignTo(midT, slots[i], &slots[j], true) {
 					continue
 				}
 				kj := slotKey(slots[j])
@@ -147,7 +132,7 @@ func equalizeAnnualLoads(
 					if lowT.ID == hID || lowT.ID == mID || load[lowT.ID].Total > load[hID].Total-2 {
 						continue
 					}
-					if !usedPerPeriod[kj][lowT.ID] && canFit(lowT, slots[j], true) {
+					if !usage.usedPerPeriod[kj][lowT.ID] && canAssignTo(lowT, slots[j], nil, true) {
 						moveSlot(j, lowT)
 						moveSlot(i, midT)
 						moved = true
@@ -209,7 +194,8 @@ func equalizeAnnualLoads(
 				if !okB || bID == aID || load[bID].Main > load[aID].Main-2 {
 					continue
 				}
-				if canFit(aT, slots[j], false) && canFit(bT, slots[i], false) {
+				if canTeacherFitSlot(aT, slots[j], false, tByID, unavailByDate) &&
+					canTeacherFitSlot(bT, slots[i], false, tByID, unavailByDate) {
 					load[aID].add("MAIN", -1)
 					load[aID].add("SUB", 1)
 					load[bID].add("SUB", -1)
@@ -238,13 +224,13 @@ func equalizeAnnualLoads(
 			}
 			k := slotKey(slots[i])
 			for _, bT := range regularTeachers {
-				if load[bT.ID].Main > load[aID].Main-2 || usedPerPeriod[k][bT.ID] {
+				if load[bT.ID].Main > load[aID].Main-2 || usage.usedPerPeriod[k][bT.ID] {
 					continue
 				}
 				if load[bT.ID].Total+1 > minTot+1 {
 					continue
 				}
-				if canFit(bT, slots[i], false) {
+				if canAssignTo(bT, slots[i], nil, false) {
 					moveSlot(i, bT)
 					swapped = true
 					break
@@ -278,15 +264,19 @@ func (s *Service) CalculateFairnessSummary() (protocol.ExamFairnessSummary, erro
 		curMap[sl.TeacherID].add(sl.SlotRole, 1)
 	}
 
+	dayCount, consecPairs, maxDaily := computeMultiDayFairnessStats(slots)
 	balanceMode := cfg.BalanceMode
 	if balanceMode == "" {
 		balanceMode = "TOTAL_AND_ROLE"
 	}
 	summary := protocol.ExamFairnessSummary{
-		DeputyMode:  cfg.DeputyMode,
-		BalanceMode: balanceMode,
-		MinTotal:    1 << 30,
-		MinMain:     1 << 30,
+		DeputyMode:           cfg.DeputyMode,
+		BalanceMode:          balanceMode,
+		ExamDayCount:         dayCount,
+		ConsecutivePairCount: consecPairs,
+		MaxDailyAssigned:     maxDaily,
+		MinTotal:             1 << 30,
+		MinMain:              1 << 30,
 	}
 
 	for _, t := range teachers {
@@ -358,113 +348,4 @@ func (s *Service) CalculateFairnessSummary() (protocol.ExamFairnessSummary, erro
 		return summary.Stats[i].TeacherName < summary.Stats[j].TeacherName
 	})
 	return summary, nil
-}
-
-// UpdateTeacherExamPolicy는 특수반·보건실 제외 설정, 기실시 연간 시수 수정, 전체 0회 초기화
-// 또는 이번 시험 배정의 연간 누적 확정 반영을 수행합니다.
-func (s *Service) UpdateTeacherExamPolicy(req TeacherExamPolicyUpdate) ([]protocol.Teacher, error) {
-	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
-	if err != nil {
-		return nil, err
-	}
-	if req.ResetAllBaseCounts {
-		err := s.store.WithTx(func(tx *database.TxStore) error {
-			txTeachers, tErr := database.LoadCollectionTx[protocol.Teacher](tx, "teachers")
-			if tErr != nil {
-				return tErr
-			}
-			for i := range txTeachers {
-				txTeachers[i].AnnualMainCount = 0
-				txTeachers[i].AnnualSubCount = 0
-				txTeachers[i].AnnualCorridorCount = 0
-				txTeachers[i].InternalExamCount = 0
-				if sErr := tx.SaveRecord("teachers", txTeachers[i].ID, txTeachers[i]); sErr != nil {
-					return sErr
-				}
-			}
-			cfgs, _ := database.LoadCollectionTx[protocol.ExamConfig](tx, "exam_configs")
-			if len(cfgs) > 0 && cfgs[0].CountsCommitted {
-				cfgs[0].CountsCommitted = false
-				_ = tx.SaveRecord("exam_configs", cfgs[0].ID, cfgs[0])
-			}
-			teachers = txTeachers
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return teachers, nil
-	}
-	if req.CommitCurrentToBase {
-		err := s.store.WithTx(func(tx *database.TxStore) error {
-			cfgs, _ := database.LoadCollectionTx[protocol.ExamConfig](tx, "exam_configs")
-			if len(cfgs) > 0 && cfgs[0].CountsCommitted {
-				return fmt.Errorf("이번 시험(%s)의 감독 시수는 이미 연간 누적에 확정 반영되었습니다", cfgs[0].Title)
-			}
-			slots, sErr := database.LoadCollectionTx[protocol.ExamSlot](tx, "exam_slots")
-			if sErr != nil {
-				return sErr
-			}
-			if len(slots) == 0 {
-				return fmt.Errorf("연간 누적에 반영할 감독 배정 슬롯이 없습니다")
-			}
-			curMap := make(map[string]*roleLoad)
-			for _, sl := range slots {
-				if curMap[sl.TeacherID] == nil {
-					curMap[sl.TeacherID] = &roleLoad{}
-				}
-				curMap[sl.TeacherID].add(sl.SlotRole, 1)
-			}
-			txTeachers, tErr := database.LoadCollectionTx[protocol.Teacher](tx, "teachers")
-			if tErr != nil {
-				return tErr
-			}
-			for i := range txTeachers {
-				if cur := curMap[txTeachers[i].ID]; cur != nil {
-					bm, bs, bc, _ := EffectiveBaseCounts(txTeachers[i])
-					txTeachers[i].AnnualMainCount = bm + cur.Main
-					txTeachers[i].AnnualSubCount = bs + cur.Sub
-					txTeachers[i].AnnualCorridorCount = bc + cur.Corridor
-					txTeachers[i].InternalExamCount = txTeachers[i].AnnualMainCount + txTeachers[i].AnnualSubCount + txTeachers[i].AnnualCorridorCount
-					if saveErr := tx.SaveRecord("teachers", txTeachers[i].ID, txTeachers[i]); saveErr != nil {
-						return saveErr
-					}
-				}
-			}
-			if len(cfgs) > 0 {
-				cfgs[0].CountsCommitted = true
-				if saveErr := tx.SaveRecord("exam_configs", cfgs[0].ID, cfgs[0]); saveErr != nil {
-					return saveErr
-				}
-			}
-			teachers = txTeachers
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		if s.bus != nil {
-			s.bus.Publish(protocol.DomainEvent{
-				Type:    protocol.EventExamScheduleUpdated,
-				Title:   "교내 시험감독 연간 누적 시수 반영 완료",
-				Message: "이번 시험 감독 시수가 전 교원 연간 누적 횟수에 확정 합산되었습니다.",
-			})
-		}
-		return teachers, nil
-	}
-	for i := range teachers {
-		if teachers[i].ID == req.TeacherID {
-			teachers[i].InternalExamExempt = req.InternalExamExempt
-			teachers[i].InternalExamExemptReason = strings.TrimSpace(req.InternalExamExemptReason)
-			teachers[i].AnnualMainCount = max(0, req.AnnualMainCount)
-			teachers[i].AnnualSubCount = max(0, req.AnnualSubCount)
-			teachers[i].AnnualCorridorCount = max(0, req.AnnualCorridorCount)
-			teachers[i].InternalExamCount = teachers[i].AnnualMainCount + teachers[i].AnnualSubCount + teachers[i].AnnualCorridorCount
-			if err := s.store.SaveRecord("teachers", teachers[i].ID, teachers[i]); err != nil {
-				return nil, err
-			}
-			return teachers, nil
-		}
-	}
-	return nil, fmt.Errorf("대상 교사(%s)를 찾을 수 없습니다", req.TeacherID)
 }

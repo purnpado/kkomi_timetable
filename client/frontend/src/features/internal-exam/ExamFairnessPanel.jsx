@@ -70,6 +70,14 @@ export default function ExamFairnessPanel({ serverUrl, user, fairness, isExamAdm
           <span className={`badge ${fairness.maxGap <= 1 ? "badge-green" : "badge-amber"}`}>
             <CheckCircle2 size={12} /> 1년 총 시수: {fairness.minTotal}~{fairness.maxTotal}회 (편차 {fairness.maxGap}회)
           </span>
+          {fairness.examDayCount > 0 && (
+            <span className="badge badge-gray">시험기간 {fairness.examDayCount}일 · 1일 최대 {fairness.maxDailyAssigned}교시</span>
+          )}
+          {fairness.examDayCount > 0 && (
+            <span className={`badge ${fairness.consecutivePairCount === 0 ? "badge-green" : "badge-amber"}`}>
+              연강 감독 {fairness.consecutivePairCount}건
+            </span>
+          )}
           {fairness.deputyMode && (
             <span className={`badge ${fairness.mainGap <= 1 ? "badge-blue" : "badge-amber"}`}>
               정감독 횟수: {fairness.minMain}~{fairness.maxMain}회 (편차 {fairness.mainGap}회)

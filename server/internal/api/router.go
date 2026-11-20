@@ -13,6 +13,7 @@ import (
 	"kkomi-timetable/server/internal/modules/event_calendar"
 	"kkomi-timetable/server/internal/modules/external_exam"
 	"kkomi-timetable/server/internal/modules/internal_exam"
+	"kkomi-timetable/server/internal/modules/stats"
 	"kkomi-timetable/server/internal/modules/timetable"
 	"kkomi-timetable/server/internal/ws"
 )
@@ -27,6 +28,7 @@ type ServerApp struct {
 	InternalExam *internal_exam.Service
 	ExternalExam *external_exam.Service
 	Calendar     *event_calendar.Service
+	Stats        *stats.Service
 	OnShutdown   func()
 }
 
@@ -59,6 +61,7 @@ func NewServerApp(store *database.Store, onShutdown func()) *ServerApp {
 		InternalExam: internal_exam.NewService(store, bus),
 		ExternalExam: external_exam.NewService(store, bus),
 		Calendar:     event_calendar.NewService(store, bus),
+		Stats:        stats.NewService(store),
 		OnShutdown:   onShutdown,
 	}
 	app.InternalExam.StartScheduler()
@@ -130,7 +133,8 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/calendar/commit", a.handleCommitCalendarEvent)
 	mux.HandleFunc("/api/calendar/bells", a.handleBellSchedule)
 
-	// 문서 출력(.hwpx / .xlsx / 고대비 인쇄 HTML) 및 원격 서버 관리
+	// 문서 출력(.hwpx / .xlsx / 고대비 인쇄 HTML), 월별/학기별 통합 정산 및 원격 서버 관리
+	mux.HandleFunc("/api/stats/summary", a.handleStatsSummary)
 	mux.HandleFunc("/api/export/hwpx", a.handleExportHWPX)
 	mux.HandleFunc("/api/export/xlsx", a.handleExportXLSX)
 	mux.HandleFunc("/api/export/print", a.handleExportPrint)

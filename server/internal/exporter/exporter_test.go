@@ -168,3 +168,79 @@ func TestXLSXZeroRowsFormulaAndKoreanLabels(t *testing.T) {
 		t.Fatalf("요약 수식 오류: %q", sumFml)
 	}
 }
+
+func TestSettlementAndInternalExamExporters(t *testing.T) {
+	t.Setenv("KKOMI_BASE_DIR", t.TempDir())
+
+	// 1. 0건 통합 정산표 XLSX 수식 방어 검증
+	emptyReport := protocol.PeriodStatsReport{SchoolName: "새빛고", PeriodLabel: "2026년 10월"}
+	emptyXLSX, err := exporter.BuildSettlementReportXLSX(emptyReport)
+	if err != nil {
+		t.Fatalf("빈 정산표 XLSX 생성 실패: %v", err)
+	}
+	f0, _ := excelize.OpenReader(bytes.NewReader(emptyXLSX))
+	vF3, _ := f0.GetCellValue("교원별_통합정산표", "F3")
+	_ = f0.Close()
+	if vF3 != "0" {
+		t.Fatalf("0건 정산표 요약 셀이 0이 아닙니다: %q", vF3)
+	}
+
+	// 2. 실데이터 통합 정산 XLSX/HWPX, 결보강 확인서 HWPX 및 다중일 시험감독 출력 검증
+	sampleReport := protocol.PeriodStatsReport{
+		SchoolName: "새빛고", PeriodLabel: "2026학년도 2학기", TotalChanges: 1, TotalSubstitutes: 1, TotalInternal: 1,
+		TeacherStats: []protocol.TeacherPeriodStat{
+			{TeacherID: "t06", TeacherName: "강국어", Subject: "국어", SwapCount: 1, SubstituteGivenCount: 1, InternalMainCount: 1, InternalTotal: 1, TotalActivity: 3},
+		},
+		MonthlyTrend: []protocol.MonthlyTrendRow{
+			{Month: "2026-10", TimetableChanges: 1, SubstituteSessions: 1, InternalExamSlots: 1},
+		},
+		ApprovedChanges: []protocol.TimetableChangeRequest{
+			{RequestType: "SUBSTITUTE", TargetDate: "2026-10-12", RequesterID: "t06", RequesterName: "강국어", PartnerID: "t07", PartnerName: "조수학", SourceCell: protocol.TimetableCell{ClassName: "1-1", Period: 1, Subject: "국어"}, TargetCell: protocol.TimetableCell{Subject: "수학"}, Reason: "연수", Status: protocol.StatusApproved},
+		},
+	}
+	xlsxBytes, err := exporter.BuildSettlementReportXLSX(sampleReport)
+	if err != nil {
+		t.Fatalf("통합 정산표 XLSX 생성 실패: %v", err)
+	}
+	fx, _ := excelize.OpenReader(bytes.NewReader(xlsxBytes))
+	sheets := fx.GetSheetList()
+	_ = fx.Close()
+	if len(sheets) != 4 {
+		t.Fatalf("통합 정산표 시트 개수 불일치: %v", sheets)
+	}
+	if bytes.Contains(xlsxBytes, []byte("계좌")) || bytes.Contains(xlsxBytes, []byte("수당")) {
+		t.Fatalf("정산표에 제외 대상 금융 키워드가 포함되었습니다")
+	}
+
+	for _, doc := range []exporter.HWPXDocumentData{
+		exporter.BuildSettlementHWPXData(sampleReport),
+		exporter.BuildSubstitutionCertHWPXData(sampleReport, "t06"),
+		exporter.BuildInternalExamHWPXData("새빛고", protocol.ExamConfig{Title: "중간고사", ExamDate: "2026-10-20"}, []protocol.ExamSlot{
+			{ExamDate: "2026-10-20", Period: 1, StartTime: "08:50", EndTime: "09:35", Grade: 1, Subject: "국어", SlotRole: "MAIN", RoomName: "🔒 당일 08:20 공개", TeacherName: "강국어"},
+		}),
+	} {
+		raw, hErr := exporter.BuildHWPXBytes(doc)
+		if hErr != nil {
+			t.Fatalf("HWPX 생성 실패(%s): %v", doc.DocTitle, hErr)
+		}
+		zr, zErr := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+		if zErr != nil || len(zr.File) < 8 || zr.File[0].Name != "mimetype" {
+			t.Fatalf("HWPX ZIP 구조 오류(%s): err=%v", doc.DocTitle, zErr)
+		}
+	}
+
+	examXLSX, err := exporter.BuildInternalExamScheduleXLSX(
+		protocol.ExamConfig{Title: "기말고사", ExamDate: "2026-11-23"},
+		[]protocol.ExamSlot{{ExamDate: "2026-11-23", Period: 1, Grade: 1, Subject: "국어", SlotRole: "MAIN", RoomName: "1-1 고사장", TeacherName: "강국어"}},
+		protocol.ExamFairnessSummary{ExamDayCount: 1, MaxDailyAssigned: 1},
+	)
+	if err != nil {
+		t.Fatalf("시험감독 배정표 XLSX 생성 실패: %v", err)
+	}
+	fe, _ := excelize.OpenReader(bytes.NewReader(examXLSX))
+	eSheets := fe.GetSheetList()
+	_ = fe.Close()
+	if len(eSheets) != 2 {
+		t.Fatalf("시험감독 XLSX 시트 개수 불일치: %v", eSheets)
+	}
+}
