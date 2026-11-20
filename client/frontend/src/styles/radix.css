@@ -1,0 +1,218 @@
+/* Radix UI 컴포넌트 전용 스타일 및 모션 토큰 (Emil Kowalski design-eng 기준) */
+
+@keyframes radixFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes radixScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes radixDialogSlideIn {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* Tabs */
+.radix-tabs-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 11px;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+}
+
+.radix-tabs-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #475569;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.14s var(--ease-out), color 0.14s var(--ease-out),
+    box-shadow 0.14s var(--ease-out), transform 0.1s var(--ease-out);
+}
+
+.radix-tabs-trigger:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.radix-tabs-trigger:active {
+  transform: scale(0.97);
+}
+
+.radix-tabs-trigger:focus-visible {
+  outline: 2px solid rgba(59, 91, 219, 0.45);
+  outline-offset: 1px;
+}
+
+.radix-tabs-trigger[data-state="active"] {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(59, 91, 219, 0.28);
+}
+
+/* ContextMenu & DropdownMenu */
+.radix-menu-content {
+  min-width: 210px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 5px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
+  z-index: 65;
+  transform-origin: var(--radix-popper-transform-origin, center top);
+  animation: radixScaleIn 0.14s var(--ease-out);
+}
+
+.radix-menu-label {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.radix-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  transition: background-color 0.1s var(--ease-out), color 0.1s var(--ease-out);
+}
+
+.radix-menu-item[data-highlighted] {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.radix-menu-item-danger {
+  color: var(--red);
+}
+
+.radix-menu-item-danger[data-highlighted] {
+  background: var(--red-soft);
+  color: #b91c1c;
+}
+
+.radix-menu-item[data-disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.radix-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* AlertDialog */
+.radix-alert-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.56);
+  backdrop-filter: blur(4px);
+  z-index: 70;
+  animation: radixFadeIn 0.15s var(--ease-out);
+}
+
+.radix-alert-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, 92vw);
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 22px 24px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+  border: 1px solid var(--border);
+  z-index: 71;
+  animation: radixDialogSlideIn 0.16s var(--ease-out);
+}
+
+.radix-alert-title {
+  margin: 0 0 8px;
+  font-size: 16.5px;
+  font-weight: 800;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.radix-alert-description {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #475569;
+  white-space: pre-line;
+}
+
+.radix-alert-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Tooltip */
+.radix-tooltip-content {
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 6px 10px;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+  z-index: 85;
+  max-width: 280px;
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  animation: radixScaleIn 0.12s var(--ease-out);
+}
+
+.radix-tooltip-arrow {
+  fill: #0f172a;
+}
+
+.cell-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .radix-tabs-trigger,
+  .radix-menu-content,
+  .radix-menu-item,
+  .radix-alert-overlay,
+  .radix-alert-content,
+  .radix-tooltip-content {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Tabs from "@radix-ui/react-tabs";
 import { FileSpreadsheet, FileText, Lock, Printer, RefreshCw, Shield, Unlock, UserCheck } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import ActionMenu from "../../components/ui/ActionMenu";
 import ExamFairnessPanel from "./ExamFairnessPanel";
 import MultiDayExamEditor from "./MultiDayExamEditor";
 
@@ -25,6 +28,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [subCandidates, setSubCandidates] = useState([]);
   const [newSubId, setNewSubId] = useState("");
+  const [confirmUnsealDate, setConfirmUnsealDate] = useState(null); // null | "" (all) | "YYYY-MM-DD"
 
   const onNotifyRef = useRef(onNotify);
   onNotifyRef.current = onNotify;
@@ -132,6 +136,25 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
 
   const unsealedSet = useMemo(() => new Set(config?.unsealedDates || []), [config?.unsealedDates]);
 
+  const exportItems = [
+    {
+      label: "교내 시험감독 배정표 (.hwpx)",
+      icon: FileText,
+      onSelect: () => downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=internal-exam", "교내시험감독_배정표.hwpx").catch((err) => onNotifyRef.current?.("출력 실패", err.message, true)),
+    },
+    {
+      label: "시수·배정 현황 (.xlsx)",
+      icon: FileSpreadsheet,
+      onSelect: () => downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=internal-exam", "교내시험감독_배정_시수표.xlsx").catch((err) => onNotifyRef.current?.("엑셀 실패", err.message, true)),
+    },
+    { separator: true },
+    {
+      label: "고대비 시험감독 인쇄판 열기",
+      icon: Printer,
+      onSelect: () => downloadAuthenticatedFile(serverUrl, "/api/export/print?kind=internal-exam", "시험감독_인쇄판.html", { openInTab: true }).catch((err) => onNotifyRef.current?.("인쇄 실패", err.message, true)),
+    },
+  ];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {config && (
@@ -148,33 +171,13 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
               </div>
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=internal-exam", "교내시험감독_배정표.hwpx").catch((err) => onNotifyRef.current?.("출력 실패", err.message, true))}
-              >
-                <FileText size={14} /> 배정표 (.hwpx)
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=internal-exam", "교내시험감독_배정_시수표.xlsx").catch((err) => onNotifyRef.current?.("엑셀 실패", err.message, true))}
-              >
-                <FileSpreadsheet size={14} /> 시수·배정 (.xlsx)
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/print?kind=internal-exam", "시험감독_인쇄판.html", { openInTab: true }).catch((err) => onNotifyRef.current?.("인쇄 실패", err.message, true))}
-              >
-                <Printer size={14} /> 인쇄판
-              </button>
+              <ActionMenu triggerLabel="배정표·인쇄 출력" triggerIcon={FileText} items={exportItems} />
               <span className={`badge ${config.isSealed ? "badge-amber" : "badge-green"}`}>
                 {config.isSealed ? <Lock size={12} /> : <Unlock size={12} />}
                 {config.isSealed ? `사전 봉인 (${config.unsealTime} 공개)` : "전체 공개"}
               </span>
               {isExamAdmin && config.isSealed && (
-                <button className="btn btn-primary btn-sm" onClick={() => handleUnseal("")}>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => setConfirmUnsealDate("")}>
                   <Unlock size={14} /> 전체 고사장 일괄 발표
                 </button>
               )}
@@ -188,7 +191,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
                 unsealedSet.has(d) ? (
                   <span key={d} className="badge badge-green">{d} 공개됨</span>
                 ) : (
-                  <button key={d} type="button" className="btn btn-sm" onClick={() => handleUnseal(d)}>
+                  <button key={d} type="button" className="btn btn-sm" onClick={() => setConfirmUnsealDate(d)}>
                     <Unlock size={12} /> {d} 고사장 공개
                   </button>
                 )
@@ -268,16 +271,16 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
             <Shield size={15} style={{ verticalAlign: "middle" }} /> 일자·교시별 시험감독 배정표 ({visibleSlots.length}건)
           </h3>
           {examDates.length > 1 && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button type="button" className={`btn btn-sm ${slotFilterDate === "ALL" ? "btn-primary" : ""}`} onClick={() => setSlotFilterDate("ALL")}>
-                전체 일자
-              </button>
-              {examDates.map((d, idx) => (
-                <button key={d} type="button" className={`btn btn-sm ${slotFilterDate === d ? "btn-primary" : ""}`} onClick={() => setSlotFilterDate(d)}>
-                  {idx + 1}일차 ({d})
-                </button>
-              ))}
-            </div>
+            <Tabs.Root value={slotFilterDate} onValueChange={setSlotFilterDate}>
+              <Tabs.List className="radix-tabs-list" aria-label="시험 일자별 필터">
+                <Tabs.Trigger value="ALL" className="radix-tabs-trigger">전체 일자</Tabs.Trigger>
+                {examDates.map((d, idx) => (
+                  <Tabs.Trigger key={d} value={d} className="radix-tabs-trigger">
+                    {idx + 1}일차 ({d})
+                  </Tabs.Trigger>
+                ))}
+              </Tabs.List>
+            </Tabs.Root>
           )}
         </div>
         <table className="table">
@@ -315,6 +318,23 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
       </div>
 
       <ExamFairnessPanel serverUrl={serverUrl} user={user} fairness={fairness} isExamAdmin={isExamAdmin} onRefresh={loadData} onNotify={onNotify} />
+
+      <ConfirmDialog
+        open={confirmUnsealDate !== null}
+        onOpenChange={(open) => !open && setConfirmUnsealDate(null)}
+        title={confirmUnsealDate ? `${confirmUnsealDate} 고사장 공개 확인` : "전체 고사장 일괄 발표 확인"}
+        description={
+          confirmUnsealDate
+            ? `${confirmUnsealDate} 날짜의 시험 고사장 배정을 전 교원 PC에 즉시 공개하시겠습니까?`
+            : "봉인된 전체 시험 기간의 고사장 배정을 전 교원 PC에 즉시 일괄 공개하시겠습니까?"
+        }
+        confirmLabel="지금 공개 발표"
+        onConfirm={async () => {
+          const target = confirmUnsealDate;
+          setConfirmUnsealDate(null);
+          await handleUnseal(target || "");
+        }}
+      />
     </div>
   );
 }

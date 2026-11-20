@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeftRight, CalendarRange, CheckCircle2, Send, Sparkles } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
 
@@ -42,8 +42,14 @@ export default function MultiWeekAbsenceView({ serverUrl, user, teachers, baseCe
   const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
 
   // 1. 주중 미출근/결근 대책 상태
-  const [absentTeacherId, setAbsentTeacherId] = useState(user?.id || regularTeachers[0]?.id || "t06");
+  const [absentTeacherId, setAbsentTeacherId] = useState(user?.id || regularTeachers[0]?.id || "");
   const [startDate, setStartDate] = useState(() => defaultWeekdayISO());
+
+  useEffect(() => {
+    if (!absentTeacherId && regularTeachers.length > 0) {
+      setAbsentTeacherId(user?.id || regularTeachers[0].id);
+    }
+  }, [absentTeacherId, regularTeachers, user?.id]);
   const [endDate, setEndDate] = useState(() => defaultWeekdayISO());
   const [startPeriod, setStartPeriod] = useState(1);
   const [endPeriod, setEndPeriod] = useState(7);

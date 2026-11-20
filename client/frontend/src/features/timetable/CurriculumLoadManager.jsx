@@ -24,12 +24,18 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
   const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
 
   const [formGrade, setFormGrade] = useState(1);
-  const [formTeacherId, setFormTeacherId] = useState(regularTeachers[0]?.id || "t06");
+  const [formTeacherId, setFormTeacherId] = useState(regularTeachers[0]?.id || "");
   const [formSubject, setFormSubject] = useState("국어");
   const [formRoom, setFormRoom] = useState("");
   const [formBlock, setFormBlock] = useState(1);
   const [formSimGroup, setFormSimGroup] = useState("");
   const [formClassHours, setFormClassHours] = useState({});
+
+  useEffect(() => {
+    if (regularTeachers.length > 0 && !regularTeachers.some((t) => t.id === formTeacherId)) {
+      setFormTeacherId(regularTeachers[0].id);
+    }
+  }, [regularTeachers, formTeacherId]);
 
   const fetchCurriculum = async () => {
     try {

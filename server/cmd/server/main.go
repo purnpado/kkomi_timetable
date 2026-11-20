@@ -136,6 +136,7 @@ func portErrorHints() []string {
 func main() {
 	port := flag.Int("port", 18090, "업무망 LAN HTTP/WebSocket 서버 포트")
 	initTemplate := flag.Bool("init-template", false, "기본 .hwpx 템플릿 파일만 생성하고 종료")
+	seedDemo := flag.Bool("seed-demo", false, "개발·예시 확인용 초기 데이터 생성")
 	_ = flag.Bool("headless", true, "콘솔 데몬 모드 호환 플래그")
 	flag.Parse()
 
@@ -222,8 +223,15 @@ func main() {
 	store = openedStore
 	resMu.Unlock()
 
-	if err := database.SeedIfEmpty(store); err != nil {
-		log.Printf("[경고] 초기 데이터 시딩 중 오류: %v", err)
+	if *seedDemo {
+		log.Println("ℹ️  --seed-demo 옵션으로 예시 데이터를 초기화합니다.")
+		if err := database.SeedIfEmpty(store); err != nil {
+			log.Printf("[경고] 초기 예시 데이터 생성 중 오류: %v", err)
+		}
+	} else {
+		if err := database.EnsureCleanInit(store); err != nil {
+			log.Printf("[경고] 시스템 초기 계정/설정 준비 중 오류: %v", err)
+		}
 	}
 	if tplPath, err := exporter.EnsureDefaultHWPXTemplate(); err == nil {
 		log.Printf("📄 한글(.hwpx) 기본 템플릿 준비 완료: %s", tplPath)

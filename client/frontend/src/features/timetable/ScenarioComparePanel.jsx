@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, GitCompare, Save, Trash2 } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
 
 function MetricChips({ metrics }) {
   if (!metrics) return null;
@@ -34,6 +35,7 @@ export default function ScenarioComparePanel({ serverUrl, user, cells, onRefresh
   const [slotCode, setSlotCode] = useState("A");
   const [name, setName] = useState("A안 - 고정 공강 우선");
   const [description, setDescription] = useState("부장회의·기피교시 제약을 우선 반영한 초안");
+  const [confirmAction, setConfirmAction] = useState(null);
 
   const onNotifyRef = useRef(onNotify);
   onNotifyRef.current = onNotify;
@@ -160,10 +162,10 @@ export default function ScenarioComparePanel({ serverUrl, user, cells, onRefresh
                     <MetricChips metrics={sc.metrics} />
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => handleApply(sc)}>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setConfirmAction({ type: "apply", scenario: sc })}>
                       <CheckCircle2 size={13} /> 이 안 채택 (정규 반영)
                     </button>
-                    <button type="button" className="btn btn-sm" onClick={() => handleDelete(sc.id)}>
+                    <button type="button" className="btn btn-sm" onClick={() => setConfirmAction({ type: "delete", scenario: sc })}>
                       <Trash2 size={13} /> 삭제
                     </button>
                   </div>
@@ -173,6 +175,29 @@ export default function ScenarioComparePanel({ serverUrl, user, cells, onRefresh
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(confirmAction)}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+        danger={confirmAction?.type === "delete"}
+        title={confirmAction?.type === "apply" ? "시나리오 정규 시간표 채택" : "시나리오 스냅샷 삭제"}
+        description={
+          confirmAction?.type === "apply"
+            ? `[${confirmAction.scenario.slotCode}안] '${confirmAction.scenario.name}'을 현재 정규 시간표로 적용하시겠습니까?\n적용 전 상태는 실행취소(Ctrl+Z) 이력에 자동 보관됩니다.`
+            : `[${confirmAction?.scenario?.slotCode}안] '${confirmAction?.scenario?.name}' 스냅샷을 삭제하시겠습니까?`
+        }
+        confirmLabel={confirmAction?.type === "apply" ? "이 안 채택" : "삭제 실행"}
+        onConfirm={async () => {
+          const act = confirmAction;
+          setConfirmAction(null);
+          if (!act) return;
+          if (act.type === "apply") {
+            await handleApply(act.scenario);
+          } else {
+            await handleDelete(act.scenario.id);
+          }
+        }}
+      />
     </div>
   );
 }

@@ -67,8 +67,10 @@
 5. **주중·월중 행사 취합 · 월별/학기별 통합 정산 & 다중 출력 (`event_calendar`, `stats`, `exporter`):**
    * `[단순안내]`, `[학년/전교 수업블록]`, `[특정교사 출장/결보강]`, `[시종시간 변경]` 4종 속성 연동.
    * 월별·1학기·2학기·학년도·직접지정 기간별 결보강/수업교환/내외부 시험감독/행사 실적을 교원별로 집계하고(`stats/service.go`), 국가표준 한글(`.hwpx` 통합 정산 보고서·결보강 확인서·시험감독 배정표), 엑셀(`.xlsx` `excelize/v2` 4시트 통합 정산표·2시트 감독 시수표), B4/A3 고대비 흑백 현황판 출력(`settlement_exporter.go`)을 지원합니다.
-6. **현장 밀착형 UI/UX (`client/frontend`):**
+6. **현장 밀착형 UI/UX & 깨끗한 초기 기동 (`client/frontend`, `database/reset.go`):**
    * 시종시간표 연동 **수업 중 방해 금지 모드**(쉬는 시간 일괄 브리핑 큐), `Ctrl+K` 커맨드 팔레트, 우측 **260px 사이드 도킹 위젯**, 무중단 원격 자가 업데이트(`Self-Replace`).
+   * **Radix UI 7종 통합 및 디자인 마감:** `Dialog`, `Toast`, `Tabs`, `ContextMenu`(기초 시간표 우클릭 잠금·공강 지정), `AlertDialog`(초기화·복원·삭제 안전 확인), `Tooltip`(단축키 안내), `DropdownMenu`(문서 출력 메뉴)와 `prefers-reduced-motion` 접근성 지원.
+   * **깨끗한 실학교 초기 기동 (`EnsureCleanInit`):** 기본 실행 시 시연용 가짜 데이터 없이 `admin` 최고관리자 계정과 기본 일과·학교설정만 초기화하고 대시보드 시작 가이드를 제공하며, 필요 시 `--seed-demo` 플래그로 예시 데이터를 별도 로드할 수 있습니다.
 
 ---
 
@@ -125,7 +127,10 @@ go test -v ./...
 * **Windows 정식 릴리즈 산출물 (`dist/release/`, `--release` 실행 시 생성):**
   * `dist/release/꼬미시간서버.exe`, `dist/release/꼬미시간.exe`, `dist/release/꼬미시간_v0.1.01_windows_portable.zip`, `dist/release/kkomi-timetable_v0.1.01.zip`
 
-### 5.3. 빠른 체험 계정 (초기 비밀번호: `1234`, 최초 로그인 시 즉시 변경 가능)
+### 5.3. 초기 최고관리자 접속 및 개발용 예시 계정 (`--seed-demo` 옵션 실행 시)
+> * **기본 실사용 기동 (`꼬미시간서버`):** `admin` (`최고관리자`, 초기 비밀번호 `1234`) 1개 계정과 기본 일과·학교설정만 깨끗하게 초기화됩니다. 로그인 후 비밀번호를 변경하고 교사 명렬표 및 시수표를 등록하세요.
+> * **예시 데이터 체험 기동 (`--seed-demo`):** 개발·확인 목적으로 아래 예시 계정이 함께 생성됩니다.
+
 | 아이디 | 이름 | 담당 권한 (RBAC) |
 | :--- | :--- | :--- |
 | `admin` | 최고관리자 | 최고관리자 (시스템 전용 · 수업/시험감독 배정 제외) + 전체 권한 |
@@ -140,13 +145,12 @@ go test -v ./...
 
 ## 6. 현재 개발 상태 · 로드맵 ([ROADMAP.md](ROADMAP.md))
 
-* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.x` 1~4단계):**
+* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.x` 1~5단계):**
   * [x] 1~6단계 코어 인프라, 포터블 MariaDB(TDE), 6종 RBAC(`최고관리자` 기본 계정 분리·권한 위임), 정규·다주간 시간표 & 1~4단계 연쇄교환, 교내·외부 시험감독, 행사 4종 연동, `.hwpx`/`.xlsx`/고대비 출력 완성
   * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.1.01` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화 및 1~2단계 보안·동시성·도메인·문서 정합성 강화 완료
   * [x] **`v0.2.x` 3단계 완료:** 교사별 절대 금지·회의 공강(부장/교과 일괄)·기피 교시 제약(`constraints.go`), 시간표 A/B/C안 품질 비교·채택(`scenarios.go`), 서버 측 20단계 실행취소/다시실행(`history.go`)
   * [x] **`v0.2.x` 4단계 완료:** 다중일(3~5일) 지필고사 통합 편성·연강 감독 방지·일자별 부분 공개(`multiday.go`), 월별/학기별 교무업무 통합 정산·결보강 확인서 `.hwpx`/`.xlsx` 출력(`stats/service.go`, `settlement_exporter.go`)
-* **🔄 진행 중 (`v0.1.x` / `v0.2.x` 5단계):**
-  * [ ] UI/UX · Wails 데스크톱 다중 OS 마감 검증 및 Windows 실환경 교차 점검
+  * [x] **`v0.2.x` 5단계 완료:** 시작·관리 화면 테스트/시연 문구 및 데모 ID 정리, 깨끗한 초기 기동(`EnsureCleanInit` + `--seed-demo` 분리), Radix UI 7종 전면 적용(`Tabs`, `ContextMenu`, `AlertDialog`, `Tooltip`, `DropdownMenu`, `Dialog`, `Toast`), 모션·접근성 마감 완료
 * **📋 앞으로 구현해야 할 항목 (상세 목록: [ROADMAP.md](ROADMAP.md)):**
-  * [ ] `v0.2.x` 최종 점검(`v0.2.0` 릴리즈 준비): UI/UX 직관성·접근성 마감 및 macOS/Windows 교차 실행 최종 검증
+  * [ ] Windows/macOS 실제 교무실 네트워크 현장 교차 구동 및 `v0.2.0` 릴리즈 배포 준비
   * [ ] `v0.3.x` ~ `v1.0` 중·장기: 고교학점제 학생 이동수업 시간표, 나이스 양방향 검증 확대, 교무실 TV 전광판 모드, macOS GitHub 릴리즈 자동 업데이트 및 신학년도 이관 마법사

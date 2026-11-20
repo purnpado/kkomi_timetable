@@ -1,15 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-react";
+import * as Tabs from "@radix-ui/react-tabs";
+import { Info, KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-react";
 import { apiFetch, connectDesktopBridge, setAuthToken } from "../../events/eventStore";
-
-const QUICK_ACCOUNTS = [
-  { label: "최고관리자 (admin · 서버 전체관리)", username: "admin", badge: "최고관리자" },
-  { label: "이수업 (시간표 담당)", username: "timetable", badge: "수업계" },
-  { label: "박평가 (교내시험감독 담당)", username: "internal", badge: "평가계" },
-  { label: "최외부 (외부시험감독 담당)", username: "external", badge: "대외계" },
-  { label: "정행사 (행사 담당)", username: "event", badge: "행사계" },
-  { label: "강국어 (일반 담임교사 1-2)", username: "t06", badge: "담임" },
-];
+import AppTooltip from "../../components/ui/AppTooltip";
 
 // LoginView는 교무실 공용 서버 연결 및 [과목·성명 간편 선택 / 직접 입력(동명이인 구분)] 로그인을 제공합니다.
 export default function LoginView({ initialServerUrl, onLoginSuccess }) {
@@ -17,7 +10,6 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
   const [loginMode, setLoginMode] = useState("select"); // "select" | "manual"
   const [directory, setDirectory] = useState([]);
   const [dirStatus, setDirStatus] = useState("");
-  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [selectedSubject, setSelectedSubject] = useState(() => localStorage.getItem("kkomi_last_subject") || "ALL");
   const [selectedUsername, setSelectedUsername] = useState(() => localStorage.getItem("kkomi_last_user") || "admin");
@@ -33,19 +25,14 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
   const loadDirectory = async (srv = serverUrl) => {
     const base = normalizedServer(srv);
     try {
-      const [list, health] = await Promise.all([
-        apiFetch(base, "/api/auth/directory", ""),
-        apiFetch(base, "/api/health", "").catch(() => null),
-      ]);
+      const list = await apiFetch(base, "/api/auth/directory", "");
       setDirectory(list || []);
-      setIsDemoMode(Boolean(health?.isDemoMode));
       setDirStatus(`교사 ${list?.length || 0}명 연결됨`);
       if (list && list.length > 0 && !list.some((t) => t.username === selectedUsername)) {
         setSelectedUsername(list[0].username);
       }
     } catch {
       setDirectory([]);
-      setIsDemoMode(false);
       setDirStatus("서버 연결 대기 중");
     }
   };
@@ -66,6 +53,8 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
     if (selectedSubject === "ALL") return directory;
     return directory.filter((t) => t.subject === selectedSubject);
   }, [directory, selectedSubject]);
+
+  const isFreshSetup = directory.length === 1 && directory[0]?.username === "admin";
 
   const performLogin = async (payload) => {
     setError("");
@@ -122,14 +111,16 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-          <button type="button" className={`btn btn-sm ${loginMode === "select" ? "btn-primary" : ""}`} onClick={() => setLoginMode("select")}>
-            <UserCheck size={14} /> 간편 선택 로그인 (동명이인 자동 구분)
-          </button>
-          <button type="button" className={`btn btn-sm ${loginMode === "manual" ? "btn-primary" : ""}`} onClick={() => setLoginMode("manual")}>
-            직접 입력 로그인 (과목 · 이름/ID · 비번)
-          </button>
-        </div>
+        <Tabs.Root value={loginMode} onValueChange={setLoginMode} style={{ marginBottom: 14 }}>
+          <Tabs.List className="radix-tabs-list" aria-label="로그인 방식 선택" style={{ width: "100%" }}>
+            <Tabs.Trigger value="select" className="radix-tabs-trigger" style={{ flex: 1, justifyContent: "center" }}>
+              <UserCheck size={14} /> 간편 선택 로그인
+            </Tabs.Trigger>
+            <Tabs.Trigger value="manual" className="radix-tabs-trigger" style={{ flex: 1, justifyContent: "center" }}>
+              직접 입력 로그인 (과목 · 성명/ID)
+            </Tabs.Trigger>
+          </Tabs.List>
+        </Tabs.Root>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
@@ -147,9 +138,11 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
                 onBlur={() => loadDirectory(serverUrl)}
                 placeholder="예: http://192.168.0.10:18090"
               />
-              <button type="button" className="btn btn-sm" onClick={() => loadDirectory(serverUrl)} title="교사 목록 새로고침">
-                <RefreshCw size={14} />
-              </button>
+              <AppTooltip content="서버 연결 및 교사 목록 새로고침">
+                <button type="button" className="btn btn-sm" onClick={() => loadDirectory(serverUrl)} aria-label="교사 목록 새로고침">
+                  <RefreshCw size={14} />
+                </button>
+              </AppTooltip>
             </div>
           </div>
 
@@ -187,11 +180,11 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
             <div className="grid-2">
               <div>
                 <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>담당과목 (동명이인 구분)</label>
-                <input className="input" value={manualSubject} onChange={(e) => setManualSubject(e.target.value)} placeholder="예: 국어 (선택 또는 필수)" />
+                <input className="input" value={manualSubject} onChange={(e) => setManualSubject(e.target.value)} placeholder="예: 국어 (선택 입력)" />
               </div>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>성명 또는 아이디</label>
-                <input className="input" value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="예: 강국어 또는 admin" />
+                <input className="input" value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="예: 홍길동 또는 admin" />
               </div>
             </div>
           )}
@@ -205,7 +198,7 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="비밀번호 입력 (최초 초기 비밀번호: 1234)"
+              placeholder="비밀번호 입력"
               required
             />
           </div>
@@ -217,23 +210,10 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
           </button>
         </form>
 
-        {isDemoMode && (
-          <div style={{ marginTop: 18, borderTop: "1px solid #e2e8f0", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8 }}>
-              체험용 빠른 계정 전환 (시연 모드 · 초기 비밀번호: 1234)
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {QUICK_ACCOUNTS.map((acc) => (
-                <button
-                  key={acc.username}
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => performLogin({ username: acc.username, password: "1234" })}
-                >
-                  <span className="badge badge-blue">{acc.badge}</span> {acc.label}
-                </button>
-              ))}
-            </div>
+        {isFreshSetup && (
+          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #cbd5e1", fontSize: 12, color: "#475569", display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <Info size={15} color="#3b5bdb" style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>최초 설치 상태입니다. 기본 최고관리자(<b>admin</b>) 계정으로 로그인한 뒤 비밀번호를 변경하고 교사 명렬표를 등록해 주세요.</span>
           </div>
         )}
       </div>

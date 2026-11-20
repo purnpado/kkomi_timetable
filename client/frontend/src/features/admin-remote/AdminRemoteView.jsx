@@ -1,22 +1,37 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CloudDownload, Database, RefreshCw, RotateCcw, Shield, UploadCloud, UserCog } from "lucide-react";
 import { apiFetch, applySelfUpdateBridge, ROLE_LABELS } from "../../events/eventStore";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import TeacherManagerCard from "./TeacherManagerCard";
 
 const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
 
 // AdminRemoteView는 최고관리자(MASTER)의 교사 관리, RBAC 권한 배정,
 // 전체 시스템 초기화, 원격 DB 암호화 백업·복원 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
-export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, onResetComplete, onNotify }) {
+export default function AdminRemoteView({ serverUrl, serverVersion = "", user, teachers, onRefresh, onResetComplete, onNotify }) {
+  const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
   const [backups, setBackups] = useState([]);
   const [confirmRestoreFile, setConfirmRestoreFile] = useState("");
-  const [selectedTeacherId, setSelectedTeacherId] = useState(teachers?.[0]?.id || "t01");
-  const [handoverFrom, setHandoverFrom] = useState("t02");
-  const [handoverTo, setHandoverTo] = useState("t06");
+  const [selectedTeacherId, setSelectedTeacherId] = useState("");
+  const [handoverFrom, setHandoverFrom] = useState("");
+  const [handoverTo, setHandoverTo] = useState("");
   const [handoverRole, setHandoverRole] = useState("TIMETABLE_ADMIN");
   const [confirmResetMode, setConfirmResetMode] = useState("");
   const [ghRelease, setGhRelease] = useState(null);
   const [ghBusy, setGhBusy] = useState(false);
+
+  useEffect(() => {
+    if (regularTeachers.length === 0) return;
+    if (!regularTeachers.some((t) => t.id === selectedTeacherId)) {
+      setSelectedTeacherId(regularTeachers[0].id);
+    }
+    if (!regularTeachers.some((t) => t.id === handoverFrom)) {
+      setHandoverFrom(regularTeachers[0].id);
+    }
+    if (!regularTeachers.some((t) => t.id === handoverTo)) {
+      setHandoverTo((regularTeachers[1] || regularTeachers[0]).id);
+    }
+  }, [regularTeachers, selectedTeacherId, handoverFrom, handoverTo]);
 
   const loadBackups = async () => {
     try {
@@ -29,7 +44,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
 
   useEffect(() => { loadBackups(); }, [user?.id]);
 
-  const selectedTeacher = (teachers || []).find((t) => t.id === selectedTeacherId);
+  const selectedTeacher = regularTeachers.find((t) => t.id === selectedTeacherId);
 
   const toggleRole = async (role) => {
     if (!selectedTeacher) return;
@@ -53,6 +68,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
   };
 
   const handleHandover = async () => {
+    if (!handoverFrom || !handoverTo) return;
     try {
       await apiFetch(serverUrl, "/api/teachers/handover", user.id, {
         method: "POST",
@@ -112,7 +128,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
     if (!file) return;
     const form = new FormData();
     form.append("file", file);
-    form.append("version", "0.1.01");
+    form.append("version", serverVersion || "0.1.01");
     try {
       const res = await apiFetch(serverUrl, endpoint, user.id, { method: "POST", body: form });
       onNotify("바이너리 원격 업데이트 전달", res.status || "패치가 등록되었습니다.", true);
@@ -152,6 +168,12 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
     }
   };
 
+  const resetTitle = confirmResetMode === "FULL_FACTORY_RESET" ? "전체 초기 설정 복원 확인" : "신학기 데이터 초기화 확인";
+  const resetDescription =
+    confirmResetMode === "FULL_FACTORY_RESET"
+      ? "최고관리자(admin) 계정만 남기고 모든 교사, 시간표, 시험감독, 행사 데이터를 삭제합니다.\n실행 직전 backups/ 폴더에 AES-256 암호화 백업이 자동 생성되며 기존 로그인 세션은 종료됩니다."
+      : "교사 명렬표 및 학교 기본설정은 유지하고, 시간표·시수·시험감독·행사 데이터만 비웁니다.\n실행 직전 backups/ 폴더에 AES-256 암호화 백업이 자동 생성됩니다.";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
@@ -162,7 +184,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
             <UserCog size={15} style={{ verticalAlign: "middle" }} /> 교사별 RBAC 권한 다중 겸임 설정
           </h3>
           <select className="select" value={selectedTeacherId} onChange={(e) => setSelectedTeacherId(e.target.value)} style={{ marginBottom: 8 }}>
-            {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => (
+            {regularTeachers.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.username === "admin" ? `최고관리자 (${t.username} · 서버 시스템 계정)` : `${t.name} (${t.username} · ${t.position})`}
               </option>
@@ -190,10 +212,10 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div className="grid-2">
               <select className="select" value={handoverFrom} onChange={(e) => setHandoverFrom(e.target.value)}>
-                {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => <option key={t.id} value={t.id}>기존: {t.name}</option>)}
+                {regularTeachers.map((t) => <option key={t.id} value={t.id}>기존: {t.name}</option>)}
               </select>
               <select className="select" value={handoverTo} onChange={(e) => setHandoverTo(e.target.value)}>
-                {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => <option key={t.id} value={t.id}>후임: {t.name}</option>)}
+                {regularTeachers.map((t) => <option key={t.id} value={t.id}>후임: {t.name}</option>)}
               </select>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -208,35 +230,19 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
 
       <div className="card" style={{ borderColor: "#ffa8a8", background: "#fff8f8" }}>
         <h3 style={{ margin: "0 0 8px", fontSize: 15, color: "#c92a2a" }}>
-          <AlertTriangle size={16} style={{ verticalAlign: "middle" }} /> 시스템 데이터 전체 초기화 (자동 암호화 백업 후 실행)
+          <AlertTriangle size={16} style={{ verticalAlign: "middle" }} /> 시스템 데이터 초기화 (자동 암호화 백업 후 실행)
         </h3>
         <div style={{ fontSize: 12.5, color: "#475569", marginBottom: 12 }}>
           모든 초기화 작업은 실행 직전 <code>backups/</code> 폴더에 AES-256 암호화 백업본을 자동 생성한 뒤 안전하게 실행됩니다.
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="btn btn-sm" onClick={() => setConfirmResetMode("ACADEMIC_TERM_RESET")}>
-            1. 학기 초기화 (교사 유지 · 시간표/시험/행사 비우기)
+          <button type="button" className="btn btn-sm" onClick={() => setConfirmResetMode("ACADEMIC_TERM_RESET")}>
+            1. 신학기 초기화 (교사 명렬표 유지 · 시간표/시험/행사 비우기)
           </button>
-          <button className="btn btn-sm btn-danger" onClick={() => setConfirmResetMode("FULL_FACTORY_RESET")}>
-            2. 전체 완전 초기화 (admin / 1234 계정만 남기고 모두 삭제)
-          </button>
-          <button className="btn btn-sm" onClick={() => setConfirmResetMode("DEMO_SEED_RESET")}>
-            3. 시연용 샘플 데이터로 복원
+          <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmResetMode("FULL_FACTORY_RESET")}>
+            2. 전체 초기 설정 복원 (최고관리자 계정만 남기고 모두 삭제)
           </button>
         </div>
-        {confirmResetMode && (
-          <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "#fff", border: "1.5px solid #e03131", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#c92a2a" }}>
-              선택한 초기화({confirmResetMode})를 정말 실행하시겠습니까?
-            </span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn btn-sm" onClick={() => setConfirmResetMode("")}>취소</button>
-              <button className="btn btn-sm btn-danger" onClick={() => handleSystemReset(confirmResetMode)}>
-                예, 지금 초기화 실행
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="grid-2">
@@ -254,16 +260,9 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
               {backups.slice(0, 8).map((b) => (
                 <div key={b} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 12 }}>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{b}</span>
-                  {confirmRestoreFile === b ? (
-                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                      <button className="btn btn-sm btn-danger" onClick={() => handleRestoreBackup(b)}>복원 실행</button>
-                      <button className="btn btn-sm" onClick={() => setConfirmRestoreFile("")}>취소</button>
-                    </div>
-                  ) : (
-                    <button className="btn btn-sm" style={{ flexShrink: 0 }} onClick={() => setConfirmRestoreFile(b)}>
-                      <RotateCcw size={12} /> 복원
-                    </button>
-                  )}
+                  <button type="button" className="btn btn-sm" style={{ flexShrink: 0 }} onClick={() => setConfirmRestoreFile(b)}>
+                    <RotateCcw size={12} /> 복원
+                  </button>
                 </div>
               ))}
             </div>
@@ -277,7 +276,7 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12.5 }}>
             <div style={{ padding: 10, borderRadius: 8, background: "#f8fafc", border: "1px solid #cbd5e1", display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                <span><b>저장소:</b> github.com/purnpado/kkomi_timetable (현재 v0.1.01)</span>
+                <span><b>저장소:</b> github.com/purnpado/kkomi_timetable {serverVersion ? `(현재 v${serverVersion})` : ""}</span>
                 {ghRelease && (
                   <span className={`badge ${ghRelease.hasUpdate ? "badge-amber" : "badge-green"}`}>
                     최신: {ghRelease.tagName} {ghRelease.hasUpdate ? "(업데이트 가능)" : "(최신 상태)"}
@@ -320,6 +319,26 @@ export default function AdminRemoteView({ serverUrl, user, teachers, onRefresh, 
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(confirmResetMode)}
+        onOpenChange={(open) => !open && setConfirmResetMode("")}
+        danger
+        title={resetTitle}
+        description={resetDescription}
+        confirmLabel="예, 초기화 실행"
+        onConfirm={() => handleSystemReset(confirmResetMode)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(confirmRestoreFile)}
+        onOpenChange={(open) => !open && setConfirmRestoreFile("")}
+        danger
+        title="암호화 백업 복원 확인"
+        description={`선택한 백업 파일(${confirmRestoreFile})로 전체 데이터를 복원하시겠습니까?\n복원 직후 보안을 위해 모든 사용자의 로그인 세션이 종료됩니다.`}
+        confirmLabel="복원 실행"
+        onConfirm={() => handleRestoreBackup(confirmRestoreFile)}
+      />
     </div>
   );
 }

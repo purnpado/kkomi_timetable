@@ -1,6 +1,6 @@
 import React from "react";
-import { BookOpen, CalendarDays, CheckSquare, Clock, Lock, ShieldAlert, Unlock, Users } from "lucide-react";
-import { formatUserDisplayName } from "../../events/eventStore";
+import { BookOpen, CalendarDays, CheckSquare, Clock, Lock, Rocket, ShieldAlert, Unlock, Users } from "lucide-react";
+import { formatUserDisplayName, hasRole } from "../../events/eventStore";
 
 function StatGauge({ label, value, max, color }) {
   const pct = Math.min(100, Math.round((value / Math.max(1, max)) * 100));
@@ -26,7 +26,7 @@ function StatGauge({ label, value, max, color }) {
 }
 
 // DashboardView는 눈에 확 들어오는 히어로 배너와 4대 KPI 요약 카드를 갖춘 오늘의 교무 통합 대시보드입니다.
-export default function DashboardView({ user, summary, onNavigate, onOpenApproval }) {
+export default function DashboardView({ user, summary, teachersCount = 0, cellsCount = 0, onNavigate, onOpenApproval }) {
   const myLessons = [...(summary?.myTodayLessons || [])].sort((a, b) => a.period - b.period);
   const homeroom = [...(summary?.homeroomLessons || [])].sort((a, b) => a.period - b.period);
   const todayEvents = summary?.todayEvents || [];
@@ -35,13 +35,14 @@ export default function DashboardView({ user, summary, onNavigate, onOpenApprova
   const openExt = summary?.openExternalExams || [];
   const bellMap = {};
   (summary?.bellSchedule || []).forEach((b) => { bellMap[b.period] = b; });
+  const showSetupGuide = cellsCount === 0 && (hasRole(user, "MASTER") || hasRole(user, "TIMETABLE_ADMIN"));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="hero-banner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14 }}>
         <div>
           <div style={{ fontSize: 12, color: "#bae6fd", fontWeight: 700, marginBottom: 4 }}>
-            🐾 꼬미시간 v{summary?.serverVersion || "0.1.0"} · {summary?.todayDate} · {summary?.databaseMode}
+            🐾 꼬미시간 {summary?.serverVersion ? `v${summary.serverVersion}` : ""} · {summary?.todayDate} · {summary?.databaseMode}
           </div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
             안녕하세요, {formatUserDisplayName(user)}{user?.position && user?.position !== user?.name ? ` (${user.position})` : ""}
@@ -56,6 +57,31 @@ export default function DashboardView({ user, summary, onNavigate, onOpenApprova
           <StatGauge label="결보강" value={user?.substitutionCount || 0} max={12} color="#ffd43b" />
         </div>
       </div>
+
+      {showSetupGuide && (
+        <div className="card" style={{ borderColor: "#93c5fd", background: "#f8faff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <h3 style={{ margin: "0 0 4px", fontSize: 15, display: "flex", alignItems: "center", gap: 6, color: "#1e3a8a" }}>
+                <Rocket size={16} /> 초기 학교 설정 시작 가이드
+              </h3>
+              <div style={{ fontSize: 12.5, color: "#475569" }}>
+                현재 교사 {teachersCount}명 · 편성된 시간표 {cellsCount}셀입니다. 아래 순서대로 기초 데이터를 등록해 보세요.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {hasRole(user, "MASTER") && (
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => onNavigate("admin-remote")}>
+                  1. 교사 명렬표·권한 등록
+                </button>
+              )}
+              <button type="button" className="btn btn-sm" onClick={() => onNavigate("timetable")}>
+                2. 시수표 설정 및 기초 시간표 작성/엑셀 가져오기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="kpi-grid">
         <div className="kpi-card" onClick={() => onNavigate("timetable")}>

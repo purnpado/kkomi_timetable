@@ -26,6 +26,59 @@ func (s *Store) ClearCollections(collections ...string) error {
 	return nil
 }
 
+func buildDefaultAdmin(pwHash string) protocol.Teacher {
+	return protocol.Teacher{
+		ID:                       "t01",
+		Username:                 "admin",
+		PasswordHash:             pwHash,
+		MustChangePassword:       true,
+		Name:                     "최고관리자",
+		Position:                 "최고관리자",
+		IsDepartmentHead:         false,
+		Subject:                  "시스템",
+		InternalExamExempt:       true,
+		InternalExamExemptReason: "시스템 최고관리자 계정",
+		ExemptReasons:            []string{"시스템 최고관리자 계정"},
+		Roles: []protocol.Role{
+			protocol.RoleMaster,
+			protocol.RoleTimetableAdmin,
+			protocol.RoleInternalExamAdmin,
+			protocol.RoleExternalExamAdmin,
+			protocol.RoleEventAdmin,
+			protocol.RoleTeacher,
+		},
+	}
+}
+
+// EnsureCleanInit은 최초 실행 시 DB가 비어 있으면 최고관리자(admin) 계정,
+// 기본 일과시간표 및 학교 기본설정만 원자적으로 생성합니다.
+func EnsureCleanInit(s *Store) error {
+	cnt, err := s.CountCollection("teachers")
+	if err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return upgradeLegacyAdminIfNeeded(s)
+	}
+	hashBytes, err := bcrypt.GenerateFromPassword([]byte("1234"), BcryptCost())
+	if err != nil {
+		return err
+	}
+	admin := buildDefaultAdmin(string(hashBytes))
+	return s.WithTx(func(tx *TxStore) error {
+		if err := tx.SaveRecord("teachers", admin.ID, admin); err != nil {
+			return err
+		}
+		for _, b := range DefaultBellSchedule() {
+			if err := tx.SaveRecord("bell_schedule", fmt.Sprintf("period-%d", b.Period), b); err != nil {
+				return err
+			}
+		}
+		cfg := DefaultSchoolConfig()
+		return tx.SaveRecord("school_configs", cfg.ID, cfg)
+	})
+}
+
 // ResetSystem은 전체 초기화 전에 AES-256 암호화 백업을 반드시 먼저 생성한 뒤,
 // 지정된 모드에 따라 단일 트랜잭션으로 시스템 데이터를 안전하게 초기화합니다.
 func (s *Store) ResetSystem(mode string) (string, error) {
@@ -59,7 +112,7 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 		return backupPath, nil
 
 	case ResetModeDemoSeed:
-		// 시연용 샘플 데이터 복원
+		// 시연/테스트용 예시 데이터 복원
 		all := append([]string{"teachers", "bell_schedule", "school_configs"}, academicCollections...)
 		if err := s.WithTx(func(tx *TxStore) error {
 			return tx.ClearCollections(all...)
@@ -78,27 +131,7 @@ func (s *Store) ResetSystem(mode string) (string, error) {
 		if err != nil {
 			return backupPath, err
 		}
-		admin := protocol.Teacher{
-			ID:                       "t01",
-			Username:                 "admin",
-			PasswordHash:             string(hashBytes),
-			MustChangePassword:       true,
-			Name:                     "최고관리자",
-			Position:                 "최고관리자",
-			IsDepartmentHead:         false,
-			Subject:                  "시스템",
-			InternalExamExempt:       true,
-			InternalExamExemptReason: "시스템 최고관리자 계정",
-			ExemptReasons:            []string{"시스템 최고관리자 계정"},
-			Roles: []protocol.Role{
-				protocol.RoleMaster,
-				protocol.RoleTimetableAdmin,
-				protocol.RoleInternalExamAdmin,
-				protocol.RoleExternalExamAdmin,
-				protocol.RoleEventAdmin,
-				protocol.RoleTeacher,
-			},
-		}
+		admin := buildDefaultAdmin(string(hashBytes))
 		if err := s.WithTx(func(tx *TxStore) error {
 			if err := tx.ClearCollections(all...); err != nil {
 				return err

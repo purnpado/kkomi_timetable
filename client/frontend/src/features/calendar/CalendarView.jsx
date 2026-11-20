@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { CheckCircle2, FileSpreadsheet, FileText, PlusCircle, Printer, XCircle } from "lucide-react";
 import { apiFetch, hasRole, printDesktopWindow } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
@@ -20,7 +20,13 @@ export default function CalendarView({ serverUrl, user, events, teachers, onRefr
   const [endPeriod, setEndPeriod] = useState(6);
   const [linkType, setLinkType] = useState("CLASS_BLOCK");
   const [grade, setGrade] = useState(1);
-  const [leadTeacherId, setLeadTeacherId] = useState(user?.id || "t05");
+  const [leadTeacherId, setLeadTeacherId] = useState(user?.id || "");
+
+  useEffect(() => {
+    if (!leadTeacherId && user?.id) {
+      setLeadTeacherId(user.id);
+    }
+  }, [leadTeacherId, user?.id]);
 
   const isEventAdmin = hasRole(user, "EVENT_ADMIN");
 

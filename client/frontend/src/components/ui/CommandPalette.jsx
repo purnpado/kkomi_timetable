@@ -40,14 +40,20 @@ export default function CommandPalette({ open, onOpenChange, teachers, cells, ev
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content" style={{ maxWidth: 560, padding: 16 }}>
+        <Dialog.Content className="dialog-content command-palette-content" style={{ maxWidth: 560, padding: 16 }}>
+          <Dialog.Title style={{ margin: "0 0 4px", fontSize: 13.5, fontWeight: 700, color: "#475569" }}>
+            교사 위치 · 학급 · 행사 빠른 검색
+          </Dialog.Title>
+          <Dialog.Description style={{ margin: "0 0 10px", fontSize: 11.5, color: "#64748b" }}>
+            검색 결과를 선택하면 해당 메뉴로 즉시 이동합니다 (ESC 닫기).
+          </Dialog.Description>
           <div style={{ display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #e2e8f0", paddingBottom: 10, marginBottom: 10 }}>
             <Search size={18} color="#3b5bdb" />
             <input
               autoFocus
               className="input"
               style={{ border: 0, outline: "none", fontSize: 15, padding: 4 }}
-              placeholder="교사 현재 위치, 과목, 학급, 행사명을 검색하세요 (ESC 닫기)..."
+              placeholder="교사 현재 위치, 과목, 학급, 행사명을 입력하세요..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -58,6 +64,7 @@ export default function CommandPalette({ open, onOpenChange, teachers, cells, ev
             {results.map((r) => (
               <button
                 key={`${r.kind}-${r.id}`}
+                type="button"
                 className="btn"
                 style={{ justifyContent: "space-between", padding: "10px 12px", textAlign: "left" }}
                 onClick={() => {

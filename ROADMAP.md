@@ -1,6 +1,6 @@
 # 🗺️ 꼬미시간 (KkomiTimetable) 개발 현황 및 로드맵
 
-> 기준 버전: **`v0.1.01`** (최종 동기화: `2026-11-16`)  
+> 기준 버전: **`v0.1.01`** (최종 동기화: `2026-11-20` · `v0.2.x` 5단계 완료 반영)  
 > 이 문서는 **구현 완료 기능**, **현재 진행 중(현장 안정화) 작업**, 그리고 **앞으로 구현해야 할 기능 로드맵**을 한눈에 파악하기 위해 작성되었습니다.
 
 ---
@@ -90,6 +90,9 @@
   - `multiday.go` · `assigner.go` · `MultiDayExamEditor.jsx`: 3~5일 평일 시험기간 통합 편성, 일자별 부재 필터링, 동일 일자 연강 감독 방지(`AvoidConsecutive`), 1일 최대 감독 교시 제한, 일자별 부분 공개(`UnsealExamDate`) 구현
 - [x] **결보강 · 외부감독 · 행사 실적 월별/학기별 누적 통계 및 결재용 출력물 강화:** *(4단계 구현 완료)*
   - `stats/service.go` · `settlement_exporter.go` · `ReportsSettlementView.jsx`: 월별/1·2학기/학년도/지정기간 교원별 실적 집계 및 4시트 정산표(`.xlsx`)·통합 정산 보고서(`.hwpx`)·결보강 확인서(`.hwpx`)·시험감독 배정표(`.hwpx`/`.xlsx`) 출력 구현
+- [x] **실학교 기준 초기 화면·관리 UI 정돈 및 Radix UI 전면 적용 · 디자인 마감:** *(5단계 구현 완료)*
+  - `EnsureCleanInit`(`reset.go`) · `--seed-demo`(`main.go`): 최초 실행 시 `admin` 계정·기본 일과·학교설정만 깨끗하게 초기화하며, 대시보드 초기 설정 가이드(`DashboardView.jsx`) 및 `LoginView.jsx`/`AdminRemoteView.jsx` 시연 문구·버튼 정리
+  - **Radix UI 7종 적용:** `@radix-ui/react-tabs`(로그인·시간표·교내시험), `@radix-ui/react-context-menu`(`BaseTimetableBuilder` 우클릭 잠금/고정공강/삭제), `@radix-ui/react-alert-dialog`(`ConfirmDialog`), `@radix-ui/react-tooltip`(`AppTooltip` + `TooltipProvider`), `@radix-ui/react-dropdown-menu`(`ActionMenu`) + `radix.css` 모션/접근성(`prefers-reduced-motion`) 마감
 
 ### 3.2. 중기 목표 (`v0.3.x` — 고교학점제 · 나이스 연계 · 교무실 환경 확장)
 - [ ] **고교학점제 학생 개인별 · 이동수업 반별 안내 시간표 생성 및 배포:**

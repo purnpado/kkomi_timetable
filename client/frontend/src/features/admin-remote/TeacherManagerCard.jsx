@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Download, KeyRound, Trash2, Upload, UserPlus } from "lucide-react";
 import { apiFetch, hasRole } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import AppTooltip from "../../components/ui/AppTooltip";
 
 // TeacherManagerCard는 최고관리자 또는 시간표 담당교사가 클라이언트에서 신규 교사 등록,
 // 전용 교과교실 지정, 명렬표 엑셀 다운로드/일괄 업로드를 수행하는 관리 카드입니다.
@@ -14,6 +16,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
   const [defaultRoom, setDefaultRoom] = useState("");
   const [transferDate, setTransferDate] = useState("2026-03-01");
   const [itinerantDaysText, setItinerantDaysText] = useState("");
+  const [confirmTarget, setConfirmTarget] = useState(null);
 
   const handleSaveTeacher = async (e) => {
     e.preventDefault();
@@ -41,7 +44,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
           password: "1234",
         }),
       });
-      onNotify("교사 명렬표 반영 완료", `${name} 선생님이 등록(초기 비밀번호: 1234)되었습니다.`);
+      onNotify("교사 명렬표 반영 완료", `${name} 선생님이 등록되었습니다 (최초 로그인 시 기본 비밀번호 변경 안내).`);
       setName("");
       setUsername("");
       setHomeroomClass("");
@@ -82,7 +85,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
         method: "POST",
         body: JSON.stringify({ teacherId: tid }),
       });
-      onNotify("비밀번호 초기화 완료", `${tname} 선생님의 비밀번호가 '1234'로 초기화되었습니다 (다음 로그인 시 변경 안내).`);
+      onNotify("비밀번호 초기화 완료", `${tname} 선생님의 비밀번호가 초기값(1234)으로 재설정되었습니다 (다음 로그인 시 변경 안내).`);
     } catch (err) {
       onNotify("비밀번호 초기화 실패", err.message, true);
     }
@@ -114,7 +117,7 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
 
       <form onSubmit={handleSaveTeacher} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 14 }}>
         <input className="input" placeholder="성명 (예: 박새별)" value={name} onChange={(e) => setName(e.target.value)} required />
-        <input className="input" placeholder="아이디 (예: t21)" value={username} onChange={(e) => setUsername(e.target.value)} required />
+        <input className="input" placeholder="아이디 (예: teacher01)" value={username} onChange={(e) => setUsername(e.target.value)} required />
         <input className="input" placeholder="담당과목 (예: 수학)" value={subject} onChange={(e) => setSubject(e.target.value)} required />
         <input className="input" placeholder="직위 (예: 평교사)" value={position} onChange={(e) => setPosition(e.target.value)} />
         <input className="input" placeholder="담임학급 (예: 1-3)" value={homeroomClass} onChange={(e) => setHomeroomClass(e.target.value)} />
@@ -140,12 +143,22 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
                 <td>{t.itinerantDays?.length ? t.itinerantDays.join(",") : "전일"}</td>
                 <td style={{ display: "flex", gap: 6 }}>
                   {hasRole(user, "MASTER") && (
-                    <button className="btn btn-sm" onClick={() => handleResetPassword(t.id, t.name)} title="초기 비밀번호(1234)로 되돌리기">
-                      <KeyRound size={12} /> 비번초기화
-                    </button>
+                    <AppTooltip content="비밀번호를 초기값(1234)으로 재설정합니다">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => setConfirmTarget({ type: "reset-pw", id: t.id, name: t.name })}
+                      >
+                        <KeyRound size={12} /> 비번초기화
+                      </button>
+                    </AppTooltip>
                   )}
                   {t.id !== user.id && t.username !== "admin" && hasRole(user, "MASTER") && (
-                    <button className="btn btn-sm btn-danger" onClick={() => handleDeleteTeacher(t.id, t.name)}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={() => setConfirmTarget({ type: "delete", id: t.id, name: t.name })}
+                    >
                       <Trash2 size={12} /> 삭제
                     </button>
                   )}
@@ -155,6 +168,29 @@ export default function TeacherManagerCard({ serverUrl, user, teachers, onRefres
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(confirmTarget)}
+        onOpenChange={(open) => !open && setConfirmTarget(null)}
+        danger={confirmTarget?.type === "delete"}
+        title={confirmTarget?.type === "delete" ? "교사 계정 삭제 확인" : "비밀번호 초기화 확인"}
+        description={
+          confirmTarget?.type === "delete"
+            ? `${confirmTarget?.name} 선생님을 교사 명렬표에서 삭제하시겠습니까?\n기존 시간표/시험감독 배정에 영향이 있을 수 있습니다.`
+            : `${confirmTarget?.name} 선생님의 비밀번호를 초기값(1234)으로 재설정하시겠습니까?\n해당 교사의 기존 로그인 세션이 만료되며 다음 로그인 시 변경 안내가 표시됩니다.`
+        }
+        confirmLabel={confirmTarget?.type === "delete" ? "삭제 실행" : "비밀번호 초기화"}
+        onConfirm={async () => {
+          const target = confirmTarget;
+          setConfirmTarget(null);
+          if (!target) return;
+          if (target.type === "delete") {
+            await handleDeleteTeacher(target.id, target.name);
+          } else {
+            await handleResetPassword(target.id, target.name);
+          }
+        }}
+      />
     </div>
   );
 }
