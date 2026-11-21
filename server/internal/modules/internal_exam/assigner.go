@@ -39,36 +39,6 @@ func (l *roleLoad) add(role string, delta int) {
 	l.Total = l.Main + l.Sub + l.Corridor
 }
 
-// IsEffectiveExamExempt는 교사가 특수반 전담 또는 학교가 명시 지정한 감독 제외 대상인지 판정합니다.
-// 참고: 별도 고사실(독감·감염병)은 전담 제외 보직이 아니라 개설 시 일반 교사가 순환 감독합니다.
-func IsEffectiveExamExempt(t protocol.Teacher) (bool, string) {
-	if t.InternalExamExempt {
-		if strings.TrimSpace(t.InternalExamExemptReason) != "" {
-			return true, strings.TrimSpace(t.InternalExamExemptReason)
-		}
-		return true, "특수보직·학교 지정 교내 감독 제외"
-	}
-	if strings.EqualFold(strings.TrimSpace(t.InternalExamExemptReason), "제외해제") {
-		return false, ""
-	}
-	joined := strings.Join([]string{t.Position, t.Subject, t.InternalExamExemptReason}, " ")
-	for _, kw := range []string{"특수반", "특수학급", "특수교육", "특수"} {
-		if strings.Contains(joined, kw) {
-			return true, "특수반(개별고사장 전담)"
-		}
-	}
-	return false, ""
-}
-
-func isIsolatedExamRoom(roomLabel string) bool {
-	for _, kw := range []string{"별도고사실", "별도 고사실", "별독고사실", "별독 고사실", "특수학급고사실", "특수학급 고사실", "독감", "감염병"} {
-		if strings.Contains(roomLabel, kw) {
-			return true
-		}
-	}
-	return false
-}
-
 func extractRoomBaseClass(roomLabel string) string {
 	s := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(roomLabel), " 고사장"))
 	if idx := strings.Index(s, "("); idx >= 0 {
@@ -176,7 +146,7 @@ func AssignSlotsMultiDay(
 
 	var slots []protocol.ExamSlot
 	load := make(map[string]*roleLoad, len(teachers))
-	var regularTeachers, honoraryParents []protocol.Teacher
+	var regularTeachers, specialTeachers, honoraryParents []protocol.Teacher
 
 	for _, t := range teachers {
 		if t.IsParentHonorary {
@@ -202,6 +172,8 @@ func AssignSlotsMultiDay(
 		load[t.ID] = &roleLoad{Main: m, Sub: s, Corridor: c, Total: tot}
 		if exempt, _ := IsEffectiveExamExempt(t); !exempt {
 			regularTeachers = append(regularTeachers, t)
+		} else if isSpecialClassSupervisor(t) {
+			specialTeachers = append(specialTeachers, t)
 		}
 	}
 
@@ -278,8 +250,22 @@ func AssignSlotsMultiDay(
 			}
 		}
 
-		// 2단계: 모든 고사장의 정감독(MAIN)을 우선 일괄 선발 (정·부감독 균형 보장)
+		// 2단계: 모든 고사장의 정감독(MAIN)을 우선 일괄 선발 (특수학급고사실은 특수교사 최우선 전담)
 		for _, room := range spec.ClassRooms {
+			if isSpecialClassExamRoom(room) {
+				if specT := pickSpecialTeacherForRoom(specialTeachers, load, ctx); specT != nil {
+					usage.mark(specT.ID, examDate, spec.Period, true)
+					load[specT.ID].add("MAIN", 1)
+					slots = append(slots, buildExamSlot(cfg, spec, "MAIN", room+" 고사장", *specT, "특수학급고사실 특수교사 전담 배정"))
+					continue
+				}
+				if fbT := pickBestTeacherForRole(regularTeachers, load, room, spec.Subject, false, "MAIN", ctx); fbT != nil {
+					usage.mark(fbT.ID, examDate, spec.Period, true)
+					load[fbT.ID].add("MAIN", 1)
+					slots = append(slots, buildExamSlot(cfg, spec, "MAIN", room+" 고사장", *fbT, "특수교사 부재/미등록으로 일반교사 대체 배정"))
+				}
+				continue
+			}
 			if mainT := pickBestTeacherForRole(regularTeachers, load, room, spec.Subject, false, "MAIN", ctx); mainT != nil {
 				usage.mark(mainT.ID, examDate, spec.Period, true)
 				load[mainT.ID].add("MAIN", 1)

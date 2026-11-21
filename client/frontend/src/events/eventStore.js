@@ -153,6 +153,56 @@ export function checkInClassNow(bellSchedule = []) {
   return { inClass: false, periodLabel: "쉬는 시간 / 일과 전후" };
 }
 
+export const TEACHER_TYPES = [
+  { value: "SUBJECT", label: "교과 교사", shortLabel: "교과", defaultHasClasses: true, defaultSubstituteExempt: false, defaultPosition: "평교사", defaultSubject: "국어" },
+  { value: "SPECIAL", label: "특수 교사", shortLabel: "특수", defaultHasClasses: false, defaultSubstituteExempt: true, defaultPosition: "특수교사", defaultSubject: "특수학급" },
+  { value: "HEALTH", label: "보건 교사", shortLabel: "보건", defaultHasClasses: false, defaultSubstituteExempt: true, defaultPosition: "보건교사", defaultSubject: "보건" },
+  { value: "COUNSELOR", label: "전문상담 교사", shortLabel: "상담", defaultHasClasses: false, defaultSubstituteExempt: true, defaultPosition: "전문상담교사", defaultSubject: "전문상담" },
+  { value: "LIBRARIAN", label: "사서 교사", shortLabel: "사서", defaultHasClasses: false, defaultSubstituteExempt: true, defaultPosition: "사서교사", defaultSubject: "사서" },
+  { value: "NUTRITION", label: "영양 교사", shortLabel: "영양", defaultHasClasses: false, defaultSubstituteExempt: true, defaultPosition: "영양교사", defaultSubject: "영양" },
+  { value: "OTHER", label: "기타 비교과", shortLabel: "기타", defaultHasClasses: false, defaultSubstituteExempt: true, defaultPosition: "비교과 교사", defaultSubject: "비교과" },
+];
+
+export function getTeacherTypeMeta(type) {
+  return TEACHER_TYPES.find((item) => item.value === type) || TEACHER_TYPES[0];
+}
+
+export function isSystemAdminAccount(t) {
+  if (!t) return false;
+  const uname = String(t.username || "").trim().toLowerCase();
+  return uname === "admin" && (t.name === "최고관리자" || t.name === "시스템 관리자" || t.subject === "시스템" || t.subject === "행정/총괄");
+}
+
+export function isFacultyTeacher(t) {
+  return Boolean(t) && !t.isParentHonorary && !isSystemAdminAccount(t);
+}
+
+export function effectiveTeacherType(t) {
+  if (!t) return "SUBJECT";
+  const explicit = String(t.teacherType || "").trim().toUpperCase();
+  if (TEACHER_TYPES.some((item) => item.value === explicit)) return explicit;
+  if (isSystemAdminAccount(t) || t.isParentHonorary) return "OTHER";
+  const joined = `${t.position || ""} ${t.subject || ""}`.toLowerCase();
+  if (joined.includes("특수")) return "SPECIAL";
+  if (joined.includes("보건")) return "HEALTH";
+  if (joined.includes("상담") || joined.includes("위클래스") || joined.includes("wee")) return "COUNSELOR";
+  if (joined.includes("사서") || joined.includes("도서관")) return "LIBRARIAN";
+  if (joined.includes("영양")) return "NUTRITION";
+  return "SUBJECT";
+}
+
+export function hasRegularClasses(t) {
+  if (!isFacultyTeacher(t)) return false;
+  if (typeof t.hasClasses === "boolean") return t.hasClasses;
+  return effectiveTeacherType(t) === "SUBJECT";
+}
+
+export function isSubstituteExcluded(t) {
+  if (!isFacultyTeacher(t)) return true;
+  if (typeof t.substituteExempt === "boolean") return t.substituteExempt;
+  return effectiveTeacherType(t) !== "SUBJECT";
+}
+
 export const ROLE_LABELS = {
   MASTER: "최고관리자",
   TIMETABLE_ADMIN: "시간표 담당",

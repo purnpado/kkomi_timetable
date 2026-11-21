@@ -264,7 +264,18 @@ func (s *Service) CalculateFairnessSummary() (protocol.ExamFairnessSummary, erro
 		curMap[sl.TeacherID].add(sl.SlotRole, 1)
 	}
 
-	dayCount, consecPairs, maxDaily := computeMultiDayFairnessStats(slots)
+	exemptIDs := make(map[string]bool)
+	for _, t := range teachers {
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) {
+			exemptIDs[t.ID] = true
+			continue
+		}
+		if exempt, _ := IsEffectiveExamExempt(t); exempt {
+			exemptIDs[t.ID] = true
+		}
+	}
+
+	dayCount, consecPairs, maxDaily := computeMultiDayFairnessStats(slots, exemptIDs)
 	balanceMode := cfg.BalanceMode
 	if balanceMode == "" {
 		balanceMode = "TOTAL_AND_ROLE"

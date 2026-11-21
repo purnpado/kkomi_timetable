@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CloudDownload, Database, RefreshCw, RotateCcw, Shield, UploadCloud, UserCog } from "lucide-react";
-import { apiFetch, applySelfUpdateBridge, ROLE_LABELS } from "../../events/eventStore";
+import { apiFetch, applySelfUpdateBridge, isFacultyTeacher, isSystemAdminAccount, ROLE_LABELS } from "../../events/eventStore";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import TeacherManagerCard from "./TeacherManagerCard";
 
@@ -9,7 +9,9 @@ const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL
 // AdminRemoteView는 최고관리자(MASTER)의 교사 관리, RBAC 권한 배정,
 // 전체 시스템 초기화, 원격 DB 암호화 백업·복원 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
 export default function AdminRemoteView({ serverUrl, serverVersion = "", user, teachers, onRefresh, onResetComplete, onNotify }) {
-  const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
+  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
+  const systemAdmin = useMemo(() => (teachers || []).find(isSystemAdminAccount), [teachers]);
+  const roleTargets = useMemo(() => (systemAdmin ? [...facultyTeachers, systemAdmin] : facultyTeachers), [facultyTeachers, systemAdmin]);
   const [backups, setBackups] = useState([]);
   const [confirmRestoreFile, setConfirmRestoreFile] = useState("");
   const [selectedTeacherId, setSelectedTeacherId] = useState("");
@@ -21,17 +23,16 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
   const [ghBusy, setGhBusy] = useState(false);
 
   useEffect(() => {
-    if (regularTeachers.length === 0) return;
-    if (!regularTeachers.some((t) => t.id === selectedTeacherId)) {
-      setSelectedTeacherId(regularTeachers[0].id);
+    if (roleTargets.length > 0 && !roleTargets.some((t) => t.id === selectedTeacherId)) {
+      setSelectedTeacherId((facultyTeachers[0] || roleTargets[0]).id);
     }
-    if (!regularTeachers.some((t) => t.id === handoverFrom)) {
-      setHandoverFrom(regularTeachers[0].id);
+    if (roleTargets.length > 0 && !roleTargets.some((t) => t.id === handoverFrom)) {
+      setHandoverFrom(roleTargets[0].id);
     }
-    if (!regularTeachers.some((t) => t.id === handoverTo)) {
-      setHandoverTo((regularTeachers[1] || regularTeachers[0]).id);
+    if (facultyTeachers.length > 0 && !facultyTeachers.some((t) => t.id === handoverTo)) {
+      setHandoverTo((facultyTeachers[1] || facultyTeachers[0]).id);
     }
-  }, [regularTeachers, selectedTeacherId, handoverFrom, handoverTo]);
+  }, [roleTargets, facultyTeachers, selectedTeacherId, handoverFrom, handoverTo]);
 
   const loadBackups = async () => {
     try {
@@ -44,7 +45,7 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
 
   useEffect(() => { loadBackups(); }, [user?.id]);
 
-  const selectedTeacher = regularTeachers.find((t) => t.id === selectedTeacherId);
+  const selectedTeacher = roleTargets.find((t) => t.id === selectedTeacherId);
 
   const toggleRole = async (role) => {
     if (!selectedTeacher) return;
@@ -176,7 +177,7 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
+      <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} showSystemAdminSection />
 
       <div className="grid-2">
         <div className="card">
@@ -184,11 +185,18 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
             <UserCog size={15} style={{ verticalAlign: "middle" }} /> 교사별 RBAC 권한 다중 겸임 설정
           </h3>
           <select className="select" value={selectedTeacherId} onChange={(e) => setSelectedTeacherId(e.target.value)} style={{ marginBottom: 8 }}>
-            {regularTeachers.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.username === "admin" ? `최고관리자 (${t.username} · 서버 시스템 계정)` : `${t.name} (${t.username} · ${t.position})`}
-              </option>
-            ))}
+            <optgroup label="교원 목록">
+              {facultyTeachers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.username} · {t.position})
+                </option>
+              ))}
+            </optgroup>
+            {systemAdmin && (
+              <optgroup label="시스템 전용 계정">
+                <option value={systemAdmin.id}>최고관리자 ({systemAdmin.username} · 서버 시스템 계정)</option>
+              </optgroup>
+            )}
           </select>
           <div style={{ fontSize: 12, color: "#475569", marginBottom: 10 }}>
             {selectedTeacher?.username === "admin"
@@ -212,10 +220,18 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div className="grid-2">
               <select className="select" value={handoverFrom} onChange={(e) => setHandoverFrom(e.target.value)}>
-                {regularTeachers.map((t) => <option key={t.id} value={t.id}>기존: {t.name}</option>)}
+                {roleTargets.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    기존: {t.username === "admin" ? "최고관리자 (시스템)" : t.name}
+                  </option>
+                ))}
               </select>
               <select className="select" value={handoverTo} onChange={(e) => setHandoverTo(e.target.value)}>
-                {regularTeachers.map((t) => <option key={t.id} value={t.id}>후임: {t.name}</option>)}
+                {facultyTeachers.length === 0 ? (
+                  <option value="">후임 교원 없음</option>
+                ) : (
+                  facultyTeachers.map((t) => <option key={t.id} value={t.id}>후임: {t.name}</option>)
+                )}
               </select>
             </div>
             <div style={{ display: "flex", gap: 8 }}>

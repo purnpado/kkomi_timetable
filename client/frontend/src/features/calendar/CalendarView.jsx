@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileSpreadsheet, FileText, PlusCircle, Printer, XCircle } from "lucide-react";
-import { apiFetch, hasRole, printDesktopWindow } from "../../events/eventStore";
+import { apiFetch, hasRole, isFacultyTeacher, printDesktopWindow } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 
 const LINK_LABELS = {
@@ -20,13 +20,19 @@ export default function CalendarView({ serverUrl, user, events, teachers, onRefr
   const [endPeriod, setEndPeriod] = useState(6);
   const [linkType, setLinkType] = useState("CLASS_BLOCK");
   const [grade, setGrade] = useState(1);
-  const [leadTeacherId, setLeadTeacherId] = useState(user?.id || "");
+  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
+  const [leadTeacherId, setLeadTeacherId] = useState("");
 
   useEffect(() => {
-    if (!leadTeacherId && user?.id) {
-      setLeadTeacherId(user.id);
+    if (facultyTeachers.length === 0) {
+      if (leadTeacherId) setLeadTeacherId("");
+      return;
     }
-  }, [leadTeacherId, user?.id]);
+    if (!facultyTeachers.some((t) => t.id === leadTeacherId)) {
+      const preferred = facultyTeachers.find((t) => t.id === user?.id) || facultyTeachers[0];
+      setLeadTeacherId(preferred.id);
+    }
+  }, [facultyTeachers, leadTeacherId, user?.id]);
 
   const isEventAdmin = hasRole(user, "EVENT_ADMIN");
 
@@ -43,7 +49,7 @@ export default function CalendarView({ serverUrl, user, events, teachers, onRefr
           startPeriod: Number(startPeriod),
           endPeriod: Number(endPeriod),
           targetGrades: [Number(grade)],
-          leadTeachers: [leadTeacherId],
+          leadTeachers: leadTeacherId ? [leadTeacherId] : [],
           linkType,
           description: `${department} 등록 행사`,
           proposedBy: user.name,
@@ -139,9 +145,13 @@ export default function CalendarView({ serverUrl, user, events, teachers, onRefr
             <option value={3}>3학년</option>
           </select>
           <select className="select" value={leadTeacherId} onChange={(e) => setLeadTeacherId(e.target.value)}>
-            {(teachers || []).filter((t) => !t.isParentHonorary).map((t) => (
-              <option key={t.id} value={t.id}>인솔: {t.name}</option>
-            ))}
+            {facultyTeachers.length === 0 ? (
+              <option value="">인솔 교원 없음</option>
+            ) : (
+              facultyTeachers.map((t) => (
+                <option key={t.id} value={t.id}>인솔: {t.name} ({t.subject})</option>
+              ))
+            )}
           </select>
           <button type="submit" className="btn btn-primary">
             <PlusCircle size={15} /> 행사 등록 요청

@@ -160,7 +160,13 @@ export default function ExamFairnessPanel({ serverUrl, user, fairness, isExamAdm
                 </td>
                 <td>
                   {st.isExempt ? (
-                    <span className="badge badge-gray">제외</span>
+                    st.currentTotal > 0 ? (
+                      <span className="badge badge-amber">
+                        전담 <b>{st.projectedTotal}회</b>
+                      </span>
+                    ) : (
+                      <span className="badge badge-gray">제외</span>
+                    )
                   ) : (
                     <span className="badge badge-blue">
                       <b>{st.projectedTotal}회</b>

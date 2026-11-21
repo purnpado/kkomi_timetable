@@ -93,8 +93,12 @@ func validateSubstituteTeacher(
 	if newT.IsParentHonorary || protocol.IsSystemAdminAccount(newT) {
 		return fmt.Errorf("%s 계정은 교내 시험감독 대타로 배정할 수 없습니다", newT.Name)
 	}
-	if exempt, reason := IsEffectiveExamExempt(newT); exempt {
-		return fmt.Errorf("%s 선생님은 감독 제외 대상(%s)입니다", newT.Name, reason)
+	isSpecialRoom := isSpecialClassExamRoom(target.RoomName)
+	isSpecialCand := isSpecialRoom && isSpecialClassSupervisor(newT)
+	if !isSpecialCand {
+		if exempt, reason := IsEffectiveExamExempt(newT); exempt {
+			return fmt.Errorf("%s 선생님은 감독 제외 대상(%s)입니다", newT.Name, reason)
+		}
 	}
 	if rsn := unavail[newT.ID]; rsn != "" {
 		return fmt.Errorf("%s 선생님은 시험일(%s)에 배정 불가 상태입니다: %s", newT.Name, target.ExamDate, rsn)
@@ -113,7 +117,7 @@ func validateSubstituteTeacher(
 	if target.SlotRole != "CORRIDOR" && roomPrefix != "" && strings.EqualFold(strings.TrimSpace(newT.HomeroomClass), roomPrefix) {
 		return fmt.Errorf("담임교사(%s)는 본인 학급(%s) 고사장에 배정할 수 없습니다", newT.Name, roomPrefix)
 	}
-	if target.SlotRole != "CORRIDOR" && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, newT.Subject) {
+	if !isSpecialCand && target.SlotRole != "CORRIDOR" && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, newT.Subject) {
 		return fmt.Errorf("시험 과목(%s) 담당교사(%s)는 고사장 감독으로 배정할 수 없습니다", target.Subject, newT.Name)
 	}
 	return nil

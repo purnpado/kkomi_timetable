@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as Tabs from "@radix-ui/react-tabs";
 import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, FileText, History, PlusCircle, Redo2, Sliders, TableProperties, Undo2, Users, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
-import { apiFetch, hasRole } from "../../events/eventStore";
+import { apiFetch, hasRegularClasses, hasRole, isFacultyTeacher, isSubstituteExcluded } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import ActionMenu from "../../components/ui/ActionMenu";
 import AppTooltip from "../../components/ui/AppTooltip";
@@ -28,13 +28,24 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
   const [sourceId, setSourceId] = useState(cells[0]?.id || "");
   const [partnerId, setPartnerId] = useState("");
 
-  const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
+  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
+  const partnerTeachers = useMemo(() => {
+    const list =
+      reqType === "SUBSTITUTE"
+        ? facultyTeachers.filter((t) => !isSubstituteExcluded(t))
+        : facultyTeachers.filter(hasRegularClasses);
+    return list.length > 0 ? list : facultyTeachers;
+  }, [facultyTeachers, reqType]);
 
   useEffect(() => {
-    if (regularTeachers.length > 0 && !regularTeachers.some((t) => t.id === partnerId)) {
-      setPartnerId(regularTeachers[0].id);
+    if (partnerTeachers.length === 0) {
+      if (partnerId) setPartnerId("");
+      return;
     }
-  }, [regularTeachers, partnerId]);
+    if (!partnerTeachers.some((t) => t.id === partnerId)) {
+      setPartnerId(partnerTeachers[0].id);
+    }
+  }, [partnerTeachers, partnerId]);
 
   useEffect(() => {
     if (cells.length > 0 && !cells.some((c) => c.id === sourceId)) {
@@ -382,9 +393,13 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
                 </div>
                 <div className="grid-2">
                   <select className="select" value={partnerId} onChange={(e) => setPartnerId(e.target.value)}>
-                    {regularTeachers.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name} ({t.subject})</option>
-                    ))}
+                    {partnerTeachers.length === 0 ? (
+                      <option value="">선택 가능한 교사 없음</option>
+                    ) : (
+                      partnerTeachers.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name} ({t.subject})</option>
+                      ))
+                    )}
                   </select>
                   <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="신청 사유" />
                 </div>

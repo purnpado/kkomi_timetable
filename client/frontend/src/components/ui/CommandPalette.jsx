@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Calendar, MapPin, Search, User } from "lucide-react";
+import { effectiveTeacherType, getTeacherTypeMeta, isFacultyTeacher } from "../../events/eventStore";
 
 // CommandPalette는 Ctrl+K 단축키로 교사 현재 위치(수업 중 학급/공강), 학급 시간표, 학교 행사를 즉시 검색합니다.
 export default function CommandPalette({ open, onOpenChange, teachers, cells, events, onNavigate }) {
@@ -14,12 +15,24 @@ export default function CommandPalette({ open, onOpenChange, teachers, cells, ev
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     const tItems = (teachers || [])
-      .filter((t) => !t.isParentHonorary && (!q || t.name.toLowerCase().includes(q) || t.subject.toLowerCase().includes(q) || t.homeroomClass.toLowerCase().includes(q)))
+      .filter((t) => {
+        if (!isFacultyTeacher(t)) return false;
+        if (!q) return true;
+        const typeLabel = getTeacherTypeMeta(effectiveTeacherType(t)).label.toLowerCase();
+        return (
+          t.name.toLowerCase().includes(q) ||
+          (t.subject || "").toLowerCase().includes(q) ||
+          (t.homeroomClass || "").toLowerCase().includes(q) ||
+          typeLabel.includes(q)
+        );
+      })
       .slice(0, 6)
       .map((t) => {
+        const effType = effectiveTeacherType(t);
+        const typeTag = effType !== "SUBJECT" ? ` · ${getTeacherTypeMeta(effType).shortLabel}` : "";
         const todayCells = (cells || []).filter((c) => c.dayOfWeek === nowWeekday && (c.teacherId === t.id || c.coTeacherId === t.id));
         const loc = todayCells.length > 0 ? todayCells.map((c) => `${c.period}교시 ${c.className}(${c.room || c.subject})`).join(" · ") : "오늘 수업 없음 / 교무실 대기";
-        return { kind: "teacher", id: t.id, title: `${t.name} 선생님 (${t.subject})`, sub: loc, targetTab: "timetable" };
+        return { kind: "teacher", id: t.id, title: `${t.name} 선생님 (${t.subject}${typeTag})`, sub: loc, targetTab: "timetable" };
       });
 
     const evItems = (events || [])

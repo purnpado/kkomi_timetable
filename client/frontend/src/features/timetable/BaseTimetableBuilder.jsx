@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Download, Lock, Plus, Redo2, Save, Sliders, Sparkles, Trash2, Undo2, Unlock, Upload } from "lucide-react";
-import { apiFetch } from "../../events/eventStore";
+import { apiFetch, hasRegularClasses, isFacultyTeacher } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import AppTooltip from "../../components/ui/AppTooltip";
@@ -9,9 +9,6 @@ import BellScheduleEditor from "./BellScheduleEditor";
 
 const DAYS = ["", "월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
-
-const isSystemAdmin = (t) =>
-  t.username === "admin" && (t.subject === "시스템" || t.name === "최고관리자" || t.name === "시스템 관리자");
 
 // BaseTimetableBuilder는 마스터 및 시간표 담당교사가 클라이언트에서 직접
 // 학년별·학급별 기초 시간표 및 일과시간을 작성·자동 편성·엑셀 업로드·우클릭 잠금 제어할 수 있는 작성기입니다.
@@ -38,10 +35,11 @@ export default function BaseTimetableBuilder({
   const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [subject, setSubject] = useState("국어");
   const [subjectCode, setSubjectCode] = useState("KOR101");
-  const regularTeachers = useMemo(
-    () => (teachers || []).filter((t) => !t.isParentHonorary && !isSystemAdmin(t)),
-    [teachers]
-  );
+  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
+  const regularTeachers = useMemo(() => {
+    const list = facultyTeachers.filter(hasRegularClasses);
+    return list.length > 0 ? list : facultyTeachers;
+  }, [facultyTeachers]);
   const [teacherId, setTeacherId] = useState("");
   const [coTeacherId, setCoTeacherId] = useState("");
   const [room, setRoom] = useState("1-1교실");

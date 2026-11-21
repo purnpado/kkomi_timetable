@@ -86,6 +86,11 @@ func canTeacherFitSlot(
 		}
 		return true
 	}
+	if isSpecialClassExamRoom(sl.RoomName) && !isSpecialClassSupervisor(t) {
+		if curT, ok := tByID[sl.TeacherID]; !ok || isSpecialClassSupervisor(curT) {
+			return false
+		}
+	}
 	roomClass := extractRoomBaseClass(sl.RoomName)
 	if roomClass != "" && strings.EqualFold(strings.TrimSpace(t.HomeroomClass), roomClass) {
 		return false
@@ -96,7 +101,7 @@ func canTeacherFitSlot(
 	return true
 }
 
-func computeMultiDayFairnessStats(slots []protocol.ExamSlot) (dayCount, consecutivePairs, maxDaily int) {
+func computeMultiDayFairnessStats(slots []protocol.ExamSlot, exemptIDs map[string]bool) (dayCount, consecutivePairs, maxDaily int) {
 	dateSet := make(map[string]bool)
 	byDayTeacher := make(map[string][]int)
 	for _, sl := range slots {
@@ -104,7 +109,7 @@ func computeMultiDayFairnessStats(slots []protocol.ExamSlot) (dayCount, consecut
 		if d != "" {
 			dateSet[d] = true
 		}
-		if sl.TeacherID == "" {
+		if sl.TeacherID == "" || exemptIDs[sl.TeacherID] {
 			continue
 		}
 		k := d + "|" + sl.TeacherID

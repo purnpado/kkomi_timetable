@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Building2, CheckCircle2, Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
-import { apiFetch } from "../../events/eventStore";
+import { apiFetch, hasRegularClasses, isFacultyTeacher } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 
 const DAY_LABELS = [
@@ -21,7 +21,11 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
   const [newRoomSubj, setNewRoomSubj] = useState("과학");
   const [clearBeforeGen, setClearBeforeGen] = useState(true);
 
-  const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
+  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
+  const regularTeachers = useMemo(() => {
+    const list = facultyTeachers.filter(hasRegularClasses);
+    return list.length > 0 ? list : facultyTeachers;
+  }, [facultyTeachers]);
 
   const [formGrade, setFormGrade] = useState(1);
   const [formTeacherId, setFormTeacherId] = useState(regularTeachers[0]?.id || "");

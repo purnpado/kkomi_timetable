@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layers, PlusCircle, ShieldAlert, Trash2, Users } from "lucide-react";
-import { apiFetch } from "../../events/eventStore";
+import { apiFetch, isFacultyTeacher } from "../../events/eventStore";
 
 const DAYS = [
   { value: 0, label: "전체 요일" },
@@ -18,15 +18,9 @@ const TYPE_META = {
   SOFT_AVOID: { label: "기피 교시", bg: "#e0f2fe", color: "#075985" },
 };
 
-const isSystemAdmin = (t) =>
-  t.username === "admin" && (t.subject === "시스템" || t.name === "최고관리자" || t.name === "시스템 관리자");
-
 // ConstraintManager는 교사별 고정 공강(절대 금지·회의 공강) 및 희망 공강(기피 교시) 제약을 관리합니다.
 export default function ConstraintManager({ serverUrl, user, teachers, onRefresh, onNotify }) {
-  const regularTeachers = useMemo(
-    () => (teachers || []).filter((t) => !t.isParentHonorary && !isSystemAdmin(t)),
-    [teachers]
-  );
+  const regularTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
 
   const [constraints, setConstraints] = useState([]);
   const [filterTeacherId, setFilterTeacherId] = useState("ALL");

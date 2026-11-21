@@ -49,6 +49,18 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 	if !ok {
 		return cell, fmt.Errorf("지정한 교사(%s)를 찾을 수 없습니다", cell.TeacherID)
 	}
+	if protocol.IsSystemAdminAccount(teacher) || teacher.IsParentHonorary {
+		return cell, fmt.Errorf("%s 계정은 정규 시간표에 배정할 수 없습니다", teacher.Name)
+	}
+	if cell.CoTeacherID != "" {
+		coT, coOK := tMap[cell.CoTeacherID]
+		if !coOK {
+			return cell, fmt.Errorf("지정한 코티칭 교사(%s)를 찾을 수 없습니다", cell.CoTeacherID)
+		}
+		if protocol.IsSystemAdminAccount(coT) || coT.IsParentHonorary {
+			return cell, fmt.Errorf("%s 계정은 코티칭 교사로 배정할 수 없습니다", coT.Name)
+		}
+	}
 	if len(teacher.ItinerantDays) > 0 && !slices.Contains(teacher.ItinerantDays, cell.DayOfWeek) {
 		return cell, fmt.Errorf("순회교사 %s 선생님은 해당 요일에 출강하지 않습니다", teacher.Name)
 	}
@@ -179,7 +191,7 @@ func (s *Service) AutoGenerateBaseTimetable(grades []int, classesPerGrade int, c
 	var regular []protocol.Teacher
 	for _, t := range teachersList {
 		tMap[t.ID] = t
-		if !t.IsParentHonorary && !protocol.IsSystemAdminAccount(t) {
+		if !t.IsParentHonorary && !protocol.IsSystemAdminAccount(t) && protocol.HasRegularClasses(t) {
 			regular = append(regular, t)
 		}
 	}

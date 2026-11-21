@@ -100,6 +100,7 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 		{
 			ID: "t01", Username: "admin", PasswordHash: pwHash, MustChangePassword: true, Name: "최고관리자", Position: "최고관리자",
 			IsDepartmentHead: false, Subject: "시스템", HomeroomClass: "", Phone: "",
+			TeacherType: protocol.TeacherTypeOther, HasClasses: protocol.BoolPtr(false), SubstituteExempt: protocol.BoolPtr(true),
 			Roles:                    []protocol.Role{protocol.RoleMaster, protocol.RoleTimetableAdmin, protocol.RoleInternalExamAdmin, protocol.RoleExternalExamAdmin, protocol.RoleEventAdmin, protocol.RoleTeacher},
 			InternalExamExempt:       true,
 			InternalExamExemptReason: "시스템 최고관리자 계정",
@@ -190,6 +191,7 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 		{
 			ID: "t15", Username: "t15", PasswordHash: pwHash, Name: "박특수", Position: "특수교사",
 			Subject: "특수학급", ShortSubject: "특수", HomeroomClass: "", Phone: "010-2100-0015",
+			TeacherType: protocol.TeacherTypeSpecial, HasClasses: protocol.BoolPtr(false), SubstituteExempt: protocol.BoolPtr(true),
 			Roles:        []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2023-03-01", ExternalExamCount: 0, InternalExamCount: 0,
 			InternalExamExempt: true, InternalExamExemptReason: "특수반(개별고사장 전담)",
@@ -198,6 +200,7 @@ func buildSeedTeachers(pwHash string) []protocol.Teacher {
 		{
 			ID: "t16", Username: "t16", PasswordHash: pwHash, Name: "김보건", Position: "보건교사",
 			Subject: "보건", ShortSubject: "보건", DefaultRoom: "보건실", HomeroomClass: "", Phone: "010-2100-0016",
+			TeacherType: protocol.TeacherTypeHealth, HasClasses: protocol.BoolPtr(false), SubstituteExempt: protocol.BoolPtr(true),
 			Roles:        []protocol.Role{protocol.RoleTeacher},
 			TransferDate: "2023-03-01", ExternalExamCount: 0, InternalExamCount: 2, AnnualMainCount: 1, AnnualSubCount: 1,
 			InternalExamExempt: false,

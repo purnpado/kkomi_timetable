@@ -99,11 +99,11 @@
 ### 3.1-B. 차기 확정 마스터 플랜 (`v0.2.x ~ v0.3.x` 6단계 통합 고도화 계획 — 2026-11-22 논의 확정)
 > 새 대화창에서 이어서 구현할 **실무 정밀 보강 · 스마트 시각화 · 서버 GUI 전환** 우선순위 계획입니다.
 
-1. **[1단계] 핵심 버그 수정 & 기반 정비 (즉시 착수 대상):**
-   - `admin` 시스템 계정 프론트엔드 6곳 완전 격리 (`CurriculumLoadManager.jsx`, `TimetableView.jsx`, `MultiWeekAbsenceView.jsx`, `CalendarView.jsx`, `CommandPalette.jsx`, `TeacherManagerCard.jsx` — 교원 목록·검색·드롭다운에서 제외, 시스템 관리 영역만 분리 표시)
-   - 비교과 교사(상담·특수·보건·사서·영양 등) 유형 분리 및 수업 유무 / 결보강 대타 제외 속성 추가 (`absence.go`에서 대타 후보 오추천 방지)
-   - 특수교사 `특수학급고사실` 전담 배정 로직 수정 (`assigner.go`에서 특수학급 시험 개설 시 특수교사 최우선 배정)
-2. **[2단계] 시간표 엔진 & 실무 프로세스 고도화:**
+1. **[1단계] 핵심 버그 수정 & 기반 정비:** *(구현 완료)*
+   - [x] `admin` 시스템 계정 프론트엔드 6곳 완전 격리 (`CurriculumLoadManager.jsx`, `TimetableView.jsx`, `MultiWeekAbsenceView.jsx`, `CalendarView.jsx`, `CommandPalette.jsx`, `TeacherManagerCard.jsx` + `AdminRemoteView.jsx` 시스템 전용 영역 분리)
+   - [x] 비교과 교사(특수·보건·전문상담·사서·영양·기타) 유형 분리 및 수업 유무 / 결보강 대타 제외 속성 추가 (`pkg/protocol/models.go`, `auth/service.go`, `absence.go`, `base_builder.go`, `xlsx_teachers.go`)
+   - [x] 특수교사 `특수학급고사실` 전담 배정 로직 구현 (`internal_exam/special_class.go`, `assigner.go`, `availability.go` — 특수학급고사실 개설 시 특수교사 최우선 배정, 부재 시 일반교사 폴백 및 대타 추천 1순위)
+2. **[2단계] 시간표 엔진 & 실무 프로세스 고도화:** *(다음 착수 대상)*
    - **일회성(주차 한정) vs 정규 시간표 변경** 기본 분리 (`TimetableView.jsx` Canvas 드래그 수정 포함)
    - **수업 교체 모든 경우의 수 전수 탐색 + 품질 정렬 모달** (`solver.go`: 1:1 맞교환 · 삼각 3단계 · 사각 4단계 · 다주간 +1~4주+ 후보 전수 탐색, 기피교시/연강 점수 정렬 및 사각 단계별 경로 표시)
    - FET 방식 재귀적 교환(Ejection Chain) + 불가능 시수 역추적 진단기 보강 (`curriculum.go`)

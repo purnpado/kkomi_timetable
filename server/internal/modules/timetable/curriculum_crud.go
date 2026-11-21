@@ -128,11 +128,18 @@ func (s *Service) SaveTeachingLoad(ld protocol.TeachingLoad) (protocol.TeachingL
 	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
 	for _, t := range teachers {
 		if t.ID == ld.TeacherID {
+			if protocol.IsSystemAdminAccount(t) || t.IsParentHonorary {
+				return ld, fmt.Errorf("%s 계정은 교과 시수표에 배정할 수 없습니다", t.Name)
+			}
 			ld.TeacherName = t.Name
 			if ld.DedicatedRoom == "" && t.DefaultRoom != "" {
 				ld.DedicatedRoom = t.DefaultRoom
 			}
-			break
+		}
+		if ld.CoTeacherID != "" && t.ID == ld.CoTeacherID {
+			if protocol.IsSystemAdminAccount(t) || t.IsParentHonorary {
+				return ld, fmt.Errorf("%s 계정은 교과 시수표 코티칭 교사로 배정할 수 없습니다", t.Name)
+			}
 		}
 	}
 	if ld.ID == "" {

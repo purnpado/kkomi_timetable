@@ -37,7 +37,14 @@ func NewService(store *database.Store, buses ...*eventbus.Bus) *Service {
 
 // ListTeachers는 전체 교사 및 학부모 명예감독 명렬표를 반환합니다.
 func (s *Service) ListTeachers() ([]protocol.Teacher, error) {
-	return database.LoadCollection[protocol.Teacher](s.store, "teachers")
+	teachers, err := database.LoadCollection[protocol.Teacher](s.store, "teachers")
+	if err != nil {
+		return nil, err
+	}
+	for i := range teachers {
+		protocol.PopulateTeacherDefaults(&teachers[i])
+	}
+	return teachers, nil
 }
 
 // GetTeacher는 ID로 교사 1명을 기본 키 단건 조회합니다.
@@ -53,56 +60,8 @@ func (s *Service) GetTeacher(id string) (*protocol.Teacher, error) {
 		}
 		return nil, err
 	}
+	protocol.PopulateTeacherDefaults(t)
 	return t, nil
-}
-
-// PublicTeacherDirectoryEntry는 로그인 전 과목·성명 선택 및 동명이인 구분용 공개 목록 항목입니다.
-type PublicTeacherDirectoryEntry struct {
-	ID            string          `json:"id"`
-	Username      string          `json:"username"`
-	Name          string          `json:"name"`
-	Subject       string          `json:"subject"`
-	HomeroomClass string          `json:"homeroomClass"`
-	Position      string          `json:"position"`
-	Roles         []protocol.Role `json:"roles"`
-}
-
-// ListPublicDirectory는 로그인 화면에서 과목별 교사 선택 및 동명이인 확인을 위한 공개 목록을 반환합니다.
-func (s *Service) ListPublicDirectory() ([]PublicTeacherDirectoryEntry, error) {
-	teachers, err := s.ListTeachers()
-	if err != nil {
-		return nil, err
-	}
-	var out []PublicTeacherDirectoryEntry
-	for _, t := range teachers {
-		if t.IsParentHonorary {
-			continue
-		}
-		out = append(out, PublicTeacherDirectoryEntry{
-			ID:            t.ID,
-			Username:      t.Username,
-			Name:          t.Name,
-			Subject:       t.Subject,
-			HomeroomClass: t.HomeroomClass,
-			Position:      t.Position,
-			Roles:         t.Roles,
-		})
-	}
-	return out, nil
-}
-
-// IsDemoMode는 초기 시연용 체험 계정이 활성화되어 있는지 반환합니다.
-func (s *Service) IsDemoMode() bool {
-	teachers, err := s.ListTeachers()
-	if err != nil {
-		return false
-	}
-	for _, t := range teachers {
-		if t.Username == "timetable" || t.Username == "internal" || t.Username == "external" {
-			return true
-		}
-	}
-	return false
 }
 
 // Authenticate는 아이디와 비밀번호로 로그인을 검증합니다.
@@ -257,6 +216,15 @@ func (s *Service) SaveTeacherByActor(actor *protocol.Teacher, t protocol.Teacher
 		if len(t.ExemptReasons) == 0 && len(existing.ExemptReasons) > 0 {
 			t.ExemptReasons = existing.ExemptReasons
 		}
+		if t.TeacherType == "" {
+			t.TeacherType = existing.TeacherType
+		}
+		if t.HasClasses == nil {
+			t.HasClasses = existing.HasClasses
+		}
+		if t.SubstituteExempt == nil {
+			t.SubstituteExempt = existing.SubstituteExempt
+		}
 		if !isMasterActor || len(t.Roles) == 0 {
 			t.Roles = existing.Roles
 		}
@@ -264,6 +232,9 @@ func (s *Service) SaveTeacherByActor(actor *protocol.Teacher, t protocol.Teacher
 		if strings.EqualFold(strings.TrimSpace(existing.Username), "admin") || existing.ID == "t01" {
 			t.Username = existing.Username
 			t.Roles = existing.Roles
+			t.TeacherType = protocol.TeacherTypeOther
+			t.HasClasses = protocol.BoolPtr(false)
+			t.SubstituteExempt = protocol.BoolPtr(true)
 			t.InternalExamExempt = true
 			t.InternalExamExemptReason = existing.InternalExamExemptReason
 		}
@@ -274,7 +245,13 @@ func (s *Service) SaveTeacherByActor(actor *protocol.Teacher, t protocol.Teacher
 		if strings.EqualFold(t.Username, "admin") {
 			return t, errors.New("시스템 기본 아이디 'admin'은 새로 등록할 수 없습니다")
 		}
+		if protocol.IsSpecialEducationTeacher(t) && strings.TrimSpace(t.InternalExamExemptReason) == "" {
+			t.InternalExamExempt = true
+			t.InternalExamExemptReason = "특수반(개별고사장 전담)"
+		}
 	}
+
+	protocol.PopulateTeacherDefaults(&t)
 
 	if !slices.Contains(t.Roles, protocol.RoleTeacher) {
 		t.Roles = append(t.Roles, protocol.RoleTeacher)

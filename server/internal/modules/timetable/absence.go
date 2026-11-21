@@ -129,7 +129,7 @@ func rankSubstituteCandidates(
 	}
 	var list []candWithScore
 	for _, t := range teachers {
-		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || t.ID == absentID {
+		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || t.ID == absentID || protocol.IsSubstituteExcluded(t) {
 			continue
 		}
 		if len(t.ItinerantDays) > 0 && !slices.Contains(t.ItinerantDays, slot.DayOfWeek) {
@@ -192,6 +192,11 @@ func (s *Service) ApplyAbsenceResolutions(req protocol.AbsenceApplyRequest, revi
 	if len(req.Items) == 0 {
 		return nil, errors.New("적용할 결근 대책 항목이 없습니다")
 	}
+	teachersList, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
+	tMap := make(map[string]protocol.Teacher, len(teachersList))
+	for _, t := range teachersList {
+		tMap[t.ID] = t
+	}
 	// 일괄 적용 전 동일 일자·교시 대타 교사 중복 배정 및 동일 타 주차 슬롯 중복 사용 사전 차단
 	usedSubSlot := make(map[string]bool)
 	usedCrossTarget := make(map[string]bool)
@@ -203,6 +208,9 @@ func (s *Service) ApplyAbsenceResolutions(req protocol.AbsenceApplyRequest, revi
 			}
 			usedCrossTarget[tKey] = true
 		} else if strings.TrimSpace(it.PartnerID) != "" {
+			if pt, ok := tMap[it.PartnerID]; ok && (protocol.IsSystemAdminAccount(pt) || pt.IsParentHonorary) {
+				return nil, fmt.Errorf("%s 계정은 결보강 대타로 배정할 수 없습니다", pt.Name)
+			}
 			d := strings.TrimSpace(it.TargetDate)
 			if d == "" {
 				d = strings.TrimSpace(it.SourceDate)

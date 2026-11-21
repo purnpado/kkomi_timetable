@@ -23,19 +23,35 @@ const (
 	StatusRejected ApprovalStatus = "REJECTED"
 )
 
+// TeacherType은 교원 유형(교과·특수·보건·상담·사서·영양·기타 비교과)을 정의합니다.
+type TeacherType string
+
+const (
+	TeacherTypeSubject   TeacherType = "SUBJECT"   // 교과 교사
+	TeacherTypeSpecial   TeacherType = "SPECIAL"   // 특수 교사
+	TeacherTypeHealth    TeacherType = "HEALTH"    // 보건 교사
+	TeacherTypeCounselor TeacherType = "COUNSELOR" // 전문상담 교사
+	TeacherTypeLibrarian TeacherType = "LIBRARIAN" // 사서 교사
+	TeacherTypeNutrition TeacherType = "NUTRITION" // 영양 교사
+	TeacherTypeOther     TeacherType = "OTHER"     // 기타 비교과
+)
+
 // Teacher는 교사 기초 인사 및 업무분장 모델입니다.
 // 주의: 수당 지급, 은행명, 계좌번호 등 금융정보 필드는 학교 실무 요구에 따라 일체 취급하지 않습니다.
 type Teacher struct {
-	ID                       string   `json:"id"`
-	Username                 string   `json:"username"`
-	PasswordHash             string   `json:"passwordHash,omitempty"`
-	MustChangePassword       bool     `json:"mustChangePassword"`
-	Name                     string   `json:"name"`
-	Position                 string   `json:"position"`                           // 직위 (예: 교무부장, 연구부장, 평교사)
-	IsDepartmentHead         bool     `json:"isDepartmentHead"`                   // 부장교사 여부
-	Subject                  string   `json:"subject"`                            // 주 담당 과목 (예: 수학, 영어, 국어)
-	ShortSubject             string   `json:"shortSubject,omitempty"`             // 2자 단축 과목명 (컴시간 호환, 예: 국어, 생국)
-	DefaultRoom              string   `json:"defaultRoom,omitempty"`              // 교과교실제 교사 전용 강의실/특별실
+	ID                       string      `json:"id"`
+	Username                 string      `json:"username"`
+	PasswordHash             string      `json:"passwordHash,omitempty"`
+	MustChangePassword       bool        `json:"mustChangePassword"`
+	Name                     string      `json:"name"`
+	Position                 string      `json:"position"`                           // 직위 (예: 교무부장, 연구부장, 평교사)
+	IsDepartmentHead         bool        `json:"isDepartmentHead"`                   // 부장교사 여부
+	Subject                  string      `json:"subject"`                            // 주 담당 과목 (예: 수학, 영어, 국어)
+	ShortSubject             string      `json:"shortSubject,omitempty"`             // 2자 단축 과목명 (컴시간 호환, 예: 국어, 생국)
+	TeacherType              TeacherType `json:"teacherType,omitempty"`              // 교원 유형 (SUBJECT, SPECIAL, HEALTH, COUNSELOR, LIBRARIAN, NUTRITION, OTHER)
+	HasClasses               *bool       `json:"hasClasses,omitempty"`               // 정규 수업 담당 여부 (미지정 시 교과교사만 true)
+	SubstituteExempt         *bool       `json:"substituteExempt,omitempty"`         // 결보강 대타 배정 제외 여부 (미지정 시 비교과 교사 true)
+	DefaultRoom              string      `json:"defaultRoom,omitempty"`              // 교과교실제 교사 전용 강의실/특별실
 	HomeroomClass            string   `json:"homeroomClass"`                      // 담임 학급 (예: "2-3", 비담임이면 "")
 	Phone                    string   `json:"phone"`                              // 교내 내선 또는 연락처 (외부감독 파견 명단용)
 	Roles                    []Role   `json:"roles"`                              // 다중 겸임 가능한 RBAC 권한 목록
@@ -298,4 +314,143 @@ type BellPeriod struct {
 func IsSystemAdminAccount(t Teacher) bool {
 	return strings.EqualFold(strings.TrimSpace(t.Username), "admin") &&
 		(t.Name == "최고관리자" || t.Name == "시스템 관리자" || t.Subject == "시스템" || t.Subject == "행정/총괄")
+}
+
+// BoolPtr는 불리언 값의 포인터를 반환합니다.
+func BoolPtr(v bool) *bool {
+	return &v
+}
+
+// NormalizeTeacherType은 영문 코드 또는 한글 교원 유형 문자열을 정규 TeacherType 상수로 변환합니다.
+func NormalizeTeacherType(raw TeacherType) TeacherType {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return ""
+	}
+	upper := strings.ToUpper(s)
+	switch TeacherType(upper) {
+	case TeacherTypeSubject, TeacherTypeSpecial, TeacherTypeHealth, TeacherTypeCounselor, TeacherTypeLibrarian, TeacherTypeNutrition, TeacherTypeOther:
+		return TeacherType(upper)
+	}
+	lower := strings.ToLower(s)
+	switch {
+	case strings.Contains(lower, "특수"):
+		return TeacherTypeSpecial
+	case strings.Contains(lower, "보건"):
+		return TeacherTypeHealth
+	case strings.Contains(lower, "상담") || strings.Contains(lower, "위클래스") || strings.Contains(lower, "wee"):
+		return TeacherTypeCounselor
+	case strings.Contains(lower, "사서") || strings.Contains(lower, "도서관"):
+		return TeacherTypeLibrarian
+	case strings.Contains(lower, "영양"):
+		return TeacherTypeNutrition
+	case strings.Contains(lower, "기타") || strings.Contains(lower, "비교과"):
+		return TeacherTypeOther
+	case strings.Contains(lower, "교과") || strings.Contains(lower, "일반"):
+		return TeacherTypeSubject
+	default:
+		return ""
+	}
+}
+
+// EffectiveTeacherType은 명시된 유형 또는 직위·과목 키워드로부터 교원의 실효 유형을 판정합니다.
+func EffectiveTeacherType(t Teacher) TeacherType {
+	if norm := NormalizeTeacherType(t.TeacherType); norm != "" {
+		return norm
+	}
+	if IsSystemAdminAccount(t) || t.IsParentHonorary {
+		return TeacherTypeOther
+	}
+	joined := strings.ToLower(strings.Join([]string{t.Position, t.Subject}, " "))
+	switch {
+	case strings.Contains(joined, "특수"):
+		return TeacherTypeSpecial
+	case strings.Contains(joined, "보건"):
+		return TeacherTypeHealth
+	case strings.Contains(joined, "상담") || strings.Contains(joined, "위클래스") || strings.Contains(joined, "wee"):
+		return TeacherTypeCounselor
+	case strings.Contains(joined, "사서") || strings.Contains(joined, "도서관"):
+		return TeacherTypeLibrarian
+	case strings.Contains(joined, "영양"):
+		return TeacherTypeNutrition
+	default:
+		return TeacherTypeSubject
+	}
+}
+
+// IsNonSubjectTeacher는 시스템 관리자·학부모 명예감독을 제외한 비교과 교원인지 여부를 반환합니다.
+func IsNonSubjectTeacher(t Teacher) bool {
+	return !IsSystemAdminAccount(t) && !t.IsParentHonorary && EffectiveTeacherType(t) != TeacherTypeSubject
+}
+
+// IsSpecialEducationTeacher는 특수교사 유형인지 판별합니다.
+func IsSpecialEducationTeacher(t Teacher) bool {
+	return !IsSystemAdminAccount(t) && !t.IsParentHonorary && EffectiveTeacherType(t) == TeacherTypeSpecial
+}
+
+// HasRegularClasses는 교원이 정규 시간표 수업 담당 대상인지 여부를 반환합니다.
+func HasRegularClasses(t Teacher) bool {
+	if IsSystemAdminAccount(t) || t.IsParentHonorary {
+		return false
+	}
+	if t.HasClasses != nil {
+		return *t.HasClasses
+	}
+	return EffectiveTeacherType(t) == TeacherTypeSubject
+}
+
+// IsSubstituteExcluded는 교원이 결보강 대타 후보에서 제외되어야 하는지 여부를 반환합니다.
+func IsSubstituteExcluded(t Teacher) bool {
+	if IsSystemAdminAccount(t) || t.IsParentHonorary {
+		return true
+	}
+	if t.SubstituteExempt != nil {
+		return *t.SubstituteExempt
+	}
+	return EffectiveTeacherType(t) != TeacherTypeSubject
+}
+
+// PopulateTeacherDefaults는 교원 유형, 수업 유무, 결보강 대타 제외 필드의 기본값을 채워 넣습니다.
+func PopulateTeacherDefaults(t *Teacher) {
+	if t == nil {
+		return
+	}
+	if IsSystemAdminAccount(*t) {
+		t.TeacherType = TeacherTypeOther
+		t.HasClasses = BoolPtr(false)
+		t.SubstituteExempt = BoolPtr(true)
+		return
+	}
+	if t.IsParentHonorary {
+		t.TeacherType = TeacherTypeOther
+		t.HasClasses = BoolPtr(false)
+		t.SubstituteExempt = BoolPtr(true)
+		return
+	}
+	effType := EffectiveTeacherType(*t)
+	hasCls := HasRegularClasses(*t)
+	subEx := IsSubstituteExcluded(*t)
+	t.TeacherType = effType
+	t.HasClasses = BoolPtr(hasCls)
+	t.SubstituteExempt = BoolPtr(subEx)
+}
+
+// TeacherTypeLabel은 교원 유형의 한글 라벨을 반환합니다.
+func TeacherTypeLabel(tt TeacherType) string {
+	switch NormalizeTeacherType(tt) {
+	case TeacherTypeSpecial:
+		return "특수"
+	case TeacherTypeHealth:
+		return "보건"
+	case TeacherTypeCounselor:
+		return "상담"
+	case TeacherTypeLibrarian:
+		return "사서"
+	case TeacherTypeNutrition:
+		return "영양"
+	case TeacherTypeOther:
+		return "기타"
+	default:
+		return "교과"
+	}
 }

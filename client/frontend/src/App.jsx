@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   apiFetch, applySelfUpdateBridge, checkInClassNow, clearAuthToken, connectDesktopBridge,
-  disconnectDesktopBridge, formatUserDisplayName, getAuthToken, hasRole, isWailsRuntime,
+  disconnectDesktopBridge, formatUserDisplayName, getAuthToken, hasRole, isFacultyTeacher, isWailsRuntime,
   resolveServerUrl, ROLE_LABELS, setAuthToken, setUnauthorizedHandler, subscribeDesktopEvents,
   toggleSideDockBridge,
 } from "./events/eventStore";
@@ -372,7 +372,7 @@ export default function App() {
               <DashboardView
                 user={user}
                 summary={summary}
-                teachersCount={teachers.length}
+                teachersCount={teachers.filter(isFacultyTeacher).length}
                 cellsCount={cells.length}
                 onNavigate={setActiveTab}
                 onOpenApproval={() => { setApprovalIndex(0); setApprovalOpen(true); }}

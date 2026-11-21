@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeftRight, CalendarRange, CheckCircle2, Send, Sparkles } from "lucide-react";
-import { apiFetch, hasRole } from "../../events/eventStore";
+import { apiFetch, hasRegularClasses, hasRole, isFacultyTeacher } from "../../events/eventStore";
 
 const DAYS = ["", "월", "화", "수", "목", "금"];
 const ABSENCE_REASONS = ["갑작스러운 병가", "긴급 경조사", "공무·긴급 출장", "개인 연가·조퇴"];
@@ -39,15 +39,24 @@ function defaultWeekdayISO() {
 // [이번 주 ↔ 다음 주·다다음 주 주차 간 수업 맞교환 탐색] 기능을 제공합니다.
 export default function MultiWeekAbsenceView({ serverUrl, user, teachers, baseCells, activeWeekStart, onRefresh, onNotify }) {
   const isAdmin = hasRole(user, "TIMETABLE_ADMIN");
-  const regularTeachers = useMemo(() => (teachers || []).filter((t) => !t.isParentHonorary), [teachers]);
+  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
+  const regularTeachers = useMemo(() => {
+    const list = facultyTeachers.filter(hasRegularClasses);
+    return list.length > 0 ? list : facultyTeachers;
+  }, [facultyTeachers]);
 
   // 1. 주중 미출근/결근 대책 상태
-  const [absentTeacherId, setAbsentTeacherId] = useState(user?.id || regularTeachers[0]?.id || "");
+  const [absentTeacherId, setAbsentTeacherId] = useState("");
   const [startDate, setStartDate] = useState(() => defaultWeekdayISO());
 
   useEffect(() => {
-    if (!absentTeacherId && regularTeachers.length > 0) {
-      setAbsentTeacherId(user?.id || regularTeachers[0].id);
+    if (regularTeachers.length === 0) {
+      if (absentTeacherId) setAbsentTeacherId("");
+      return;
+    }
+    if (!regularTeachers.some((t) => t.id === absentTeacherId)) {
+      const preferred = regularTeachers.find((t) => t.id === user?.id) || regularTeachers[0];
+      setAbsentTeacherId(preferred.id);
     }
   }, [absentTeacherId, regularTeachers, user?.id]);
   const [endDate, setEndDate] = useState(() => defaultWeekdayISO());
@@ -199,8 +208,8 @@ export default function MultiWeekAbsenceView({ serverUrl, user, teachers, baseCe
 
   const handleSubmitCrossWeek = async (cand) => {
     if (!selectedSourceCell) return;
-    const srcTeacher = regularTeachers.find((t) => t.id === selectedSourceCell.teacherId);
-    const tgtTeacher = regularTeachers.find((t) => t.id === cand.targetCell.teacherId);
+    const srcTeacher = facultyTeachers.find((t) => t.id === selectedSourceCell.teacherId);
+    const tgtTeacher = facultyTeachers.find((t) => t.id === cand.targetCell.teacherId);
     try {
       await apiFetch(serverUrl, "/api/timetable/requests", user.id, {
         method: "POST",
@@ -344,7 +353,7 @@ export default function MultiWeekAbsenceView({ serverUrl, user, teachers, baseCe
         <form onSubmit={handleSearchCrossWeek} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
           <select className="select" style={{ flex: 2, minWidth: 210 }} value={cwSourceId} onChange={(e) => setCwSourceId(e.target.value)}>
             {(baseCells || []).map((c) => {
-              const tName = regularTeachers.find((t) => t.id === c.teacherId)?.name || c.teacherId;
+              const tName = facultyTeachers.find((t) => t.id === c.teacherId)?.name || c.teacherId;
               return (
                 <option key={c.id} value={c.id}>
                   {c.className}반 {DAYS[c.dayOfWeek]} {c.period}교시 · {c.subject} ({tName})

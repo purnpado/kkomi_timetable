@@ -315,18 +315,22 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 		return nil, err
 	}
 	roomPrefix := extractRoomBaseClass(target.RoomName)
+	isSpecialRoom := isSpecialClassExamRoom(target.RoomName)
 	var recs []protocol.Teacher
 	for _, t := range teachers {
 		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) || busyTeachers[t.ID] || unavail[t.ID] != "" {
 			continue
 		}
-		if exempt, _ := IsEffectiveExamExempt(t); exempt {
-			continue
+		isSpecialCand := isSpecialRoom && isSpecialClassSupervisor(t)
+		if !isSpecialCand {
+			if exempt, _ := IsEffectiveExamExempt(t); exempt {
+				continue
+			}
 		}
 		if target.SlotRole != "CORRIDOR" && t.HomeroomClass != "" && roomPrefix != "" && strings.EqualFold(t.HomeroomClass, roomPrefix) {
 			continue
 		}
-		if target.SlotRole != "CORRIDOR" && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, t.Subject) {
+		if !isSpecialCand && target.SlotRole != "CORRIDOR" && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, t.Subject) {
 			continue
 		}
 		recs = append(recs, t)
@@ -334,6 +338,13 @@ func (s *Service) RecommendSubstitutes(slotID string) ([]protocol.Teacher, error
 	usage := buildSlotUsageMaps(slots)
 	cfg, _ := s.GetConfig()
 	sort.Slice(recs, func(i, j int) bool {
+		if isSpecialRoom {
+			si := isSpecialClassSupervisor(recs[i])
+			sj := isSpecialClassSupervisor(recs[j])
+			if si != sj {
+				return si
+			}
+		}
 		if cfg.MaxDailyPerTeacher > 0 {
 			capI := usage.dailyCount[target.ExamDate][recs[i].ID] >= cfg.MaxDailyPerTeacher
 			capJ := usage.dailyCount[target.ExamDate][recs[j].ID] >= cfg.MaxDailyPerTeacher

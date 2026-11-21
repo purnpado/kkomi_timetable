@@ -1,10 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, FileSpreadsheet, FileText, Printer, RefreshCw } from "lucide-react";
-import { apiFetch } from "../../events/eventStore";
+import { apiFetch, isFacultyTeacher } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
-
-const isSystemAdmin = (t) =>
-  t.username === "admin" && (t.subject === "시스템" || t.name === "최고관리자" || t.name === "시스템 관리자");
 
 // ReportsSettlementView는 월별·학기별·학년도별 결보강, 수업교환, 내외부 시험감독 및 행사 실적을
 // 교원별로 통합 집계하고 공문 결재용 한글(.hwpx)·엑셀(.xlsx)·고대비 인쇄물을 생성합니다.
@@ -43,10 +40,7 @@ export default function ReportsSettlementView({ serverUrl, user, teachers, onNot
     loadReport();
   }, [loadReport]);
 
-  const regularTeachers = useMemo(
-    () => (teachers || []).filter((t) => !t.isParentHonorary && !isSystemAdmin(t)),
-    [teachers]
-  );
+  const regularTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
 
   const handleDownload = (path, fileName, options) => {
     downloadAuthenticatedFile(serverUrl, path, fileName, options).catch((err) =>

@@ -278,6 +278,18 @@ export default function MultiDayExamEditor({ config, setConfig, specs, setSpecs,
                   >
                     + 별도고사실
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ fontSize: 11, padding: "2px 6px", height: 24 }}
+                    onClick={() => {
+                      const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
+                      const tag = "특수학급고사실";
+                      updateSpec(idx, "classRooms", cur.includes(tag) ? cur.filter((r) => r !== tag) : [...cur, tag]);
+                    }}
+                  >
+                    + 특수학급고사실
+                  </button>
                 </div>
               </td>
               <td>
