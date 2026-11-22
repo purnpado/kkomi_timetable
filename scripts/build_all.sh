@@ -59,7 +59,7 @@ export CGO_CFLAGS="-mmacosx-version-min=12.0"
 export CGO_LDFLAGS="-mmacosx-version-min=12.0"
 export MACOSX_DEPLOYMENT_TARGET="12.0"
 
-go build -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간서버" ./server/cmd/server
+go build -tags production -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간서버" ./server/cmd/server
 go build -tags production -trimpath -ldflags="-w -s" -o "bin/darwin/꼬미시간" ./client
 
 # macOS codesign 호환을 위해 .app 내부 실행 바이너리는 영문 식별자로 유지
@@ -79,9 +79,9 @@ cp build/darwin/icons.icns "bin/darwin/꼬미시간서버.app/Contents/Resources
 xattr -cr "bin/darwin/꼬미시간서버.app" || true
 codesign --force --deep --sign - "bin/darwin/꼬미시간서버.app"
 
-# 4. Windows 교차 빌드 (서버는 CMD 콘솔창 출력, 클라이언트는 -H windowsgui 네이티브 GUI)
+# 4. Windows 교차 빌드 (서버/클라이언트 모두 -H windowsgui Wails v3 네이티브 GUI)
 echo ">>> [4/5] Windows x86_64 실행 파일 크로스 컴파일..."
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-w -s" -o "bin/windows/꼬미시간서버.exe" ./server/cmd/server
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o "bin/windows/꼬미시간서버.exe" ./server/cmd/server
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o "bin/windows/꼬미시간.exe" ./client
 
 rm -f client/*.syso server/cmd/server/*.syso
@@ -121,7 +121,7 @@ cat << TXT > "$STAGE_DIR/사용설명서_빠른시작.txt"
 1. 교무실 공용 PC (메인 서버)
    - "1_교무실_공용서버" 폴더를 공용 PC 원하는 위치(예: D:\꼬미시간서버)에 통째로 복사하세요.
    - 포터블 MariaDB(runtime\mariadb)가 기본 포함되어 별도 DB 설치 없이 꼬미시간서버.exe 실행 시 127.0.0.1:13306으로 자동 구동됩니다.
-   - 꼬미시간서버.exe 를 실행하면 콘솔에 업무망 고정 IP 접속 주소(예: 192.168.x.x:18090)가 안내됩니다.
+   - 꼬미시간서버.exe 를 실행하면 컨트롤 센터 GUI 창이 열리고 업무망 고정 IP 접속 주소(예: 192.168.x.x:18090)를 원클릭으로 복사할 수 있습니다. (닫기 시 시스템 트레이 상주, --headless 콘솔 모드도 지원)
 
 2. 교사 개인 PC (클라이언트)
    - "2_교사용_클라이언트\꼬미시간.exe" 를 복사하여 실행하세요.

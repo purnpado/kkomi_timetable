@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>꼬미시간서버 컨트롤 센터</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="card header">
+        <div>
+          <div class="title-row">
+            <h1>꼬미시간서버</h1>
+            <span id="versionBadge" class="badge badge-gray">v0.1.01</span>
+          </div>
+          <p class="subtitle">교무실 공용 학사 · 시험감독 · 시종 서버</p>
+        </div>
+        <span id="statusBadge" class="badge badge-blue">
+          <span id="statusDot" class="dot dot-blue"></span>
+          <span id="statusText">초기화 중</span>
+        </span>
+      </header>
+
+      <section id="initCard" class="card">
+        <div class="row-between">
+          <strong class="card-title">포터블 MariaDB 초기화 및 서버 준비</strong>
+          <span id="elapsedBadge" class="badge badge-gray tabular">0초</span>
+        </div>
+        <p id="phaseLabel" class="muted">포터블 데이터베이스 환경을 확인하고 있습니다.</p>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill" style="width: 15%"></div>
+        </div>
+        <div class="row-between small muted">
+          <span id="progressPct" class="tabular">15%</span>
+          <span>최초 기동 시 최대 15~30초 정도 걸릴 수 있습니다.</span>
+        </div>
+      </section>
+
+      <section id="errorCard" class="card error-card hidden">
+        <div class="row-between">
+          <strong class="error-title" id="errorTitle">서버 실행 오류</strong>
+          <button type="button" id="errorOpenFolderBtn" class="btn btn-sm">서버 폴더 열기</button>
+        </div>
+        <div id="errorDetail" class="error-detail"></div>
+        <ul id="errorHints" class="error-hints"></ul>
+      </section>
+
+      <section class="card">
+        <div class="row-between">
+          <strong class="card-title">교사 PC · 웹 LAN 접속 주소</strong>
+          <span id="dbModeBadge" class="badge badge-gray">DB 준비 중</span>
+        </div>
+        <div class="lan-box">
+          <code id="lanUrlText" class="lan-url tabular">http://127.0.0.1:18090</code>
+          <button type="button" id="copyLanBtn" class="btn btn-primary btn-sm">주소 복사</button>
+        </div>
+        <div id="baseDirText" class="small muted ellipsis"></div>
+      </section>
+
+      <section class="kpi-row">
+        <div class="card kpi-card">
+          <span class="small muted">실시간 접속 교사</span>
+          <strong id="connectedCount" class="kpi-value tabular">0명</strong>
+        </div>
+        <div class="card kpi-card">
+          <span class="small muted">암호화 백업 파일</span>
+          <strong id="backupCount" class="kpi-value tabular">0개</strong>
+        </div>
+      </section>
+
+      <section class="card actions-grid">
+        <button type="button" id="openWebBtn" class="btn btn-primary">웹 관리 화면 열기</button>
+        <button type="button" id="backupBtn" class="btn btn-green">즉시 암호화 백업</button>
+        <button type="button" id="openFolderBtn" class="btn">서버 폴더 열기</button>
+        <button type="button" id="quitBtn" class="btn btn-danger">서버 안전 종료</button>
+      </section>
+      <div id="feedbackBanner" class="feedback hidden"></div>
+
+      <details class="card log-fold">
+        <summary class="log-summary">
+          <span>실시간 서버 로그</span>
+          <span id="logCountBadge" class="badge badge-gray tabular">0줄</span>
+        </summary>
+        <pre id="logOutput" class="log-pre"></pre>
+      </details>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

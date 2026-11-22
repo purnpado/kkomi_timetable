@@ -83,7 +83,7 @@ kkomi-timetable/
 │   ├── pathutil/paths.go               # os.Executable() 절대 경로 및 UTF-8 NFC 안전 결합
 │   └── protocol/                       # 공용 DTO(models.go) 및 이벤트(events.go)
 ├── server/
-│   ├── cmd/server/main.go              # 꼬미시간서버 진입점, macOS 터미널/Windows CMD 안내 및 웹 서빙
+│   ├── cmd/server/                     # 꼬미시간서버(Wails v3 GUI 컨트롤 센터·트레이, --headless 콘솔 호환) & 웹 서빙
 │   └── internal/
 │       ├── api/                        # REST API & WebSocket 라우터/핸들러
 │       ├── database/                   # 포터블 MariaDB(TDE) 단일 엔진 제어, 자동 복원, 백업, 초기화, 시드
@@ -145,7 +145,7 @@ go test -v ./...
 
 ## 6. 현재 개발 상태 · 로드맵 ([ROADMAP.md](ROADMAP.md))
 
-* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.x` 1~5단계):**
+* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.x` 차기 6단계 통합 고도화 전원 완료):**
   * [x] 1~6단계 코어 인프라, 포터블 MariaDB(TDE), 6종 RBAC(`최고관리자` 기본 계정 분리·권한 위임), 정규·다주간 시간표 & 1~4단계 연쇄교환, 교내·외부 시험감독, 행사 4종 연동, `.hwpx`/`.xlsx`/고대비 출력 완성
   * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.1.01` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화 및 1~2단계 보안·동시성·도메인·문서 정합성 강화 완료
   * [x] **`v0.2.x` 3단계 완료:** 교사별 절대 금지·회의 공강(부장/교과 일괄)·기피 교시 제약(`constraints.go`), 시간표 A/B/C안 품질 비교·채택(`scenarios.go`), 서버 측 20단계 실행취소/다시실행(`history.go`)
@@ -156,7 +156,7 @@ go test -v ./...
   * [x] **차기 6단계 통합 고도화 3단계 완료:** 교내 동일 고사실 중복 배정 금지·차등 감면/연강 절대 금지(`reduction.go` · `policy.go` · `fairness.go`), 학년/출제 교사만 배제 옵션, 감염병 분리고사실 1·2·3실 & 고교학점제 다과목·공강 자습실(`STUDY_HALL`) 감독(`room_catalog.go` · `assigner.go`), 수동 맞교환(`SwapSlots`) 및 개인별 감독 시간표(`PersonalSchedule`), 외부 시험 기본 3종+자유 추가·가중치 점수제/별도 순번 트랙·전입 양방향 및 1년차 유예·제외 규칙·동점자/초과 선발 기준·학교 내규 프리셋·공고 수정/삭제(`presets.go` · `sorter.go` · `ExternalExamConfigModal.jsx` · `ExternalExamRulePanel.jsx`) 완료
   * [x] **차기 6단계 통합 고도화 4단계 완료:** `월간 달력` · `주간업무표` · `취합 대기함` 3종 뷰(`CalendarView.jsx` · `CalendarViewsGrid.jsx`), 다일 연속 행사(`EndDate` · `event_helpers.go`) 및 공휴일/재량휴업일(`HOLIDAY`) 학기 시수 원장 자동 차감(`ledger.go`), 단축수업 3종 원클릭 시종 프리셋(`presets_conflicts.go` · `CalendarEventForm.jsx`), 전교/복수학년/특정반·복수인솔·장소/학년교시 실시간 충돌 경고(`DetectConflicts`)·반복 일정(`WEEKLY`/`MONTHLY`)·행사 수정/삭제/부서필터(`handlers_stage4.go`) 완료
   * [x] **차기 6단계 통합 고도화 5단계 완료:** Radix UI 4종(`Switch`, `Collapsible`, `Popover`, `Progress`) 확장 기반 `SmartVisualKit.jsx` 공용 시각화 키트 구축 및 전 화면 이모지 제거·상태 도트/Lucide SVG 통일, `ResizeObserver` 기반 반응형 `TimetableCanvas`, 대시보드 현재 교시 타임라인 바(`DashboardView.jsx`), 클릭형 5×7 공강 히트맵(`ConstraintHeatmap.jsx`), 학급 시수 게이지(`CurriculumLoadManager.jsx`), 정/부/복도 스택드 막대 차트(`ExamFairnessPanel.jsx`), D-Day 모집 카드(`ExternalExamView.jsx`), 월별 SVG 막대 차트·인라인 바(`ReportsCharts.jsx` · `ReportsSettlementView.jsx`), 시스템 관리 4탭·RBAC 권한 체크 매트릭스(`RoleMatrixPanel.jsx` · `AdminRemoteView.jsx`) 완료
-* **📋 앞으로 구현해야 할 항목 (상세 6단계 통합 고도화 계획: [ROADMAP.md](ROADMAP.md)):**
-  * [ ] **차기 6단계 통합 고도화 (6단계 진행 예정):** ⑥ `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환
+  * [x] **차기 6단계 통합 고도화 6단계 완료:** `꼬미시간서버` Wails v3 GUI 컨트롤 센터(520×640px) 및 시스템 트레이 전환(`gui_app.go` · `runtime.go` · `gui_assets/`), MariaDB 초기화 진행률/경과 시간 표시, LAN 주소 원클릭 복사, 실시간 접속 교사 수, 즉시 암호화 백업·서버 폴더 열기·접이식 로그 뷰어, 창 닫기 시 트레이 최소화 및 `--headless`/`--seed-demo`/`--init-template`/`--port` CLI 호환(`main.go` · `build_all.sh`) 완료
+* **📋 앞으로 구현해야 할 항목 (상세 로드맵: [ROADMAP.md](ROADMAP.md)):**
   * [ ] Windows/macOS 실제 교무실 네트워크 현장 교차 구동 및 `v0.2.0` 릴리즈 배포 준비
   * [ ] `v0.3.x` ~ `v1.0` 중·장기: 고교학점제 학생 이동수업 시간표, 나이스 양방향 검증 확대, 교무실 TV 전광판 모드, macOS GitHub 릴리즈 자동 업데이트 및 신학년도 이관 마법사

@@ -122,9 +122,9 @@
    - [x] `@radix-ui/react-switch`, `collapsible`, `popover`, `progress` 추가 적용 및 공용 스마트 시각화 키트 구축(`SmartVisualKit.jsx`: `StatusDot`·`HelpTip`·`FoldCard`·`SwitchToggle`·`ProgressBar`·`AlertBox`, `radix.css`) · 전 화면 이모지 → Lucide SVG/상태 도트 통일(`TopBar.jsx`·`ToastHub.jsx`·`SideDockWidget.jsx`·`LoginView.jsx`·`App.jsx`)
    - [x] 긴 설명문/상시 노출 폼 다이어트(`FoldCard` 접이식 폼), `ResizeObserver` 기반 반응형 `TimetableCanvas`, 대시보드 현재 교시 타임라인 바(`DashboardView.jsx`)
    - [x] 클릭형 5×7 공강 히트맵(`ConstraintHeatmap.jsx`·`ConstraintManager.jsx`), 학급 시수 게이지(`CurriculumLoadManager.jsx`), 정/부/복도 스택드 막대 차트(`ExamFairnessPanel.jsx`), D-Day 모집 카드(`ExternalExamView.jsx`), 월별 SVG 막대 차트·인라인 데이터 바(`ReportsCharts.jsx`·`ReportsSettlementView.jsx`), 시스템 관리 4탭·권한 체크 매트릭스(`RoleMatrixPanel.jsx`·`AdminRemoteView.jsx`)
-6. **[6단계] `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환 (`방식 A`):** *(다음 착수 대상)*
-   - CMD 콘솔 창 대신 전용 미니 상태 대시보드(520×640px) + 닫기(`X`) 클릭 시 시스템 트레이 최소화(실수 종료 차단)
-   - 최초 포터블 MariaDB 초기화 진행률/경과 시간 화면, 원클릭 LAN 접속 주소 복사, 실시간 접속 교사 수, 즉시 암호화 백업/폴더 열기/로그 접이식 뷰어 제공 (`--headless`, `--seed-demo`, `--init-template` CLI 플래그 호환 유지)
+6. **[6단계] `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환 (`방식 A`):** *(구현 완료 — 1~6단계 차기 마스터 플랜 전원 완료)*
+   - [x] CMD 콘솔 창 대신 Wails v3 전용 미니 상태 대시보드(520×640px) + 닫기(`X`) 클릭 시 시스템 트레이 최소화(실수 종료 차단 · `gui_app.go` · `gui_assets/`)
+   - [x] 최초 포터블 MariaDB 초기화 진행률/경과 시간 화면, 원클릭 LAN 접속 주소 복사, 실시간 접속 교사 수, 즉시 암호화 백업/폴더 열기/접이식 실시간 로그 뷰어 제공(`runtime.go`, `--headless`, `--seed-demo`, `--init-template` CLI 플래그 호환 유지 · `main.go`)
 
 ### 3.2. 중기 목표 (`v0.3.x` — 고교학점제 · 나이스 연계 · 교무실 환경 확장)
 - [ ] **고교학점제 학생 개인별 · 이동수업 반별 안내 시간표 생성 및 배포:**
