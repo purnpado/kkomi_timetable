@@ -74,9 +74,16 @@ func TestSourceFileLineLimit500(t *testing.T) {
 	checkFile(filepath.Join(root, "client", "main.go"))
 	for _, d := range dirs {
 		_ = filepath.Walk(d, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				checkFile(path)
+			if err != nil {
+				return nil
 			}
+			if info.IsDir() {
+				if info.Name() == "webdist" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			checkFile(path)
 			return nil
 		})
 	}

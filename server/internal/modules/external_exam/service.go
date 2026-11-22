@@ -44,8 +44,38 @@ func (s *Service) CreateNotice(notice protocol.ExternalExamNotice) (protocol.Ext
 	if notice.ID == "" {
 		notice.ID = fmt.Sprintf("ext-%d", time.Now().UnixNano())
 	}
+	cfg, _ := s.GetSchoolConfig()
+	if strings.TrimSpace(notice.ExamCategory) == "" && len(cfg.Categories) > 0 {
+		notice.ExamCategory = cfg.Categories[0].Name
+	}
+	inheritPreset := notice.PresetMode == "" && len(notice.PriorityOrder) == 0
+	if notice.PresetMode == "" {
+		notice.PresetMode = cfg.DefaultPresetMode
+	}
 	if len(notice.PriorityOrder) == 0 {
-		notice.PriorityOrder = PresetOrder(notice.PresetMode)
+		if len(cfg.DefaultPriorityOrder) > 0 {
+			notice.PriorityOrder = append([]protocol.ExternalExamCriteria(nil), cfg.DefaultPriorityOrder...)
+		} else {
+			notice.PriorityOrder = PresetOrder(notice.PresetMode)
+		}
+	}
+	if notice.ScoringMode == "" {
+		notice.ScoringMode = cfg.DefaultScoringMode
+	}
+	if notice.TieBreaker == "" {
+		notice.TieBreaker = cfg.DefaultTieBreaker
+	}
+	if notice.VolunteerOverflowMode == "" {
+		notice.VolunteerOverflowMode = cfg.DefaultVolunteerOverflow
+	}
+	if inheritPreset && !notice.TransferGraceYear {
+		notice.TransferGraceYear = cfg.DefaultTransferGraceYear
+	}
+	if inheritPreset && !notice.ExcludeExempt {
+		notice.ExcludeExempt = cfg.DefaultExcludeExempt
+	}
+	if len(notice.CategoryExcludeRules) == 0 {
+		notice.CategoryExcludeRules = defaultExcludeRulesForCategory(cfg, notice.ExamCategory)
 	}
 	if err := s.store.SaveRecord("external_exams", notice.ID, notice); err != nil {
 		return notice, err
@@ -91,10 +121,26 @@ func (s *Service) UpdateNotice(notice protocol.ExternalExamNotice) (*protocol.Ex
 	if notice.PresetMode != "" {
 		existing.PresetMode = notice.PresetMode
 	}
+	if notice.ScoringMode != "" {
+		existing.ScoringMode = notice.ScoringMode
+	}
 	if len(notice.PriorityOrder) > 0 {
 		existing.PriorityOrder = notice.PriorityOrder
 	}
 	existing.ExcludeExempt = notice.ExcludeExempt
+	existing.TransferGraceYear = notice.TransferGraceYear
+	if notice.CategoryExcludeRules != nil {
+		existing.CategoryExcludeRules = notice.CategoryExcludeRules
+	}
+	if notice.TieBreaker != "" {
+		existing.TieBreaker = notice.TieBreaker
+	}
+	if notice.LotterySeed != "" {
+		existing.LotterySeed = notice.LotterySeed
+	}
+	if notice.VolunteerOverflowMode != "" {
+		existing.VolunteerOverflowMode = notice.VolunteerOverflowMode
+	}
 	if err := s.store.SaveRecord("external_exams", existing.ID, *existing); err != nil {
 		return nil, err
 	}
@@ -176,21 +222,61 @@ func (s *Service) ToggleVolunteer(noticeID, teacherID string) (*protocol.Externa
 	return nil, fmt.Errorf("외부 시험 공고(%s)를 찾을 수 없습니다", noticeID)
 }
 
+// RuleUpdateOptions는 외부 시험 차출 규칙 상세 옵션입니다.
+type RuleUpdateOptions struct {
+	PresetMode            string
+	ScoringMode           string
+	PriorityOrder         []protocol.ExternalExamCriteria
+	ExcludeExempt         bool
+	TransferGraceYear     bool
+	CategoryExcludeRules  []string
+	TieBreaker            string
+	LotterySeed           string
+	VolunteerOverflowMode string
+}
+
 // UpdateRules는 담당교사가 학교 내규에 맞게 차출 기준 프리셋 또는 커스텀 우선순위 순서를 변경할 때 호출됩니다.
 func (s *Service) UpdateRules(noticeID, presetMode string, priorityOrder []protocol.ExternalExamCriteria, excludeExempt bool) (*protocol.ExternalExamNotice, error) {
+	return s.UpdateRulesWithOptions(noticeID, RuleUpdateOptions{
+		PresetMode:    presetMode,
+		PriorityOrder: priorityOrder,
+		ExcludeExempt: excludeExempt,
+	})
+}
+
+// UpdateRulesWithOptions는 점수제·별도 트랙·전입 유예·종목 제외·동점·초과 선발 기준까지 확장 업데이트합니다.
+func (s *Service) UpdateRulesWithOptions(noticeID string, opts RuleUpdateOptions) (*protocol.ExternalExamNotice, error) {
 	notices, err := s.ListNotices()
 	if err != nil {
 		return nil, err
 	}
 	for i := range notices {
 		if notices[i].ID == noticeID {
-			notices[i].PresetMode = presetMode
-			if presetMode != "CUSTOM" && len(priorityOrder) == 0 {
-				notices[i].PriorityOrder = PresetOrder(presetMode)
-			} else {
-				notices[i].PriorityOrder = priorityOrder
+			if opts.PresetMode != "" {
+				notices[i].PresetMode = opts.PresetMode
 			}
-			notices[i].ExcludeExempt = excludeExempt
+			if opts.PresetMode != "CUSTOM" && len(opts.PriorityOrder) == 0 {
+				notices[i].PriorityOrder = PresetOrder(notices[i].PresetMode)
+			} else if len(opts.PriorityOrder) > 0 {
+				notices[i].PriorityOrder = opts.PriorityOrder
+			}
+			notices[i].ExcludeExempt = opts.ExcludeExempt
+			if opts.ScoringMode != "" {
+				notices[i].ScoringMode = opts.ScoringMode
+			}
+			notices[i].TransferGraceYear = opts.TransferGraceYear
+			if opts.CategoryExcludeRules != nil {
+				notices[i].CategoryExcludeRules = opts.CategoryExcludeRules
+			}
+			if opts.TieBreaker != "" {
+				notices[i].TieBreaker = opts.TieBreaker
+			}
+			if opts.LotterySeed != "" {
+				notices[i].LotterySeed = opts.LotterySeed
+			}
+			if opts.VolunteerOverflowMode != "" {
+				notices[i].VolunteerOverflowMode = opts.VolunteerOverflowMode
+			}
 			if err := s.store.SaveRecord("external_exams", notices[i].ID, notices[i]); err != nil {
 				return nil, err
 			}

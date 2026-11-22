@@ -63,9 +63,13 @@ type ExamFairnessStat struct {
 	Subject           string `json:"subject"`
 	Position          string `json:"position"`
 	HomeroomClass     string `json:"homeroomClass"`
-	IsExempt          bool   `json:"isExempt"`
-	ExemptReason      string `json:"exemptReason"`
-	BaseMain          int    `json:"baseMain"`
+	IsExempt            bool   `json:"isExempt"`
+	ExemptReason        string `json:"exemptReason"`
+	ExamMaxCount        int    `json:"examMaxCount,omitempty"`
+	ExamReductionWeight int    `json:"examReductionWeight,omitempty"`
+	ExamNoConsecutive   bool   `json:"examNoConsecutive,omitempty"`
+	ExamReductionReason string `json:"examReductionReason,omitempty"`
+	BaseMain            int    `json:"baseMain"`
 	BaseSub           int    `json:"baseSub"`
 	BaseCorridor      int    `json:"baseCorridor"`
 	BaseTotal         int    `json:"baseTotal"`

@@ -33,8 +33,8 @@ const DEFAULT_DAY_SLOTS = [
   { period: 3, grade: 3, subject: "영어", startTime: "10:55", endTime: "11:35", durationMinutes: 40, classRooms: ["3-1", "3-2"] },
 ];
 
-// MultiDayExamEditor는 단일일 또는 3~5일 연속 지필고사 시간표·과목·고사실·연강 방지 옵션을 편집합니다.
-export default function MultiDayExamEditor({ config, setConfig, specs, setSpecs, roomCatalog }) {
+// MultiDayExamEditor는 단일일 또는 3~5일 연속 지필고사 시간표·과목·고사실·자습실·출제교사·연강 방지 옵션을 편집합니다.
+export default function MultiDayExamEditor({ config, setConfig, specs, setSpecs, roomCatalog, stats = [] }) {
   const [filterDate, setFilterDate] = useState("ALL");
 
   const uniqueDates = useMemo(() => {
@@ -284,13 +284,60 @@ export default function MultiDayExamEditor({ config, setConfig, specs, setSpecs,
                     style={{ fontSize: 11, padding: "2px 6px", height: 24 }}
                     onClick={() => {
                       const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
+                      const multi = ["별도고사실 1실(감염병)", "별도고사실 2실(감염병)", "별도고사실 3실(감염병)"];
+                      const hasAll = multi.every((m) => cur.includes(m));
+                      updateSpec(idx, "classRooms", hasAll ? cur.filter((r) => !multi.includes(r)) : Array.from(new Set([...cur, ...multi])));
+                    }}
+                  >
+                    + 감염병 1·2·3실
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ fontSize: 11, padding: "2px 6px", height: 24 }}
+                    onClick={() => {
+                      const cur = Array.isArray(sp.classRooms) ? sp.classRooms.filter(Boolean) : [];
                       const tag = "특수학급고사실";
                       updateSpec(idx, "classRooms", cur.includes(tag) ? cur.filter((r) => r !== tag) : [...cur, tag]);
                     }}
                   >
                     + 특수학급고사실
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ fontSize: 11, padding: "2px 6px", height: 24 }}
+                    onClick={() => {
+                      const cur = Array.isArray(sp.studyHallRooms) ? sp.studyHallRooms.filter(Boolean) : [];
+                      const tag = (roomCatalog?.studyHallRooms || ["도서실(공강자습)"])[0];
+                      updateSpec(idx, "studyHallRooms", cur.includes(tag) ? [] : [tag]);
+                    }}
+                  >
+                    {(sp.studyHallRooms || []).length > 0 ? "✓ 공강자습실" : "+ 공강자습실"}
+                  </button>
                 </div>
+                {config?.subjectExcludeMode === "AUTHORS_ONLY" && stats.length > 0 && (
+                  <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>
+                    <span style={{ fontSize: 10.5, color: "#64748b" }}>출제자:</span>
+                    {stats.filter((st) => !st.isExempt).map((st) => {
+                      const picked = (sp.authorTeacherIds || []).includes(st.teacherId);
+                      return (
+                        <button
+                          key={st.teacherId}
+                          type="button"
+                          className={`btn btn-sm ${picked ? "btn-primary" : ""}`}
+                          style={{ fontSize: 10, padding: "1px 5px", height: 20 }}
+                          onClick={() => {
+                            const cur = sp.authorTeacherIds || [];
+                            updateSpec(idx, "authorTeacherIds", picked ? cur.filter((x) => x !== st.teacherId) : [...cur, st.teacherId]);
+                          }}
+                        >
+                          {st.teacherName}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </td>
               <td>
                 <button type="button" className="btn btn-sm btn-danger" onClick={() => setSpecs((prev) => prev.filter((_, i) => i !== idx))}>

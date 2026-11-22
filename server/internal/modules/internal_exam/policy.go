@@ -8,12 +8,16 @@ import (
 	"kkomi-timetable/server/internal/database"
 )
 
-// TeacherExamPolicyUpdate는 교사별 교내 시험감독 제외(특수반·보건실 등) 및
+// TeacherExamPolicyUpdate는 교사별 교내 시험감독 제외, 사회적 약자/보직 차등 감면 및
 // 연간 누적 감독횟수 설정/초기화 요청 구조체입니다.
 type TeacherExamPolicyUpdate struct {
 	TeacherID                string `json:"teacherId"`
 	InternalExamExempt       bool   `json:"internalExamExempt"`
 	InternalExamExemptReason string `json:"internalExamExemptReason"`
+	ExamMaxCount             int    `json:"examMaxCount"`
+	ExamReductionWeight      int    `json:"examReductionWeight"`
+	ExamNoConsecutive        bool   `json:"examNoConsecutive"`
+	ExamReductionReason      string `json:"examReductionReason"`
 	AnnualMainCount          int    `json:"annualMainCount"`
 	AnnualSubCount           int    `json:"annualSubCount"`
 	AnnualCorridorCount      int    `json:"annualCorridorCount"`
@@ -117,6 +121,10 @@ func (s *Service) UpdateTeacherExamPolicy(req TeacherExamPolicyUpdate) ([]protoc
 		if teachers[i].ID == req.TeacherID {
 			teachers[i].InternalExamExempt = req.InternalExamExempt
 			teachers[i].InternalExamExemptReason = strings.TrimSpace(req.InternalExamExemptReason)
+			teachers[i].ExamMaxCount = max(0, req.ExamMaxCount)
+			teachers[i].ExamReductionWeight = max(0, req.ExamReductionWeight)
+			teachers[i].ExamNoConsecutive = req.ExamNoConsecutive
+			teachers[i].ExamReductionReason = strings.TrimSpace(req.ExamReductionReason)
 			teachers[i].AnnualMainCount = max(0, req.AnnualMainCount)
 			teachers[i].AnnualSubCount = max(0, req.AnnualSubCount)
 			teachers[i].AnnualCorridorCount = max(0, req.AnnualCorridorCount)

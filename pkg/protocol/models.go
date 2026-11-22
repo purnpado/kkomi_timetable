@@ -1,7 +1,5 @@
 package protocol
 
-import "strings"
-
 // Role은 업무분장(RBAC) 권한 상수를 정의합니다. 1인의 교사가 여러 권한을 겸임할 수 있습니다.
 type Role string
 
@@ -66,6 +64,12 @@ type Teacher struct {
 	IsParentHonorary         bool     `json:"isParentHonorary"`                   // 학부모 명예감독 여부
 	InternalExamExempt       bool     `json:"internalExamExempt"`                 // 특수반 등 교내 감독 제외 여부
 	InternalExamExemptReason string   `json:"internalExamExemptReason,omitempty"` // 교내 감독 제외 사유
+	ExamMaxCount             int      `json:"examMaxCount,omitempty"`             // 교내 시험 최대 배정 횟수 상한 (0=제한 없음)
+	ExamReductionWeight      int      `json:"examReductionWeight,omitempty"`      // 사회적 약자/보직 경감 가중치 (배정 횟수 등가 가산)
+	ExamNoConsecutive        bool     `json:"examNoConsecutive,omitempty"`        // 교내 연속 교시(연강) 감독 절대 금지 여부
+	ExamReductionReason      string   `json:"examReductionReason,omitempty"`      // 감면 사유 (예: "임산부 보호", "원로교사", "보직부장")
+	BirthYear                int      `json:"birthYear,omitempty"`                // 출생연도 (동점자 연령순 비교용)
+	SalaryStep               int      `json:"salaryStep,omitempty"`               // 호봉 (동점자 호봉순 비교용)
 	AnnualMainCount          int      `json:"annualMainCount"`                    // 1년 기실시 정감독 누적 횟수
 	AnnualSubCount           int      `json:"annualSubCount"`                     // 1년 기실시 부감독 누적 횟수
 	AnnualCorridorCount      int      `json:"annualCorridorCount"`                // 1년 기실시 복도감독 누적 횟수
@@ -219,8 +223,10 @@ type ExamConfig struct {
 	DeputyMode           bool                `json:"deputyMode"`                  // 정·부감독 2인 선택 운영 (false면 1인 단독)
 	BalanceMode          string              `json:"balanceMode,omitempty"`       // "TOTAL_AND_ROLE"(연간총계+역할균형) | "STRICT_ROLE"(정·부 각각 균등)
 	HonoraryParentOn     bool                `json:"honoraryParentOn"`            // 학부모 명예감독 선택적(On/Off) 투입
-	SubjectTeacherPolicy SubjectHandlingMode `json:"subjectTeacherPolicy"`        // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
-	CountsCommitted      bool                `json:"countsCommitted,omitempty"`   // 이번 시험 감독 횟수가 연간 누적에 확정 반영되었는지 여부 (이중 누적 방지)
+	SubjectTeacherPolicy  SubjectHandlingMode `json:"subjectTeacherPolicy"`           // 담당과목 시험 교시 처리 (CORRIDOR_FIRST 기본)
+	PreventSameRoomRepeat bool                `json:"preventSameRoomRepeat,omitempty"`  // 동일 교사 같은 고사실 중복 배정 금지
+	SubjectExcludeMode    string              `json:"subjectExcludeMode,omitempty"`     // ALL_SUBJECT(기본) | GRADE_ONLY(해당학년담당) | AUTHORS_ONLY(출제교사만)
+	CountsCommitted       bool                `json:"countsCommitted,omitempty"`        // 이번 시험 감독 횟수가 연간 누적에 확정 반영되었는지 여부 (이중 누적 방지)
 }
 
 // ExamSlot은 지필고사 교시별 고사장/복도감독 배정 항목입니다.
@@ -249,6 +255,7 @@ const (
 	CriteriaVolunteer      ExternalExamCriteria = "VOLUNTEER"       // 해당 시험 자발적 지원자 우선
 	CriteriaLowCount       ExternalExamCriteria = "LOW_COUNT"       // 누적 외부감독 횟수 적은 순
 	CriteriaLateTransfer   ExternalExamCriteria = "LATE_TRANSFER"   // 현임교 전입일 늦은 순 (최근 전입자 우선)
+	CriteriaEarlyTransfer  ExternalExamCriteria = "EARLY_TRANSFER"  // 현임교 전입일 빠른 순 (장기근속 우선)
 	CriteriaOldestDispatch ExternalExamCriteria = "OLDEST_DISPATCH" // 이전 외부차출이 오래된 순 (미파견 최우선)
 	CriteriaNonHomeroom    ExternalExamCriteria = "NON_HOMEROOM"    // 비담임 우선
 	CriteriaNonDeptHead    ExternalExamCriteria = "NON_DEPT_HEAD"   // 비부장 우선
@@ -256,30 +263,39 @@ const (
 
 // ExternalExamNotice는 수능·모의평가·검정고시·임용고사 등 대외 시험 공고입니다.
 type ExternalExamNotice struct {
-	ID                string                 `json:"id"`
-	Title             string                 `json:"title"`         // 예: "2027학년도 대학수학능력시험 감독관 파견"
-	ExamCategory      string                 `json:"examCategory"`  // 수능, 모의평가, 검정고시, 교원임용, 기타
-	ExamDate          string                 `json:"examDate"`      // 시험 일자 (YYYY-MM-DD)
-	Location          string                 `json:"location"`      // 파견 고사장 또는 관내 학교
-	RequiredCount     int                    `json:"requiredCount"` // 필요 차출 인원
-	PresetMode        string                 `json:"presetMode"`    // PRESET_MIXED, PRESET_COOLDOWN, PRESET_RECENT_TRANSFER, CUSTOM
-	PriorityOrder     []ExternalExamCriteria `json:"priorityOrder"` // 다단계 차출 우선순위 배열
-	ExcludeExempt     bool                   `json:"excludeExempt"` // 면제 대상자(임산부/수험생자녀/원로교사 등) 제외
-	VolunteerIDs      []string               `json:"volunteerIds"`  // 자발적 지원 교사 ID 목록
-	ConfirmedIDs      []string               `json:"confirmedIds"`  // 담당교사 최종 선택(파견 확정) 교사 ID 목록
-	IsConfirmed       bool                   `json:"isConfirmed"`
-	LinkedToTimetable bool                   `json:"linkedToTimetable"` // 평일 시험 시 결보강 대기열 이관 완료 여부
+	ID                    string                 `json:"id"`
+	Title                 string                 `json:"title"`         // 예: "2027학년도 대학수학능력시험 감독관 파견"
+	ExamCategory          string                 `json:"examCategory"`  // 검정고시, 수능감독, 임용고사 또는 담당자 자유 추가 종목
+	ExamDate              string                 `json:"examDate"`      // 시험 일자 (YYYY-MM-DD)
+	Location              string                 `json:"location"`      // 파견 고사장 또는 관내 학교
+	RequiredCount         int                    `json:"requiredCount"` // 필요 차출 인원
+	PresetMode            string                 `json:"presetMode"`    // PRESET_MIXED, PRESET_COOLDOWN, PRESET_RECENT_TRANSFER, CUSTOM
+	ScoringMode           string                 `json:"scoringMode,omitempty"`           // TOTAL_COUNT | WEIGHTED_SCORE | SEPARATE_TRACK
+	PriorityOrder         []ExternalExamCriteria `json:"priorityOrder"`                   // 다단계 차출 우선순위 배열
+	ExcludeExempt         bool                   `json:"excludeExempt"`                   // 면제 대상자(임산부/수험생자녀/원로교사 등) 제외
+	TransferGraceYear     bool                   `json:"transferGraceYear,omitempty"`     // 전입 1년차 유예 적용 여부
+	CategoryExcludeRules  []string               `json:"categoryExcludeRules,omitempty"`  // 시험 종류별 제외 규칙 코드 목록
+	TieBreaker            string                 `json:"tieBreaker,omitempty"`            // NAME_ASC | AGE_YOUNG | AGE_OLD | SALARY_LOW | SALARY_HIGH | LOTTERY
+	LotterySeed           string                 `json:"lotterySeed,omitempty"`           // 공정 추첨용 시드
+	VolunteerOverflowMode string                 `json:"volunteerOverflowMode,omitempty"` // PRIORITY_ORDER | LOW_COUNT_FIRST | FIRST_COME | LOTTERY
+	VolunteerIDs          []string               `json:"volunteerIds"`                    // 자발적 지원 교사 ID 목록
+	ConfirmedIDs          []string               `json:"confirmedIds"`                    // 담당교사 최종 선택(파견 확정) 교사 ID 목록
+	IsConfirmed           bool                   `json:"isConfirmed"`
+	LinkedToTimetable     bool                   `json:"linkedToTimetable"` // 평일 시험 시 결보강 대기열 이관 완료 여부
 }
 
 // ExternalExamCandidate는 차출 순번 산정기가 계산한 교사별 순위와 근거입니다.
 type ExternalExamCandidate struct {
-	Rank          int     `json:"rank"`
-	Teacher       Teacher `json:"teacher"`
-	IsVolunteer   bool    `json:"isVolunteer"`
-	IsExempt      bool    `json:"isExempt"`
-	IsSelected    bool    `json:"isSelected"`
-	ReasonBadge   string  `json:"reasonBadge"`   // 예: "[1순위: 자발적 지원]", "[차출후보 1번: 2026.03.01 전입 · 미파견]"
-	DaysSinceLast int     `json:"daysSinceLast"` // 마지막 파견일로부터 경과 일수 (미파견 시 99999)
+	Rank           int     `json:"rank"`
+	Teacher        Teacher `json:"teacher"`
+	IsVolunteer    bool    `json:"isVolunteer"`
+	IsExempt       bool    `json:"isExempt"`
+	IsSelected     bool    `json:"isSelected"`
+	IsGracePeriod  bool    `json:"isGracePeriod,omitempty"`
+	EffectiveScore float64 `json:"effectiveScore,omitempty"` // 가중치 점수제/트랙 반영 환산 점수
+	CategoryCount  int     `json:"categoryCount,omitempty"`  // 동일 종목 누적 파견 횟수 (별도 트랙용)
+	ReasonBadge    string  `json:"reasonBadge"`              // 예: "[1순위: 자발적 지원]"
+	DaysSinceLast  int     `json:"daysSinceLast"`            // 마지막 파견일로부터 경과 일수 (미파견 시 99999)
 }
 
 // EventLinkType은 주중·월중 행사의 시간표/시종 연동 속성입니다.
@@ -317,149 +333,4 @@ type BellPeriod struct {
 	Label     string `json:"label"`     // 예: "1교시", "아침조회"
 	StartTime string `json:"startTime"` // "08:40"
 	EndTime   string `json:"endTime"`   // "09:30"
-}
-
-// IsSystemAdminAccount는 실제 교원이 아닌 서버 초기 구동·비상 관리용 기본 '최고관리자(admin)' 시스템 계정인지 판별합니다.
-func IsSystemAdminAccount(t Teacher) bool {
-	return strings.EqualFold(strings.TrimSpace(t.Username), "admin") &&
-		(t.Name == "최고관리자" || t.Name == "시스템 관리자" || t.Subject == "시스템" || t.Subject == "행정/총괄")
-}
-
-// BoolPtr는 불리언 값의 포인터를 반환합니다.
-func BoolPtr(v bool) *bool {
-	return &v
-}
-
-// NormalizeTeacherType은 영문 코드 또는 한글 교원 유형 문자열을 정규 TeacherType 상수로 변환합니다.
-func NormalizeTeacherType(raw TeacherType) TeacherType {
-	s := strings.TrimSpace(string(raw))
-	if s == "" {
-		return ""
-	}
-	upper := strings.ToUpper(s)
-	switch TeacherType(upper) {
-	case TeacherTypeSubject, TeacherTypeSpecial, TeacherTypeHealth, TeacherTypeCounselor, TeacherTypeLibrarian, TeacherTypeNutrition, TeacherTypeOther:
-		return TeacherType(upper)
-	}
-	lower := strings.ToLower(s)
-	switch {
-	case strings.Contains(lower, "특수"):
-		return TeacherTypeSpecial
-	case strings.Contains(lower, "보건"):
-		return TeacherTypeHealth
-	case strings.Contains(lower, "상담") || strings.Contains(lower, "위클래스") || strings.Contains(lower, "wee"):
-		return TeacherTypeCounselor
-	case strings.Contains(lower, "사서") || strings.Contains(lower, "도서관"):
-		return TeacherTypeLibrarian
-	case strings.Contains(lower, "영양"):
-		return TeacherTypeNutrition
-	case strings.Contains(lower, "기타") || strings.Contains(lower, "비교과"):
-		return TeacherTypeOther
-	case strings.Contains(lower, "교과") || strings.Contains(lower, "일반"):
-		return TeacherTypeSubject
-	default:
-		return ""
-	}
-}
-
-// EffectiveTeacherType은 명시된 유형 또는 직위·과목 키워드로부터 교원의 실효 유형을 판정합니다.
-func EffectiveTeacherType(t Teacher) TeacherType {
-	if norm := NormalizeTeacherType(t.TeacherType); norm != "" {
-		return norm
-	}
-	if IsSystemAdminAccount(t) || t.IsParentHonorary {
-		return TeacherTypeOther
-	}
-	joined := strings.ToLower(strings.Join([]string{t.Position, t.Subject}, " "))
-	switch {
-	case strings.Contains(joined, "특수"):
-		return TeacherTypeSpecial
-	case strings.Contains(joined, "보건"):
-		return TeacherTypeHealth
-	case strings.Contains(joined, "상담") || strings.Contains(joined, "위클래스") || strings.Contains(joined, "wee"):
-		return TeacherTypeCounselor
-	case strings.Contains(joined, "사서") || strings.Contains(joined, "도서관"):
-		return TeacherTypeLibrarian
-	case strings.Contains(joined, "영양"):
-		return TeacherTypeNutrition
-	default:
-		return TeacherTypeSubject
-	}
-}
-
-// IsNonSubjectTeacher는 시스템 관리자·학부모 명예감독을 제외한 비교과 교원인지 여부를 반환합니다.
-func IsNonSubjectTeacher(t Teacher) bool {
-	return !IsSystemAdminAccount(t) && !t.IsParentHonorary && EffectiveTeacherType(t) != TeacherTypeSubject
-}
-
-// IsSpecialEducationTeacher는 특수교사 유형인지 판별합니다.
-func IsSpecialEducationTeacher(t Teacher) bool {
-	return !IsSystemAdminAccount(t) && !t.IsParentHonorary && EffectiveTeacherType(t) == TeacherTypeSpecial
-}
-
-// HasRegularClasses는 교원이 정규 시간표 수업 담당 대상인지 여부를 반환합니다.
-func HasRegularClasses(t Teacher) bool {
-	if IsSystemAdminAccount(t) || t.IsParentHonorary {
-		return false
-	}
-	if t.HasClasses != nil {
-		return *t.HasClasses
-	}
-	return EffectiveTeacherType(t) == TeacherTypeSubject
-}
-
-// IsSubstituteExcluded는 교원이 결보강 대타 후보에서 제외되어야 하는지 여부를 반환합니다.
-func IsSubstituteExcluded(t Teacher) bool {
-	if IsSystemAdminAccount(t) || t.IsParentHonorary {
-		return true
-	}
-	if t.SubstituteExempt != nil {
-		return *t.SubstituteExempt
-	}
-	return EffectiveTeacherType(t) != TeacherTypeSubject
-}
-
-// PopulateTeacherDefaults는 교원 유형, 수업 유무, 결보강 대타 제외 필드의 기본값을 채워 넣습니다.
-func PopulateTeacherDefaults(t *Teacher) {
-	if t == nil {
-		return
-	}
-	if IsSystemAdminAccount(*t) {
-		t.TeacherType = TeacherTypeOther
-		t.HasClasses = BoolPtr(false)
-		t.SubstituteExempt = BoolPtr(true)
-		return
-	}
-	if t.IsParentHonorary {
-		t.TeacherType = TeacherTypeOther
-		t.HasClasses = BoolPtr(false)
-		t.SubstituteExempt = BoolPtr(true)
-		return
-	}
-	effType := EffectiveTeacherType(*t)
-	hasCls := HasRegularClasses(*t)
-	subEx := IsSubstituteExcluded(*t)
-	t.TeacherType = effType
-	t.HasClasses = BoolPtr(hasCls)
-	t.SubstituteExempt = BoolPtr(subEx)
-}
-
-// TeacherTypeLabel은 교원 유형의 한글 라벨을 반환합니다.
-func TeacherTypeLabel(tt TeacherType) string {
-	switch NormalizeTeacherType(tt) {
-	case TeacherTypeSpecial:
-		return "특수"
-	case TeacherTypeHealth:
-		return "보건"
-	case TeacherTypeCounselor:
-		return "상담"
-	case TeacherTypeLibrarian:
-		return "사서"
-	case TeacherTypeNutrition:
-		return "영양"
-	case TeacherTypeOther:
-		return "기타"
-	default:
-		return "교과"
-	}
 }

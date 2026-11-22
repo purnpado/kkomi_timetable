@@ -80,7 +80,7 @@ func pickSpecialTeacherForRoom(
 		return nil
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		pi, pj := ctx.penalty(candidates[i].ID), ctx.penalty(candidates[j].ID)
+		pi, pj := ctx.penalty(candidates[i].ID, "", candidates[i]), ctx.penalty(candidates[j].ID, "", candidates[j])
 		if pi != pj {
 			return pi < pj
 		}

@@ -7,6 +7,7 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import ActionMenu from "../../components/ui/ActionMenu";
 import ExamFairnessPanel from "./ExamFairnessPanel";
 import MultiDayExamEditor from "./MultiDayExamEditor";
+import InternalExamSwapAndPersonalPanel from "./InternalExamSwapAndPersonalPanel";
 
 function calcMinutes(start, end) {
   if (!start || !end) return 45;
@@ -29,6 +30,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
   const [subCandidates, setSubCandidates] = useState([]);
   const [newSubId, setNewSubId] = useState("");
   const [confirmUnsealDate, setConfirmUnsealDate] = useState(null); // null | "" (all) | "YYYY-MM-DD"
+  const [viewTab, setViewTab] = useState("schedule"); // "schedule" | "swap" | "fairness"
 
   const onNotifyRef = useRef(onNotify);
   onNotifyRef.current = onNotify;
@@ -79,6 +81,13 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean),
+        studyHallRooms: Array.isArray(sp.studyHallRooms)
+          ? sp.studyHallRooms.filter(Boolean)
+          : String(sp.studyHallRooms || "")
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+        authorTeacherIds: Array.isArray(sp.authorTeacherIds) ? sp.authorTeacherIds : [],
       }));
       await apiFetch(serverUrl, "/api/internal-exam/generate", user.id, {
         method: "POST",
@@ -236,17 +245,34 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
                   <option value="CORRIDOR_FIRST">담당과목: 복도감독 우선</option>
                   <option value="HQ_STANDBY">담당과목: 평가본부 대기/공강</option>
                 </select>
+                <select className="select" style={{ width: 215 }} value={config.subjectExcludeMode || "ALL_SUBJECT"} onChange={(e) => setConfig({ ...config, subjectExcludeMode: e.target.value })}>
+                  <option value="ALL_SUBJECT">과목 배제: 동일 교과 전체</option>
+                  <option value="GRADE_ONLY">과목 배제: 해당 학년 담당만</option>
+                  <option value="AUTHORS_ONLY">과목 배제: 출제 교사만</option>
+                </select>
+                <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={Boolean(config.preventSameRoomRepeat)} onChange={(e) => setConfig({ ...config, preventSameRoomRepeat: e.target.checked })} />
+                  동일 고사실 중복 배정 금지
+                </label>
                 <button className="btn btn-green btn-sm" onClick={handleRegenerate}>
                   <RefreshCw size={14} /> 규칙·다중일 통합 자동 배정
                 </button>
               </div>
-              <MultiDayExamEditor config={config} setConfig={setConfig} specs={specs} setSpecs={setSpecs} roomCatalog={roomCatalog} />
+              <MultiDayExamEditor config={config} setConfig={setConfig} specs={specs} setSpecs={setSpecs} roomCatalog={roomCatalog} stats={fairness?.stats || []} />
             </>
           )}
         </div>
       )}
 
-      {isExamAdmin && selectedSlotId && (
+      <Tabs.Root value={viewTab} onValueChange={setViewTab}>
+        <Tabs.List className="radix-tabs-list" aria-label="교내 시험감독 세부 탭">
+          <Tabs.Trigger value="schedule" className="radix-tabs-trigger">배정표 · 긴급대타 ({visibleSlots.length}건)</Tabs.Trigger>
+          <Tabs.Trigger value="swap" className="radix-tabs-trigger">수동 맞교환 · 개인 감독 시간표</Tabs.Trigger>
+          <Tabs.Trigger value="fairness" className="radix-tabs-trigger">시수 균등 · 차등 감면 정책</Tabs.Trigger>
+        </Tabs.List>
+      </Tabs.Root>
+
+      {isExamAdmin && selectedSlotId && viewTab === "schedule" && (
         <div className="card" style={{ background: "#fff9db", borderColor: "#ffd43b" }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>당일 아침 돌발 결원 긴급 대타 추천 (연강·일일상한 회피 우선)</h3>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -265,6 +291,7 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
         </div>
       )}
 
+      {viewTab === "schedule" && (
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>
@@ -301,8 +328,8 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
                 </td>
                 <td>{s.grade}학년 <b>{s.subject}</b></td>
                 <td>
-                  <span className={`badge ${s.slotRole === "CORRIDOR" ? "badge-blue" : s.slotRole === "HONORARY" ? "badge-green" : "badge-gray"}`}>
-                    {s.slotRole === "MAIN" ? "정감독" : s.slotRole === "SUB" ? "부감독" : s.slotRole === "CORRIDOR" ? "복도감독" : "학부모명예"}
+                  <span className={`badge ${s.slotRole === "CORRIDOR" ? "badge-blue" : s.slotRole === "HONORARY" || s.slotRole === "STUDY_HALL" ? "badge-green" : "badge-gray"}`}>
+                    {s.slotRole === "MAIN" ? "정감독" : s.slotRole === "SUB" ? "부감독" : s.slotRole === "CORRIDOR" ? "복도감독" : s.slotRole === "STUDY_HALL" ? "공강자습" : "학부모명예"}
                   </span>
                 </td>
                 <td>{s.actualRoomHidden ? <span className="badge badge-amber">{s.roomName}</span> : <b>{s.roomName}</b>}</td>
@@ -316,8 +343,15 @@ export default function InternalExamView({ serverUrl, user, onNotify }) {
           </tbody>
         </table>
       </div>
+      )}
 
-      <ExamFairnessPanel serverUrl={serverUrl} user={user} fairness={fairness} isExamAdmin={isExamAdmin} onRefresh={loadData} onNotify={onNotify} />
+      {viewTab === "swap" && (
+        <InternalExamSwapAndPersonalPanel serverUrl={serverUrl} user={user} slots={slots} fairness={fairness} isExamAdmin={isExamAdmin} onRefresh={loadData} onNotify={onNotify} />
+      )}
+
+      {viewTab === "fairness" && (
+        <ExamFairnessPanel serverUrl={serverUrl} user={user} fairness={fairness} isExamAdmin={isExamAdmin} onRefresh={loadData} onNotify={onNotify} />
+      )}
 
       <ConfirmDialog
         open={confirmUnsealDate !== null}

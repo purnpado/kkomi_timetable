@@ -7,6 +7,7 @@ import (
 
 	"kkomi-timetable/pkg/protocol"
 	"kkomi-timetable/server/internal/modules/auth"
+	"kkomi-timetable/server/internal/modules/external_exam"
 	"kkomi-timetable/server/internal/modules/internal_exam"
 )
 
@@ -218,16 +219,32 @@ func (a *ServerApp) handleExternalExamRules(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body struct {
-		NoticeID      string                          `json:"noticeId"`
-		PresetMode    string                          `json:"presetMode"`
-		PriorityOrder []protocol.ExternalExamCriteria `json:"priorityOrder"`
-		ExcludeExempt bool                            `json:"excludeExempt"`
+		NoticeID              string                          `json:"noticeId"`
+		PresetMode            string                          `json:"presetMode"`
+		ScoringMode           string                          `json:"scoringMode"`
+		PriorityOrder         []protocol.ExternalExamCriteria `json:"priorityOrder"`
+		ExcludeExempt         bool                            `json:"excludeExempt"`
+		TransferGraceYear     bool                            `json:"transferGraceYear"`
+		CategoryExcludeRules  []string                        `json:"categoryExcludeRules"`
+		TieBreaker            string                          `json:"tieBreaker"`
+		LotterySeed           string                          `json:"lotterySeed"`
+		VolunteerOverflowMode string                          `json:"volunteerOverflowMode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	updated, err := a.ExternalExam.UpdateRules(body.NoticeID, body.PresetMode, body.PriorityOrder, body.ExcludeExempt)
+	updated, err := a.ExternalExam.UpdateRulesWithOptions(body.NoticeID, external_exam.RuleUpdateOptions{
+		PresetMode:            body.PresetMode,
+		ScoringMode:           body.ScoringMode,
+		PriorityOrder:         body.PriorityOrder,
+		ExcludeExempt:         body.ExcludeExempt,
+		TransferGraceYear:     body.TransferGraceYear,
+		CategoryExcludeRules:  body.CategoryExcludeRules,
+		TieBreaker:            body.TieBreaker,
+		LotterySeed:           body.LotterySeed,
+		VolunteerOverflowMode: body.VolunteerOverflowMode,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

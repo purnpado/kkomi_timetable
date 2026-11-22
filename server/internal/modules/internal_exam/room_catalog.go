@@ -16,19 +16,27 @@ type ElectiveRoomItem struct {
 	GroupName string `json:"groupName"`
 }
 
-// ExamRoomCatalog는 학급 고사실, 교과교실, 고교선택과목 고사실 및 별도고사실 목록입니다.
+// ExamRoomCatalog는 학급 고사실, 교과교실, 고교선택과목 고사실, 분리 고사실 및 공강 자습실 목록입니다.
 type ExamRoomCatalog struct {
 	GradeClassRooms map[int][]string   `json:"gradeClassRooms"`
 	SpecialRooms    []string           `json:"specialRooms"`
 	ElectiveRooms   []ElectiveRoomItem `json:"electiveRooms"`
 	IsolatedRooms   []string           `json:"isolatedRooms"`
+	StudyHallRooms  []string           `json:"studyHallRooms"`
 }
 
-// BuildRoomCatalog는 학교 기본설정·시수표·시간표에서 정규반, 교과교실, 고교선택과목 고사실 및 별도 고사실 목록을 수집합니다.
+// BuildRoomCatalog는 학교 기본설정·시수표·시간표에서 정규반, 교과교실, 고교선택과목 고사실 및 분리/자습실 목록을 수집합니다.
 func (s *Service) BuildRoomCatalog() ExamRoomCatalog {
 	cat := ExamRoomCatalog{
 		GradeClassRooms: map[int][]string{},
-		IsolatedRooms:   []string{"별도고사실(독감·감염병)", "특수학급고사실"},
+		IsolatedRooms: []string{
+			"별도고사실 1실(감염병)",
+			"별도고사실 2실(감염병)",
+			"별도고사실 3실(감염병)",
+			"별도고사실(독감·감염병)",
+			"특수학급고사실",
+		},
+		StudyHallRooms: []string{"도서실(공강자습)", "시청각실(공강자습)", "자습실1(공강자습)"},
 	}
 	cfgs, _ := database.LoadCollection[protocol.SchoolConfig](s.store, "school_configs")
 	specialSet := make(map[string]bool)

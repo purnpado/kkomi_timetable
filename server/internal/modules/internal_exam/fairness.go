@@ -38,8 +38,15 @@ func equalizeAnnualLoadsWithConstraints(
 	}
 	usage := buildSlotUsageMaps(slots)
 
+	effTotal := func(t protocol.Teacher) int {
+		return load[t.ID].Total + t.ExamReductionWeight
+	}
+
 	canAssignTo := func(t protocol.Teacher, sl protocol.ExamSlot, removeSlot *protocol.ExamSlot, allowSubjectCorridor bool) bool {
 		if !canTeacherFitSlot(t, sl, allowSubjectCorridor, tByID, unavailByDate) {
+			return false
+		}
+		if t.ExamMaxCount > 0 && removeSlot == nil && usage.currentCount[t.ID] >= t.ExamMaxCount {
 			return false
 		}
 		exclP := -1
@@ -50,7 +57,7 @@ func equalizeAnnualLoadsWithConstraints(
 		} else {
 			exclP = removeSlot.Period
 		}
-		if avoidConsecutive && isConsecutiveExcluding(usage.dailyPeriods[sl.ExamDate][t.ID], sl.Period, exclP) {
+		if (avoidConsecutive || t.ExamNoConsecutive) && isConsecutiveExcluding(usage.dailyPeriods[sl.ExamDate][t.ID], sl.Period, exclP) {
 			return false
 		}
 		return true
@@ -68,11 +75,11 @@ func equalizeAnnualLoadsWithConstraints(
 		slots[idx].TeacherName = newT.Name
 	}
 
-	// 1단계: 연간 총 감독횟수(ProjectedTotal) 최대-최소 편차를 1회 이하로 평탄화
+	// 1단계: 연간 총 감독횟수(ProjectedTotal + 경감가중치) 최대-최소 편차를 1회 이하로 평탄화
 	for iter := 0; iter < 120; iter++ {
 		minTot, maxTot := 1<<30, -1
 		for _, t := range regularTeachers {
-			tot := load[t.ID].Total
+			tot := effTotal(t)
 			if tot < minTot {
 				minTot = tot
 			}
@@ -84,18 +91,20 @@ func equalizeAnnualLoadsWithConstraints(
 			break
 		}
 		moved := false
-		// 직접 이관: maxTot(또는 >= minTot+2) 교사의 슬롯을 <= load[old]-2 교사에게 전달
+		// 직접 이관: effTotal >= minTot+2 교사의 슬롯을 effTotal <= old-2 교사에게 전달
 		for i := range slots {
 			oldID := slots[i].TeacherID
-			if _, ok := tByID[oldID]; !ok {
+			oldT, ok := tByID[oldID]
+			if !ok {
 				continue
 			}
-			if load[oldID].Total < minTot+2 {
+			oldEff := effTotal(oldT)
+			if oldEff < minTot+2 {
 				continue
 			}
 			k := slotKey(slots[i])
 			for _, cand := range regularTeachers {
-				if load[cand.ID].Total > load[oldID].Total-2 || usage.usedPerPeriod[k][cand.ID] {
+				if effTotal(cand) > oldEff-2 || usage.usedPerPeriod[k][cand.ID] {
 					continue
 				}
 				if canAssignTo(cand, slots[i], nil, true) {
@@ -114,9 +123,11 @@ func equalizeAnnualLoadsWithConstraints(
 		// 1단계 경유 이관: high(T1) -> mid(T2), mid(T2) -> low(T3)
 		for i := range slots {
 			hID := slots[i].TeacherID
-			if _, ok := tByID[hID]; !ok || load[hID].Total < minTot+2 {
+			hT, ok := tByID[hID]
+			if !ok || effTotal(hT) < minTot+2 {
 				continue
 			}
+			hEff := effTotal(hT)
 			ki := slotKey(slots[i])
 			for j := range slots {
 				mID := slots[j].TeacherID
@@ -129,7 +140,7 @@ func equalizeAnnualLoadsWithConstraints(
 				}
 				kj := slotKey(slots[j])
 				for _, lowT := range regularTeachers {
-					if lowT.ID == hID || lowT.ID == mID || load[lowT.ID].Total > load[hID].Total-2 {
+					if lowT.ID == hID || lowT.ID == mID || effTotal(lowT) > hEff-2 {
 						continue
 					}
 					if !usage.usedPerPeriod[kj][lowT.ID] && canAssignTo(lowT, slots[j], nil, true) {
@@ -302,14 +313,18 @@ func (s *Service) CalculateFairnessSummary() (protocol.ExamFairnessSummary, erro
 			cm, cs, cc, ctot = cur.Main, cur.Sub, cur.Corridor, cur.Total
 		}
 		stat := protocol.ExamFairnessStat{
-			TeacherID:         t.ID,
-			TeacherName:       t.Name,
-			Subject:           t.Subject,
-			Position:          t.Position,
-			HomeroomClass:     t.HomeroomClass,
-			IsExempt:          exempt,
-			ExemptReason:      reason,
-			BaseMain:          bm,
+			TeacherID:           t.ID,
+			TeacherName:         t.Name,
+			Subject:             t.Subject,
+			Position:            t.Position,
+			HomeroomClass:       t.HomeroomClass,
+			IsExempt:            exempt,
+			ExemptReason:        reason,
+			ExamMaxCount:        t.ExamMaxCount,
+			ExamReductionWeight: t.ExamReductionWeight,
+			ExamNoConsecutive:   t.ExamNoConsecutive,
+			ExamReductionReason: t.ExamReductionReason,
+			BaseMain:            bm,
 			BaseSub:           bs,
 			BaseCorridor:      bc,
 			BaseTotal:         btot,

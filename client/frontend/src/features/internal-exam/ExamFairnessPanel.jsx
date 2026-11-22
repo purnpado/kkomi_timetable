@@ -3,22 +3,35 @@ import { BarChart3, CheckCircle2, RotateCcw, ShieldOff } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
 
 function exemptPresetValue(st) {
-  if (!st.isExempt) return "ACTIVE";
-  if ((st.exemptReason || "").includes("특수")) return "SPECIAL";
-  if ((st.exemptReason || "").includes("보건")) return "NURSE";
-  return "OTHER";
+  if (st.isExempt) {
+    if ((st.exemptReason || "").includes("특수")) return "SPECIAL";
+    if ((st.exemptReason || "").includes("보건")) return "NURSE";
+    return "OTHER";
+  }
+  if ((st.examReductionReason || "").includes("임산부")) return "PREGNANT_RED";
+  if ((st.examReductionReason || "").includes("원로")) return "SENIOR_RED";
+  if ((st.examReductionReason || "").includes("부장") || st.examReductionWeight > 0) return "DEPT_RED";
+  return "ACTIVE";
 }
 
 function exemptPresetToPayload(stat, preset) {
+  const base = {
+    teacherId: stat.teacherId,
+    annualMainCount: stat.baseMain,
+    annualSubCount: stat.baseSub,
+    annualCorridorCount: stat.baseCorridor,
+  };
   if (preset === "ACTIVE") {
-    return {
-      teacherId: stat.teacherId,
-      internalExamExempt: false,
-      internalExamExemptReason: "",
-      annualMainCount: stat.baseMain,
-      annualSubCount: stat.baseSub,
-      annualCorridorCount: stat.baseCorridor,
-    };
+    return { ...base, internalExamExempt: false, internalExamExemptReason: "", examMaxCount: 0, examReductionWeight: 0, examNoConsecutive: false, examReductionReason: "" };
+  }
+  if (preset === "PREGNANT_RED") {
+    return { ...base, internalExamExempt: false, internalExamExemptReason: "", examMaxCount: 1, examReductionWeight: 2, examNoConsecutive: true, examReductionReason: "임산부 보호" };
+  }
+  if (preset === "SENIOR_RED") {
+    return { ...base, internalExamExempt: false, internalExamExemptReason: "", examMaxCount: 2, examReductionWeight: 2, examNoConsecutive: true, examReductionReason: "원로교사 배려" };
+  }
+  if (preset === "DEPT_RED") {
+    return { ...base, internalExamExempt: false, internalExamExemptReason: "", examMaxCount: 0, examReductionWeight: 1, examNoConsecutive: false, examReductionReason: "보직부장 경감" };
   }
   const reasons = {
     SPECIAL: "특수반(개별고사장 전담)",
@@ -26,12 +39,13 @@ function exemptPresetToPayload(stat, preset) {
     OTHER: "특수보직·학교 지정 교내 감독 제외",
   };
   return {
-    teacherId: stat.teacherId,
+    ...base,
     internalExamExempt: true,
     internalExamExemptReason: reasons[preset] || "특수보직·학교 지정 교내 감독 제외",
-    annualMainCount: stat.baseMain,
-    annualSubCount: stat.baseSub,
-    annualCorridorCount: stat.baseCorridor,
+    examMaxCount: stat.examMaxCount || 0,
+    examReductionWeight: stat.examReductionWeight || 0,
+    examNoConsecutive: Boolean(stat.examNoConsecutive),
+    examReductionReason: stat.examReductionReason || "",
   };
 }
 
@@ -109,7 +123,8 @@ export default function ExamFairnessPanel({ serverUrl, user, fairness, isExamAdm
           <thead>
             <tr>
               <th>교사 (교과 · 담임)</th>
-              <th>감독 참여/제외 설정 (특수반 등)</th>
+              <th>참여 / 감면·제외 설정</th>
+              <th>상한 · 가중 · 연강금지</th>
               <th>기실시 누적 (정/부/복도)</th>
               <th>이번 시험 (정/부/복도)</th>
               <th>1년 합계 (정 / 부 / 복도)</th>
@@ -127,18 +142,21 @@ export default function ExamFairnessPanel({ serverUrl, user, fairness, isExamAdm
                   {isExamAdmin ? (
                     <select
                       className="select"
-                      style={{ width: 210, padding: "4px 6px" }}
+                      style={{ width: 215, padding: "4px 6px" }}
                       value={exemptPresetValue(st)}
                       onChange={(e) =>
                         updatePolicy(
                           exemptPresetToPayload(st, e.target.value),
-                          `${st.teacherName} 선생님의 감독 제외 설정이 변경되었습니다. 필요 시 [규칙·시험시간 적용 자동 배정]을 눌러 다시 배정하세요.`
+                          `${st.teacherName} 선생님의 감독 참여·감면 설정이 변경되었습니다.`
                         )
                       }
                     >
-                      <option value="ACTIVE">일반 감독 대상 (별도고사실 순환)</option>
+                      <option value="ACTIVE">일반 감독 대상</option>
+                      <option value="PREGNANT_RED">감면: 임산부(상한1·연강금지)</option>
+                      <option value="SENIOR_RED">감면: 원로교사(경감+2·연강금지)</option>
+                      <option value="DEPT_RED">감면: 보직부장(경감+1)</option>
                       <option value="SPECIAL">제외: 특수반(특수학급 전담)</option>
-                      <option value="NURSE">제외: 보건실 상주(미참여 시)</option>
+                      <option value="NURSE">제외: 보건실 상주</option>
                       <option value="OTHER">제외: 기타 보직·감면</option>
                     </select>
                   ) : st.isExempt ? (
@@ -146,7 +164,53 @@ export default function ExamFairnessPanel({ serverUrl, user, fairness, isExamAdm
                       <ShieldOff size={11} /> {st.exemptReason}
                     </span>
                   ) : (
-                    <span className="badge badge-green">감독 대상</span>
+                    <span className="badge badge-green">{st.examReductionReason || "감독 대상"}</span>
+                  )}
+                </td>
+                <td style={{ fontSize: 11.5 }}>
+                  {isExamAdmin && !st.isExempt ? (
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        max={10}
+                        title="최대 상한(0=무제한)"
+                        style={{ width: 46, padding: "2px 4px" }}
+                        defaultValue={st.examMaxCount || 0}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          if (v !== (st.examMaxCount || 0)) updatePolicy({ ...st, internalExamExempt: st.isExempt, annualMainCount: st.baseMain, annualSubCount: st.baseSub, annualCorridorCount: st.baseCorridor, examMaxCount: v });
+                        }}
+                      />
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        max={10}
+                        title="경감 가중치"
+                        style={{ width: 46, padding: "2px 4px" }}
+                        defaultValue={st.examReductionWeight || 0}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          if (v !== (st.examReductionWeight || 0)) updatePolicy({ ...st, internalExamExempt: st.isExempt, annualMainCount: st.baseMain, annualSubCount: st.baseSub, annualCorridorCount: st.baseCorridor, examReductionWeight: v });
+                        }}
+                      />
+                      <label title="연강 절대 금지" style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(st.examNoConsecutive)}
+                          onChange={(e) => updatePolicy({ ...st, internalExamExempt: st.isExempt, annualMainCount: st.baseMain, annualSubCount: st.baseSub, annualCorridorCount: st.baseCorridor, examNoConsecutive: e.target.checked })}
+                        />
+                        연강금지
+                      </label>
+                    </div>
+                  ) : (
+                    <span>
+                      {st.examMaxCount > 0 ? `최대${st.examMaxCount} ` : ""}
+                      {st.examReductionWeight > 0 ? `경감+${st.examReductionWeight} ` : ""}
+                      {st.examNoConsecutive ? "연강금지" : "-"}
+                    </span>
                   )}
                 </td>
                 <td>

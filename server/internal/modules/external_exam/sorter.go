@@ -2,8 +2,10 @@ package external_exam
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +40,7 @@ func PresetOrder(presetMode string) []protocol.ExternalExamCriteria {
 	}
 }
 
-// CalculateCandidates는 다단계 차출 우선순위 조합기를 통해 모든 교사의 순번과 투명한 산정 근거 배지를 계산합니다.
+// CalculateCandidates는 가중치 점수제·별도 트랙·전입 유예·종목 제외·초과 선발 및 동점 기준을 반영해 차출 순번을 계산합니다.
 func (s *Service) CalculateCandidates(noticeID string) ([]protocol.ExternalExamCandidate, *protocol.ExternalExamNotice, error) {
 	notices, err := s.ListNotices()
 	if err != nil {
@@ -59,57 +61,135 @@ func (s *Service) CalculateCandidates(noticeID string) ([]protocol.ExternalExamC
 	if err != nil {
 		return nil, nil, err
 	}
+	cfg, _ := s.GetSchoolConfig()
+
+	weightedMap := make(map[string]float64)
+	confirmedAllCount := make(map[string]int)
+	catCountMap := make(map[string]int)
+	catLastDateMap := make(map[string]string)
+
+	for _, n := range notices {
+		if !n.IsConfirmed {
+			continue
+		}
+		w := categoryWeight(cfg, n.ExamCategory)
+		sameCat := strings.EqualFold(strings.TrimSpace(n.ExamCategory), strings.TrimSpace(notice.ExamCategory))
+		for _, tid := range n.ConfirmedIDs {
+			weightedMap[tid] += w
+			confirmedAllCount[tid]++
+			if sameCat {
+				catCountMap[tid]++
+				if n.ExamDate > catLastDateMap[tid] {
+					catLastDateMap[tid] = n.ExamDate
+				}
+			}
+		}
+	}
+
+	volunteerOrder := make(map[string]int, len(notice.VolunteerIDs))
+	for i, tid := range notice.VolunteerIDs {
+		volunteerOrder[tid] = i
+	}
 
 	order := notice.PriorityOrder
 	if len(order) == 0 {
 		order = PresetOrder(notice.PresetMode)
 	}
 	now := time.Now()
-	var candidates []protocol.ExternalExamCandidate
+	examYear := now.Year()
+	if len(notice.ExamDate) >= 4 {
+		if y, yErr := strconv.Atoi(notice.ExamDate[:4]); yErr == nil && y > 2000 {
+			examYear = y
+		}
+	}
+
+	type candWrap struct {
+		cand       protocol.ExternalExamCandidate
+		catReasons []string
+	}
+	var wrapped []candWrap
 
 	for _, t := range teachers {
 		if t.IsParentHonorary || protocol.IsSystemAdminAccount(t) {
-			continue // 학부모 명예감독 및 시스템 기본 최고관리자(admin)는 외부 파견 대상에서 제외
+			continue
 		}
 		isVol := slices.Contains(notice.VolunteerIDs, t.ID)
 		isExempt := len(t.ExemptReasons) > 0
+		var catReasons []string
+		for _, rule := range notice.CategoryExcludeRules {
+			if hit, rsn := matchesCategoryExcludeRule(t, rule, examYear); hit {
+				isExempt = true
+				catReasons = append(catReasons, rsn)
+			}
+		}
 		isSel := slices.Contains(notice.ConfirmedIDs, t.ID)
-		days := daysSince(t.LastExternalDispatch, now)
+		refLastDate := t.LastExternalDispatch
+		if notice.ScoringMode == "SEPARATE_TRACK" {
+			refLastDate = catLastDateMap[t.ID]
+		}
+		days := daysSince(refLastDate, now)
 
-		candidates = append(candidates, protocol.ExternalExamCandidate{
-			Teacher:       t,
-			IsVolunteer:   isVol,
-			IsExempt:      isExempt,
-			IsSelected:    isSel,
-			DaysSinceLast: days,
+		effScore := weightedMap[t.ID]
+		if unrecorded := t.ExternalExamCount - confirmedAllCount[t.ID]; unrecorded > 0 {
+			effScore += float64(unrecorded)
+		}
+		isGrace := notice.TransferGraceYear && isTransferGracePeriod(t.TransferDate, notice.ExamDate)
+
+		wrapped = append(wrapped, candWrap{
+			cand: protocol.ExternalExamCandidate{
+				Teacher:        t,
+				IsVolunteer:    isVol,
+				IsExempt:       isExempt,
+				IsSelected:     isSel,
+				IsGracePeriod:  isGrace,
+				EffectiveScore: math.Round(effScore*10) / 10,
+				CategoryCount:  catCountMap[t.ID],
+				DaysSinceLast:  days,
+			},
+			catReasons: catReasons,
 		})
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		a, b := candidates[i], candidates[j]
+	volOverflow := len(notice.VolunteerIDs) > notice.RequiredCount
+	sort.Slice(wrapped, func(i, j int) bool {
+		a, b := wrapped[i].cand, wrapped[j].cand
 		if notice.ExcludeExempt && a.IsExempt != b.IsExempt {
 			return !a.IsExempt
 		}
+		if notice.TransferGraceYear && !a.IsVolunteer && !b.IsVolunteer && a.IsGracePeriod != b.IsGracePeriod {
+			return !a.IsGracePeriod
+		}
 		for _, crit := range order {
-			if cmp := compareByCriteria(a, b, crit); cmp != 0 {
+			if crit == protocol.CriteriaVolunteer && a.IsVolunteer && b.IsVolunteer && volOverflow {
+				if ovCmp := compareVolunteersOverflow(a, b, notice, volunteerOrder); ovCmp != 0 {
+					return ovCmp < 0
+				}
+			}
+			if cmp := compareByCriteria(a, b, crit, notice.ScoringMode); cmp != 0 {
 				return cmp < 0
 			}
+		}
+		if tie := compareTieBreaker(a, b, notice); tie != 0 {
+			return tie < 0
 		}
 		return a.Teacher.ID < b.Teacher.ID
 	})
 
+	candidates := make([]protocol.ExternalExamCandidate, len(wrapped))
 	draftSeq := 1
-	for i := range candidates {
-		candidates[i].Rank = i + 1
-		candidates[i].ReasonBadge = buildReasonBadge(candidates[i], draftSeq)
-		if !candidates[i].IsVolunteer && !candidates[i].IsExempt {
+	for i := range wrapped {
+		c := wrapped[i].cand
+		c.Rank = i + 1
+		c.ReasonBadge = buildReasonBadge(c, notice, wrapped[i].catReasons, draftSeq)
+		if !c.IsVolunteer && !c.IsExempt && !c.IsGracePeriod {
 			draftSeq++
 		}
+		candidates[i] = c
 	}
 	return candidates, notice, nil
 }
 
-func compareByCriteria(a, b protocol.ExternalExamCandidate, crit protocol.ExternalExamCriteria) int {
+func compareByCriteria(a, b protocol.ExternalExamCandidate, crit protocol.ExternalExamCriteria, scoringMode string) int {
 	switch crit {
 	case protocol.CriteriaVolunteer:
 		if a.IsVolunteer != b.IsVolunteer {
@@ -119,16 +199,39 @@ func compareByCriteria(a, b protocol.ExternalExamCandidate, crit protocol.Extern
 			return 1
 		}
 	case protocol.CriteriaLowCount:
-		if a.Teacher.ExternalExamCount != b.Teacher.ExternalExamCount {
-			if a.Teacher.ExternalExamCount < b.Teacher.ExternalExamCount {
-				return -1
+		switch scoringMode {
+		case "WEIGHTED_SCORE":
+			if math.Abs(a.EffectiveScore-b.EffectiveScore) > 0.001 {
+				if a.EffectiveScore < b.EffectiveScore {
+					return -1
+				}
+				return 1
 			}
-			return 1
+		case "SEPARATE_TRACK":
+			if a.CategoryCount != b.CategoryCount {
+				if a.CategoryCount < b.CategoryCount {
+					return -1
+				}
+				return 1
+			}
+		default:
+			if a.Teacher.ExternalExamCount != b.Teacher.ExternalExamCount {
+				if a.Teacher.ExternalExamCount < b.Teacher.ExternalExamCount {
+					return -1
+				}
+				return 1
+			}
 		}
-	case protocol.CriteriaLateTransfer:
+	case protocol.CriteriaLateTransfer, protocol.CriteriaEarlyTransfer:
 		at := normalizeDateCmp(a.Teacher.TransferDate)
 		bt := normalizeDateCmp(b.Teacher.TransferDate)
 		if at != bt {
+			if crit == protocol.CriteriaEarlyTransfer {
+				if at < bt {
+					return -1
+				}
+				return 1
+			}
 			if at > bt {
 				return -1
 			}
@@ -186,16 +289,28 @@ func daysSince(dateStr string, now time.Time) int {
 	return days
 }
 
-func buildReasonBadge(c protocol.ExternalExamCandidate, draftSeq int) string {
+func buildReasonBadge(c protocol.ExternalExamCandidate, notice *protocol.ExternalExamNotice, catReasons []string, draftSeq int) string {
+	scoreInfo := fmt.Sprintf("누적 %d회", c.Teacher.ExternalExamCount)
+	switch notice.ScoringMode {
+	case "WEIGHTED_SCORE":
+		scoreInfo = fmt.Sprintf("환산 %.1f점", c.EffectiveScore)
+	case "SEPARATE_TRACK":
+		scoreInfo = fmt.Sprintf("동종목 %d회", c.CategoryCount)
+	}
 	if c.IsExempt {
-		return fmt.Sprintf("[면제 대상: %s]", strings.Join(c.Teacher.ExemptReasons, ", "))
+		allReasons := append([]string(nil), c.Teacher.ExemptReasons...)
+		allReasons = append(allReasons, catReasons...)
+		return fmt.Sprintf("[면제/제외: %s]", strings.Join(allReasons, ", "))
 	}
 	if c.IsVolunteer {
-		return fmt.Sprintf("[1순위: 자발적 지원 · 누적 %d회]", c.Teacher.ExternalExamCount)
+		return fmt.Sprintf("[1순위: 자발적 지원 · %s]", scoreInfo)
+	}
+	if c.IsGracePeriod {
+		return fmt.Sprintf("[전입 1년차 유예: %s 전입 · %s]", c.Teacher.TransferDate, scoreInfo)
 	}
 	lastTxt := "미파견"
 	if c.Teacher.LastExternalDispatch != "" {
 		lastTxt = fmt.Sprintf("최근 %s (%d일 경과)", c.Teacher.LastExternalDispatch, c.DaysSinceLast)
 	}
-	return fmt.Sprintf("[차출후보 %d번: %s 전입 · 누적 %d회 · %s]", draftSeq, c.Teacher.TransferDate, c.Teacher.ExternalExamCount, lastTxt)
+	return fmt.Sprintf("[차출후보 %d번: %s 전입 · %s · %s]", draftSeq, c.Teacher.TransferDate, scoreInfo, lastTxt)
 }

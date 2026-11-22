@@ -72,6 +72,8 @@ func (a *ServerApp) buildExamPrintHTML(schoolName string, isExamAdmin bool) stri
 			return "복도감독"
 		case "HONORARY":
 			return "학부모명예"
+		case "STUDY_HALL":
+			return "공강자습"
 		default:
 			return r
 		}

@@ -182,7 +182,8 @@ func (s *Service) GenerateAndSave(cfg protocol.ExamConfig, specs []ExamPeriodSpe
 		return nil, err
 	}
 	unavailByDate := buildUnavailableByDate(s.store, cfg.ExamDates)
-	slots := AssignSlotsMultiDay(cfg, specs, teachers, unavailByDate)
+	gradeSubjectTeachers := buildGradeSubjectTeacherMap(s.store)
+	slots := AssignSlotsMultiDayWithContext(cfg, specs, teachers, unavailByDate, gradeSubjectTeachers)
 
 	if err := s.store.WithTx(func(tx *database.TxStore) error {
 		if cErr := tx.ClearCollections("exam_specs", "exam_configs", "exam_slots"); cErr != nil {

@@ -77,12 +77,14 @@ func canTeacherFitSlot(
 	if isUnavailableOnDate(unavailByDate, sl.ExamDate, t.ID) {
 		return false
 	}
-	if sl.SlotRole == "CORRIDOR" {
+	if sl.SlotRole == "CORRIDOR" || sl.SlotRole == "STUDY_HALL" {
 		if !allowSubjectCorridor {
 			return false
 		}
-		if curT, ok := tByID[sl.TeacherID]; ok && roomOrSpecMatchesTeacherSubject("", sl.Subject, curT.Subject) {
-			return roomOrSpecMatchesTeacherSubject("", sl.Subject, t.Subject)
+		if sl.SlotRole == "CORRIDOR" {
+			if curT, ok := tByID[sl.TeacherID]; ok && roomOrSpecMatchesTeacherSubject("", sl.Subject, curT.Subject) {
+				return roomOrSpecMatchesTeacherSubject("", sl.Subject, t.Subject)
+			}
 		}
 		return true
 	}
@@ -142,21 +144,40 @@ type slotUsageMaps struct {
 	usedPerPeriod map[string]map[string]bool
 	dailyPeriods  map[string]map[string]map[int]bool
 	dailyCount    map[string]map[string]int
+	currentCount  map[string]int
+	roomHistory   map[string]map[string]bool
 }
 
-func buildSlotUsageMaps(slots []protocol.ExamSlot) *slotUsageMaps {
-	u := &slotUsageMaps{
+func newSlotUsageMaps() *slotUsageMaps {
+	return &slotUsageMaps{
 		usedPerPeriod: make(map[string]map[string]bool),
 		dailyPeriods:  make(map[string]map[string]map[int]bool),
 		dailyCount:    make(map[string]map[string]int),
+		currentCount:  make(map[string]int),
+		roomHistory:   make(map[string]map[string]bool),
 	}
+}
+
+func buildSlotUsageMaps(slots []protocol.ExamSlot) *slotUsageMaps {
+	u := newSlotUsageMaps()
 	for _, sl := range slots {
-		u.mark(sl.TeacherID, sl.ExamDate, sl.Period, true)
+		u.markWithRoom(sl.TeacherID, sl.ExamDate, sl.Period, sl.RoomName, true)
 	}
 	return u
 }
 
+func (u *slotUsageMaps) hasVisitedRoom(teacherID, baseClass string) bool {
+	if baseClass == "" || u.roomHistory[teacherID] == nil {
+		return false
+	}
+	return u.roomHistory[teacherID][strings.TrimSpace(baseClass)]
+}
+
 func (u *slotUsageMaps) mark(teacherID, date string, period int, add bool) {
+	u.markWithRoom(teacherID, date, period, "", add)
+}
+
+func (u *slotUsageMaps) markWithRoom(teacherID, date string, period int, roomName string, add bool) {
 	if teacherID == "" {
 		return
 	}
@@ -177,11 +198,21 @@ func (u *slotUsageMaps) mark(teacherID, date string, period int, add bool) {
 		u.usedPerPeriod[pk][teacherID] = true
 		u.dailyPeriods[date][teacherID][period] = true
 		u.dailyCount[date][teacherID]++
+		u.currentCount[teacherID]++
+		if bc := extractRoomBaseClass(roomName); bc != "" {
+			if u.roomHistory[teacherID] == nil {
+				u.roomHistory[teacherID] = make(map[string]bool)
+			}
+			u.roomHistory[teacherID][bc] = true
+		}
 	} else {
 		u.usedPerPeriod[pk][teacherID] = false
 		u.dailyPeriods[date][teacherID][period] = false
 		if u.dailyCount[date][teacherID] > 0 {
 			u.dailyCount[date][teacherID]--
+		}
+		if u.currentCount[teacherID] > 0 {
+			u.currentCount[teacherID]--
 		}
 	}
 }
@@ -251,6 +282,10 @@ func resolveConsecutivePairs(
 						!canTeacherFitSlot(oldT, slots[j], true, tByID, unavailByDate) {
 						continue
 					}
+					if (otherT.ExamMaxCount > 0 && usage.currentCount[otherID] >= otherT.ExamMaxCount) ||
+						(oldT.ExamMaxCount > 0 && usage.currentCount[oldID] >= oldT.ExamMaxCount) {
+						// 맞교환은 currentCount 변동 없음
+					}
 					exclOld := -1
 					exclOther := -1
 					if d1 == d2 {
@@ -301,6 +336,9 @@ func resolveConsecutivePairs(
 					continue
 				}
 				if maxDaily > 0 && usage.dailyCount[d1][cand.ID] >= maxDaily {
+					continue
+				}
+				if cand.ExamMaxCount > 0 && usage.currentCount[cand.ID] >= cand.ExamMaxCount {
 					continue
 				}
 				if isConsecutivePeriod(usage.dailyPeriods[d1][cand.ID], p1) {

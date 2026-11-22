@@ -23,14 +23,33 @@ func buildUnavailableTeachersForDate(store *database.Store, dateStr string) map[
 
 // buildUnavailableByDate는 다중일 지필고사 전 기간에 대해 일자별(YYYY-MM-DD) 부재 교사 사유 맵을 일괄 구성합니다.
 func buildUnavailableByDate(store *database.Store, dates []string) map[string]map[string]string {
-	result := make(map[string]map[string]string)
 	if store == nil {
-		return result
+		return map[string]map[string]string{}
 	}
 	teachers, _ := database.LoadCollection[protocol.Teacher](store, "teachers")
 	extNotices, _ := database.LoadCollection[protocol.ExternalExamNotice](store, "external_exams")
 	events, _ := database.LoadCollection[protocol.SchoolEvent](store, "school_events")
+	return buildUnavailableFromData(teachers, extNotices, events, dates)
+}
 
+// buildUnavailableByDateTx는 트랜잭션 내부에서 Store 락 데드락 없이 일자별 부재 교사 사유 맵을 구성합니다.
+func buildUnavailableByDateTx(tx *database.TxStore, dates []string) map[string]map[string]string {
+	if tx == nil {
+		return map[string]map[string]string{}
+	}
+	teachers, _ := database.LoadCollectionTx[protocol.Teacher](tx, "teachers")
+	extNotices, _ := database.LoadCollectionTx[protocol.ExternalExamNotice](tx, "external_exams")
+	events, _ := database.LoadCollectionTx[protocol.SchoolEvent](tx, "school_events")
+	return buildUnavailableFromData(teachers, extNotices, events, dates)
+}
+
+func buildUnavailableFromData(
+	teachers []protocol.Teacher,
+	extNotices []protocol.ExternalExamNotice,
+	events []protocol.SchoolEvent,
+	dates []string,
+) map[string]map[string]string {
+	result := make(map[string]map[string]string)
 	for _, rawDate := range dates {
 		trimmed := strings.TrimSpace(rawDate)
 		if trimmed == "" {
@@ -104,20 +123,24 @@ func validateSubstituteTeacher(
 		return fmt.Errorf("%s 선생님은 시험일(%s)에 배정 불가 상태입니다: %s", newT.Name, target.ExamDate, rsn)
 	}
 	for _, sl := range allSlots {
-		if sl.ID == target.ID || sl.Period != target.Period {
+		if sl.ID == target.ID {
 			continue
 		}
 		if target.ExamDate == "" || sl.ExamDate == "" || sl.ExamDate == target.ExamDate {
-			if sl.TeacherID == newT.ID {
+			if sl.Period == target.Period && sl.TeacherID == newT.ID {
 				return fmt.Errorf("%s 선생님은 동일 교시(%d교시)에 이미 '%s' 감독이 배정되어 있습니다", newT.Name, sl.Period, sl.RoomName)
+			}
+			if newT.ExamNoConsecutive && sl.TeacherID == newT.ID && (sl.Period == target.Period-1 || sl.Period == target.Period+1) {
+				return fmt.Errorf("%s 선생님은 연강(연속 교시) 감독 절대 금지 대상입니다", newT.Name)
 			}
 		}
 	}
 	roomPrefix := extractRoomBaseClass(target.RoomName)
-	if target.SlotRole != "CORRIDOR" && roomPrefix != "" && strings.EqualFold(strings.TrimSpace(newT.HomeroomClass), roomPrefix) {
+	nonRoomRole := target.SlotRole == "CORRIDOR" || target.SlotRole == "STUDY_HALL"
+	if !nonRoomRole && roomPrefix != "" && strings.EqualFold(strings.TrimSpace(newT.HomeroomClass), roomPrefix) {
 		return fmt.Errorf("담임교사(%s)는 본인 학급(%s) 고사장에 배정할 수 없습니다", newT.Name, roomPrefix)
 	}
-	if !isSpecialCand && target.SlotRole != "CORRIDOR" && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, newT.Subject) {
+	if !isSpecialCand && !nonRoomRole && roomOrSpecMatchesTeacherSubject(target.RoomName, target.Subject, newT.Subject) {
 		return fmt.Errorf("시험 과목(%s) 담당교사(%s)는 고사장 감독으로 배정할 수 없습니다", target.Subject, newT.Name)
 	}
 	return nil
