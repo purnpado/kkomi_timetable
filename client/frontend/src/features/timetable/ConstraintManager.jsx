@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layers, PlusCircle, ShieldAlert, Trash2, Users } from "lucide-react";
 import { apiFetch, isFacultyTeacher } from "../../events/eventStore";
+import { FoldCard } from "../../components/ui/SmartVisualKit";
+import ConstraintHeatmap from "./ConstraintHeatmap";
 
 const DAYS = [
   { value: 0, label: "전체 요일" },
@@ -131,103 +133,123 @@ export default function ConstraintManager({ serverUrl, user, teachers, onRefresh
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div className="grid-2">
-        <div className="card">
-          <h3 style={{ margin: "0 0 10px", fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
-            <ShieldAlert size={16} /> 개별 교사 공강 · 기피 교시 설정
-          </h3>
-          <form onSubmit={handleSaveSingle} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div className="grid-2">
-              <select className="select" value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
-                {regularTeachers.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.subject || "교과"})
-                  </option>
-                ))}
-              </select>
-              <select className="select" value={constraintType} onChange={(e) => setConstraintType(e.target.value)}>
-                <option value="HARD_AVOID">절대 금지 (Hard)</option>
-                <option value="MEETING_FREE">회의 공강 (Hard)</option>
-                <option value="SOFT_AVOID">기피 교시 (Soft)</option>
-              </select>
-            </div>
-            <div className="grid-2">
-              <select className="select" value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
-                {DAYS.map((d) => (
-                  <option key={d.value} value={d.value}>{d.label}</option>
-                ))}
-              </select>
-              <select className="select" value={period} onChange={(e) => setPeriod(Number(e.target.value))}>
-                {PERIODS.map((p) => (
-                  <option key={p} value={p}>{p === 0 ? "종일 (1~7교시)" : `${p}교시`}</option>
-                ))}
-              </select>
-            </div>
-            <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="사유 (예: 연구년, 보건실, 1교시 희망 공강)" />
-            <button type="submit" className="btn btn-primary" style={{ alignSelf: "flex-start" }}>
-              <PlusCircle size={15} /> 제약 조건 저장
-            </button>
-          </form>
-        </div>
+      <ConstraintHeatmap
+        serverUrl={serverUrl}
+        user={user}
+        regularTeachers={regularTeachers}
+        constraints={constraints}
+        filterTeacherId={filterTeacherId}
+        onFilterChange={setFilterTeacherId}
+        onReload={async () => {
+          await loadConstraints();
+          onRefresh?.();
+        }}
+        onNotify={onNotify}
+      />
 
-        <div className="card">
-          <h3 style={{ margin: "0 0 10px", fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
-            <Users size={16} /> 부장회의 · 교과협의회 고정 공강 일괄 등록
-          </h3>
-          <form onSubmit={handleSaveBatch} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div className="grid-2">
-              <select className="select" value={targetScope} onChange={(e) => setTargetScope(e.target.value)}>
-                <option value="DEPT_HEADS">부장교사 전체 (부장회의)</option>
-                <option value="SUBJECT">특정 교과 교사 전체 (교과협의회)</option>
-                <option value="TEACHERS">선택한 교사 묶음</option>
-              </select>
-              <select className="select" value={batchType} onChange={(e) => setBatchType(e.target.value)}>
-                <option value="MEETING_FREE">회의 공강 (절대 차단)</option>
-                <option value="HARD_AVOID">절대 금지 (Hard)</option>
-                <option value="SOFT_AVOID">기피 교시 (Soft)</option>
-              </select>
-            </div>
-            {targetScope === "SUBJECT" && (
-              <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="교과명 입력 (예: 영어, 수학, 과학)" />
-            )}
-            {targetScope === "TEACHERS" && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 78, overflowY: "auto", padding: 6, border: "1px solid #e2e8f0", borderRadius: 6 }}>
-                {regularTeachers.map((t) => {
-                  const checked = selectedTeacherIds.includes(t.id);
-                  return (
-                    <label key={t.id} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 3 }}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) =>
-                          setSelectedTeacherIds((prev) => (e.target.checked ? [...prev, t.id] : prev.filter((x) => x !== t.id)))
-                        }
-                      />
-                      {t.name}
-                    </label>
-                  );
-                })}
+      <FoldCard
+        title="개별 · 그룹(부장회의/교과협의회) 공강 제약 상세 입력"
+        badge={`총 ${constraints.length}건`}
+        defaultOpen={false}
+      >
+        <div className="grid-2">
+          <div style={{ padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-alt)" }}>
+            <h4 style={{ margin: "0 0 10px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+              <ShieldAlert size={15} /> 개별 교사 공강 · 기피 교시 설정
+            </h4>
+            <form onSubmit={handleSaveSingle} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="grid-2">
+                <select className="select" value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
+                  {regularTeachers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.subject || "교과"})
+                    </option>
+                  ))}
+                </select>
+                <select className="select" value={constraintType} onChange={(e) => setConstraintType(e.target.value)}>
+                  <option value="HARD_AVOID">절대 금지 (Hard)</option>
+                  <option value="MEETING_FREE">회의 공강 (Hard)</option>
+                  <option value="SOFT_AVOID">기피 교시 (Soft)</option>
+                </select>
               </div>
-            )}
-            <div className="grid-2">
-              <select className="select" value={batchDay} onChange={(e) => setBatchDay(Number(e.target.value))}>
-                {DAYS.map((d) => (
-                  <option key={d.value} value={d.value}>{d.label}</option>
-                ))}
-              </select>
-              <select className="select" value={batchPeriod} onChange={(e) => setBatchPeriod(Number(e.target.value))}>
-                {PERIODS.map((p) => (
-                  <option key={p} value={p}>{p === 0 ? "종일 (1~7교시)" : `${p}교시`}</option>
-                ))}
-              </select>
-            </div>
-            <input className="input" value={batchReason} onChange={(e) => setBatchReason(e.target.value)} placeholder="회의·협의회 명칭" />
-            <button type="submit" className="btn btn-green" style={{ alignSelf: "flex-start" }}>
-              <Layers size={15} /> 일괄 고정 공강 적용
-            </button>
-          </form>
+              <div className="grid-2">
+                <select className="select" value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
+                  {DAYS.map((d) => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
+                </select>
+                <select className="select" value={period} onChange={(e) => setPeriod(Number(e.target.value))}>
+                  {PERIODS.map((p) => (
+                    <option key={p} value={p}>{p === 0 ? "종일 (1~7교시)" : `${p}교시`}</option>
+                  ))}
+                </select>
+              </div>
+              <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="사유 (예: 연구년, 보건실, 1교시 희망 공강)" />
+              <button type="submit" className="btn btn-primary" style={{ alignSelf: "flex-start" }}>
+                <PlusCircle size={15} /> 제약 조건 저장
+              </button>
+            </form>
+          </div>
+
+          <div style={{ padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-alt)" }}>
+            <h4 style={{ margin: "0 0 10px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+              <Users size={15} /> 부장회의 · 교과협의회 고정 공강 일괄 등록
+            </h4>
+            <form onSubmit={handleSaveBatch} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="grid-2">
+                <select className="select" value={targetScope} onChange={(e) => setTargetScope(e.target.value)}>
+                  <option value="DEPT_HEADS">부장교사 전체 (부장회의)</option>
+                  <option value="SUBJECT">특정 교과 교사 전체 (교과협의회)</option>
+                  <option value="TEACHERS">선택한 교사 묶음</option>
+                </select>
+                <select className="select" value={batchType} onChange={(e) => setBatchType(e.target.value)}>
+                  <option value="MEETING_FREE">회의 공강 (절대 차단)</option>
+                  <option value="HARD_AVOID">절대 금지 (Hard)</option>
+                  <option value="SOFT_AVOID">기피 교시 (Soft)</option>
+                </select>
+              </div>
+              {targetScope === "SUBJECT" && (
+                <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="교과명 입력 (예: 영어, 수학, 과학)" />
+              )}
+              {targetScope === "TEACHERS" && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 78, overflowY: "auto", padding: 6, border: "1px solid #e2e8f0", borderRadius: 6 }}>
+                  {regularTeachers.map((t) => {
+                    const checked = selectedTeacherIds.includes(t.id);
+                    return (
+                      <label key={t.id} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 3 }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setSelectedTeacherIds((prev) => (e.target.checked ? [...prev, t.id] : prev.filter((x) => x !== t.id)))
+                          }
+                        />
+                        {t.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="grid-2">
+                <select className="select" value={batchDay} onChange={(e) => setBatchDay(Number(e.target.value))}>
+                  {DAYS.map((d) => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
+                </select>
+                <select className="select" value={batchPeriod} onChange={(e) => setBatchPeriod(Number(e.target.value))}>
+                  {PERIODS.map((p) => (
+                    <option key={p} value={p}>{p === 0 ? "종일 (1~7교시)" : `${p}교시`}</option>
+                  ))}
+                </select>
+              </div>
+              <input className="input" value={batchReason} onChange={(e) => setBatchReason(e.target.value)} placeholder="회의·협의회 명칭" />
+              <button type="submit" className="btn btn-green" style={{ alignSelf: "flex-start" }}>
+                <Layers size={15} /> 일괄 고정 공강 적용
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
+      </FoldCard>
 
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>

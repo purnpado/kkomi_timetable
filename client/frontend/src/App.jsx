@@ -268,7 +268,7 @@ export default function App() {
       <div className="app-shell">
         <aside className="sidebar no-print">
           <div className="brand-box">
-            <div className="brand-logo">🐾</div>
+            <div className="brand-logo"><CalendarDays size={20} color="#ffffff" /></div>
             <div>
               <div style={{ fontWeight: 800, fontSize: 16 }}>꼬미시간</div>
               <div style={{ fontSize: 11, color: "#93c5fd" }}>v{summary?.serverVersion || "0.1.01"} · 교무 통합</div>

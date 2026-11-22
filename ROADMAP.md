@@ -118,11 +118,11 @@
    - [x] 다일 연속 행사(`EndDate` · `event_helpers.go`) 및 공휴일·재량휴업일·개교기념일(`EventLinkHoliday`) 지원(학기 필수 시수 원장 `ledger.go` 자동 차감 및 교사 결강 부채 미생성 · `multiweek.go`/`solver.go` 휴업일 블록 연동)
    - [x] 단축수업(`40분`/`45분`/오전행사) 시종시간 변경(`BellOverride` · `DefaultBellPresets`) 원클릭 프리셋 UI 연결 (`CalendarEventForm.jsx` · `/api/calendar/bell-presets`)
    - [x] 전교/복수 학년/특정 반 및 복수 인솔교사 선택, 행사 장소(강당·시청각실 등)·동일 학년 교시 충돌 경고(`DetectConflicts` · `/api/calendar/conflicts`), 행사 수정(`UpdateEvent`)·삭제·부서별 필터·매주/매월 반복 일정(`expandRecurrencePairs`)
-5. **[5단계] 전 페이지 UI/UX 스마트 시각화 (`방식 ①: Radix UI 확장 + 데이터 시각화`):** *(다음 착수 대상)*
-   - `@radix-ui/react-switch`, `collapsible`, `popover`, `progress` 추가 적용 및 이모지 → Lucide SVG/상태 도트 통일
-   - 긴 설명문/상시 노출 폼 다이어트(접이식/모달 등록), 반응형 `TimetableCanvas`, 대시보드 현재 교시 타임라인 바
-   - 클릭형 5×7 공강 히트맵(`ConstraintManager`), 학급 시수 게이지(`CurriculumLoadManager`), 정/부/복도 스택드 막대 차트(`ExamFairnessPanel`), D-Day 모집 카드(`ExternalExamView`), 월별 SVG 막대 차트·인라인 데이터 바(`ReportsSettlementView`), 시스템 관리 4탭·권한 체크 매트릭스(`AdminRemoteView`)
-6. **[6단계] `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환 (`방식 A`):**
+5. **[5단계] 전 페이지 UI/UX 스마트 시각화 (`방식 ①: Radix UI 확장 + 데이터 시각화`):** *(구현 완료)*
+   - [x] `@radix-ui/react-switch`, `collapsible`, `popover`, `progress` 추가 적용 및 공용 스마트 시각화 키트 구축(`SmartVisualKit.jsx`: `StatusDot`·`HelpTip`·`FoldCard`·`SwitchToggle`·`ProgressBar`·`AlertBox`, `radix.css`) · 전 화면 이모지 → Lucide SVG/상태 도트 통일(`TopBar.jsx`·`ToastHub.jsx`·`SideDockWidget.jsx`·`LoginView.jsx`·`App.jsx`)
+   - [x] 긴 설명문/상시 노출 폼 다이어트(`FoldCard` 접이식 폼), `ResizeObserver` 기반 반응형 `TimetableCanvas`, 대시보드 현재 교시 타임라인 바(`DashboardView.jsx`)
+   - [x] 클릭형 5×7 공강 히트맵(`ConstraintHeatmap.jsx`·`ConstraintManager.jsx`), 학급 시수 게이지(`CurriculumLoadManager.jsx`), 정/부/복도 스택드 막대 차트(`ExamFairnessPanel.jsx`), D-Day 모집 카드(`ExternalExamView.jsx`), 월별 SVG 막대 차트·인라인 데이터 바(`ReportsCharts.jsx`·`ReportsSettlementView.jsx`), 시스템 관리 4탭·권한 체크 매트릭스(`RoleMatrixPanel.jsx`·`AdminRemoteView.jsx`)
+6. **[6단계] `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환 (`방식 A`):** *(다음 착수 대상)*
    - CMD 콘솔 창 대신 전용 미니 상태 대시보드(520×640px) + 닫기(`X`) 클릭 시 시스템 트레이 최소화(실수 종료 차단)
    - 최초 포터블 MariaDB 초기화 진행률/경과 시간 화면, 원클릭 LAN 접속 주소 복사, 실시간 접속 교사 수, 즉시 암호화 백업/폴더 열기/로그 접이식 뷰어 제공 (`--headless`, `--seed-demo`, `--init-template` CLI 플래그 호환 유지)
 

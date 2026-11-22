@@ -1,5 +1,5 @@
 import React from "react";
-import { Clock, Maximize2, Shield } from "lucide-react";
+import { CalendarDays, Clock, Maximize2, Shield } from "lucide-react";
 import { formatUserDisplayName } from "../../events/eventStore";
 
 // SideDockWidget은 화면 우측 가장자리에 폭 260px대로 고정되는 세로 타임라인 위젯 뷰입니다.
@@ -11,7 +11,9 @@ export default function SideDockWidget({ user, summary, onRestoreFull }) {
     <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, height: "100vh", overflowY: "auto", background: "#f8fafc" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #cbd5e1", paddingBottom: 8 }}>
         <div>
-          <div style={{ fontWeight: 800, fontSize: 14, color: "#1e293b" }}>🐾 꼬미시간 위젯</div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#1e293b", display: "flex", alignItems: "center", gap: 5 }}>
+            <CalendarDays size={15} color="#3b5bdb" /> 꼬미시간 위젯
+          </div>
           <div style={{ fontSize: 11.5, color: "#64748b" }}>{formatUserDisplayName(user)} · {summary?.todayDate}</div>
         </div>
         <button className="btn btn-sm btn-primary" onClick={onRestoreFull} title="전체 대시보드 창으로 복원">

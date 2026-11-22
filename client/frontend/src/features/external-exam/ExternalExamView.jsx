@@ -3,8 +3,23 @@ import { CheckCircle2, Edit3, FileSpreadsheet, HandHeart, Plus, Settings2, Trash
 import { apiFetch, hasRole } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import { FoldCard, ProgressBar, StatusDot } from "../../components/ui/SmartVisualKit";
 import ExternalExamRulePanel from "./ExternalExamRulePanel";
 import ExternalExamConfigModal from "./ExternalExamConfigModal";
+
+function dDayBadge(examDate) {
+  if (!examDate) return { label: "일정미정", badgeClass: "badge-gray" };
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const parts = String(examDate).split("-").map(Number);
+  if (parts.length !== 3 || !parts[0]) return { label: examDate, badgeClass: "badge-gray" };
+  const target = new Date(parts[0], parts[1] - 1, parts[2]);
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (diffDays === 0) return { label: "D-Day", badgeClass: "badge-red" };
+  if (diffDays > 0 && diffDays <= 7) return { label: `D-${diffDays}`, badgeClass: "badge-amber" };
+  if (diffDays > 7) return { label: `D-${diffDays}`, badgeClass: "badge-blue" };
+  return { label: "종료", badgeClass: "badge-gray" };
+}
 
 // ExternalExamView는 대외 시험감독 공고 관리, 학교 기본 내규 프리셋, 가중치/별도 트랙 차출 조합기 및 파견 확정을 제공합니다.
 // 실무 요구사항에 따라 계좌번호/은행명/수당 정산 기능은 포함하지 않습니다.
@@ -174,37 +189,75 @@ export default function ExternalExamView({ serverUrl, user, onNotify, onRefresh 
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
-          {notices.map((n) => (
-            <div key={n.id} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <button
-                className={`btn btn-sm ${n.id === activeId ? "btn-primary" : ""}`}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(235px, 1fr))", gap: 10, marginTop: 14 }}>
+          {notices.map((n) => {
+            const dday = dDayBadge(n.examDate);
+            const volCount = n.volunteerIds?.length || 0;
+            const reqCount = Math.max(1, n.requiredCount || 1);
+            const active = n.id === activeId;
+            return (
+              <div
+                key={n.id}
                 onClick={() => { setActiveId(n.id); loadCandidates(n.id); }}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: active ? "2px solid var(--primary)" : "1px solid var(--border)",
+                  background: active ? "#f8faff" : "#ffffff",
+                  cursor: "pointer",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
               >
-                [{n.examCategory || "기타"}] {n.title} ({n.examDate}) {n.isConfirmed ? "✅확정" : ""}
-              </button>
-              {isExtAdmin && (
-                <>
-                  <button type="button" className="btn btn-sm" title="공고 수정" onClick={() => setEditNotice(n)}><Edit3 size={12} /></button>
-                  <button type="button" className="btn btn-sm btn-danger" title="공고 삭제" onClick={() => setDeleteTarget(n)}><Trash2 size={12} /></button>
-                </>
-              )}
-            </div>
-          ))}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                    <span className={`badge ${dday.badgeClass}`} style={{ fontVariantNumeric: "tabular-nums" }}>{dday.label}</span>
+                    <span className="badge badge-gray">{n.examCategory || "기타"}</span>
+                  </div>
+                  <span className={`badge ${n.isConfirmed ? "badge-green" : "badge-amber"}`}>
+                    <StatusDot tone={n.isConfirmed ? "green" : "amber"} label={n.isConfirmed ? "파견 확정" : "모집 중"} />
+                  </span>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{n.title}</div>
+                  <div style={{ fontSize: 12, color: "#64748b", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                    {n.examDate} · {n.location || "관내 시험장"}
+                  </div>
+                </div>
+                <ProgressBar
+                  value={volCount}
+                  max={reqCount}
+                  tone={volCount >= reqCount ? "green" : "blue"}
+                  label={`지원 ${volCount} / 필요 ${reqCount}명`}
+                  showPct
+                  height={6}
+                />
+                {isExtAdmin && (
+                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="btn btn-sm" title="공고 수정" onClick={() => setEditNotice(n)}><Edit3 size={12} /> 수정</button>
+                    <button type="button" className="btn btn-sm btn-danger" title="공고 삭제" onClick={() => setDeleteTarget(n)}><Trash2 size={12} /> 삭제</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+      </div>
 
-        {isExtAdmin && (
-          <form onSubmit={handleCreateNotice} style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+      {isExtAdmin && (
+        <FoldCard title="신규 대외 시험 공고 등록" badge={`총 ${notices.length}건`} defaultOpen={false}>
+          <form onSubmit={handleCreateNotice} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <select className="select" style={{ width: 135 }} value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
               {categories.map((cat) => <option key={cat.name} value={cat.name}>{cat.name}</option>)}
             </select>
             <input className="input" style={{ width: 240 }} value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="신규 대외 시험 공고명 (예: 검정고시)" />
             <input className="input" style={{ width: 145 }} type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
             <input className="input" style={{ width: 72 }} type="number" min={1} max={50} value={newRequired} onChange={(e) => setNewRequired(e.target.value)} title="차출 인원" />
-            <button type="submit" className="btn btn-sm"><Plus size={14} /> 공고 등록</button>
+            <button type="submit" className="btn btn-sm btn-primary"><Plus size={14} /> 공고 등록</button>
           </form>
-        )}
-      </div>
+        </FoldCard>
+      )}
 
       {selectedNotice && (
         <div className="card">

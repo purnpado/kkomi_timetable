@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Building2, CheckCircle2, Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { apiFetch, hasRegularClasses, isFacultyTeacher } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
+import { FoldCard, HelpTip, ProgressBar, SwitchToggle } from "../../components/ui/SmartVisualKit";
 import CurriculumDiagnosticsBox from "./CurriculumDiagnosticsBox";
 
 const DAY_LABELS = [
@@ -227,17 +228,18 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
 
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <h3 style={{ margin: 0, fontSize: 15 }}>
-              <Building2 size={15} style={{ verticalAlign: "middle" }} /> 2. 교과교실제 On/Off · 특별실(동시수용)
-            </h3>
-            <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <input
-                type="checkbox"
-                checked={config.subjectClassroomMode !== false}
-                onChange={(e) => setConfig({ ...config, subjectClassroomMode: e.target.checked })}
+            <h3 style={{ margin: 0, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
+              <Building2 size={15} /> 2. 교과교실제 · 특별실(동시수용)
+              <HelpTip
+                label="교과교실제 안내"
+                text="교과교실제를 켜면 체육관·과학실 등 특별실 동시 수용 한도까지 시간표 중복을 차단하고, 끄면 일반 학급교실 기준으로 자유롭게 편성합니다."
               />
-              교과교실제 활성화
-            </label>
+            </h3>
+            <SwitchToggle
+              checked={config.subjectClassroomMode !== false}
+              onCheckedChange={(checked) => setConfig({ ...config, subjectClassroomMode: checked })}
+              label="교과교실제 활성화"
+            />
           </div>
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
             <input className="input" placeholder="강의실명 (예: 체육관)" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} />
@@ -309,21 +311,30 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
               </button>
             </div>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {(summary.classStatuses || []).map((cs) => (
-              <span key={cs.className} className={`badge ${cs.status === "MATCH" ? "badge-green" : cs.status === "SHORT" ? "badge-amber" : "badge-red"}`}>
-                {cs.className}반: {cs.assignedHours}/{cs.requiredHours}시간 ({cs.status === "MATCH" ? "일치" : cs.status === "SHORT" ? "부족" : "초과"})
-              </span>
-            ))}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 8 }}>
+            {(summary.classStatuses || []).map((cs) => {
+              const tone = cs.status === "MATCH" ? "green" : cs.status === "SHORT" ? "amber" : "red";
+              const statusText = cs.status === "MATCH" ? "일치" : cs.status === "SHORT" ? "부족" : "초과";
+              return (
+                <div key={cs.className} style={{ padding: 9, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-alt)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <b style={{ fontSize: 12.5 }}>{cs.className}반</b>
+                    <span className={`badge badge-${tone}`} style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {cs.assignedHours}/{cs.requiredHours}시간 ({statusText})
+                    </span>
+                  </div>
+                  <ProgressBar value={cs.assignedHours} max={cs.requiredHours} tone={tone} showPct={false} height={6} />
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
       <CurriculumDiagnosticsBox report={autoGenReport} />
 
-      <div className="card">
-        <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>3. 교사별 · 학급별 시수표 등록부 추가 및 현황</h3>
-        <form onSubmit={handleSaveLoad} style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "#f8fafc", borderRadius: 10, marginBottom: 14 }}>
+      <FoldCard title="3. 교사별 · 학급별 시수표 등록부 추가" badge={`총 ${loads.length}건`} defaultOpen={false}>
+        <form onSubmit={handleSaveLoad} style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "#f8fafc", borderRadius: 10 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
             <select className="select" value={formGrade} onChange={(e) => setFormGrade(Number(e.target.value))}>
               {[1, 2, 3].map((g) => <option key={g} value={g}>{g}학년</option>)}
@@ -366,7 +377,7 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
                       setFormCoTeacherIds(picked ? formCoTeacherIds.filter((x) => x !== t.id) : [...formCoTeacherIds, t.id])
                     }
                   >
-                    {picked ? "✓ " : "+ "}
+                    {picked ? "선택 · " : "+ "}
                     {t.name}
                   </button>
                 );
@@ -393,7 +404,10 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
             </button>
           </div>
         </form>
+      </FoldCard>
 
+      <div className="card">
+        <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>4. 등록된 과목별 시수 현황</h3>
         <div style={{ maxHeight: 280, overflowY: "auto" }}>
           <table className="table">
             <thead>

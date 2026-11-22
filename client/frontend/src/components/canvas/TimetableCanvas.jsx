@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Copy, Download } from "lucide-react";
+import { StatusDot } from "../ui/SmartVisualKit";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
@@ -25,10 +26,25 @@ function formatHeaderMD(weekStart, dayIdx) {
 // TimetableCanvas는 HTML5 Canvas 60fps 기반 HiDPI 시간표 그리드입니다.
 // 과목별 컬러 코딩, 교시별 일과시간·주차별 날짜 표시, 드래그 고스트 및 신호등 가이드를 제공합니다.
 export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [], filterClass, weekStart = "", onSelectCell, onEvaluateDrop, onRequestCommit }) {
+  const wrapperRef = useRef(null);
   const canvasRef = useRef(null);
+  const [canvasWidth, setCanvasWidth] = useState(860);
   const [hoverInfo, setHoverInfo] = useState(null);
   const [dragState, setDragState] = useState(null); // { sourceCell, x, y, targetDay, targetPeriod, evalResult }
   const [copyMsg, setCopyMsg] = useState("");
+
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const syncWidth = () => {
+      const w = Math.floor(el.getBoundingClientRect().width) - 2;
+      if (w > 0) setCanvasWidth(Math.max(640, Math.min(1120, w)));
+    };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const visibleCells = (cells || []).filter((c) => !filterClass || filterClass === "ALL" || c.className === filterClass);
 
@@ -38,7 +54,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
-    const width = 860;
+    const width = canvasWidth;
     const height = 470;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
@@ -132,11 +148,12 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
           const subLine = cell.blockedBy
             ? `행사블록: ${cell.blockedBy}`
             : `${cell.className} · ${tName}${isSpecialRoom ? ` (${cell.room})` : ""}`;
-          ctx.fillText(subLine.slice(0, 21), x + 10, y + 37);
+    const subMaxChars = Math.max(16, Math.floor((colW - 18) / 7.5));
+          ctx.fillText(subLine.slice(0, subMaxChars), x + 10, y + 37);
           if (cell.changeNote) {
             ctx.fillStyle = "#b86e00";
             ctx.font = "bold 10px Pretendard, sans-serif";
-            ctx.fillText(cell.changeNote.slice(0, 24), x + 10, y + 52);
+            ctx.fillText(cell.changeNote.slice(0, subMaxChars + 3), x + 10, y + 52);
           } else if (cell.coTeacherId || (cell.coTeacherIds && cell.coTeacherIds.length > 0) || cell.electiveGroup || cell.blockGroupID) {
             ctx.fillStyle = "#5f3dc4";
             ctx.font = "10.5px Pretendard, sans-serif";
@@ -146,7 +163,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
               : cell.blockGroupID
                 ? `연강블록${coCount > 0 ? ` · 코티칭${coCount + 1}인` : ""}`
                 : `코티칭 ${coCount + 1}인 수업`;
-            ctx.fillText(tag.slice(0, 24), x + 10, y + 52);
+            ctx.fillText(tag.slice(0, subMaxChars + 3), x + 10, y + 52);
           }
         }
       });
@@ -164,7 +181,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
       ctx.fillText(`${dragState.sourceCell.subject} (${dragState.sourceCell.className})`, dragState.x, dragState.y + 4);
       ctx.restore();
     }
-  }, [visibleCells, hoverInfo, dragState, teachersMap, bellSchedule, weekStart]);
+  }, [visibleCells, hoverInfo, dragState, teachersMap, bellSchedule, weekStart, canvasWidth]);
 
   const coordToSlot = (clientX, clientY) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -172,7 +189,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
     const y = clientY - rect.top;
     const headerW = 96;
     const headerH = 38;
-    const colW = (860 - headerW) / 5;
+    const colW = (canvasWidth - headerW) / 5;
     const rowH = (470 - headerH) / 7;
     if (x < headerW || y < headerH) return { x, y, day: 0, period: 0 };
     const day = Math.min(5, Math.max(1, Math.floor((x - headerW) / colW) + 1));
@@ -238,10 +255,10 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-          <span className="badge badge-green">🟢 이동/맞교환 가능</span>
-          <span className="badge badge-amber">🟡 삼각·사각 연쇄교환 가능</span>
-          <span className="badge badge-red">🔴 충돌 불가(사유 툴팁)</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, flexWrap: "wrap" }}>
+          <span className="badge badge-green"><StatusDot tone="green" label="이동/맞교환 가능" /></span>
+          <span className="badge badge-amber"><StatusDot tone="amber" label="삼각·사각 연쇄교환 가능" /></span>
+          <span className="badge badge-red"><StatusDot tone="red" label="충돌 불가" /></span>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {copyMsg && <span className="badge badge-blue">{copyMsg}</span>}
@@ -254,7 +271,7 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
         </div>
       </div>
 
-      <div style={{ position: "relative", overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: 10, background: "#fff" }}>
+      <div ref={wrapperRef} style={{ position: "relative", overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: 10, background: "#fff" }}>
         <canvas
           ref={canvasRef}
           onMouseDown={handleMouseDown}

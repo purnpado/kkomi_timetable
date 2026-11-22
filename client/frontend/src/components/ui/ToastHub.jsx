@@ -1,6 +1,6 @@
 import React from "react";
 import * as Toast from "@radix-ui/react-toast";
-import { Bell, X } from "lucide-react";
+import { AlertTriangle, Bell, X } from "lucide-react";
 
 // ToastHub는 우측 하단 Sticky 알림 및 수업 중 방해 금지(쉬는 시간 일괄 브리핑) 큐를 표시합니다.
 export default function ToastHub({ toasts, queuedAlerts, inClassStatus, onDismiss, onFlushQueue }) {
@@ -44,9 +44,9 @@ export default function ToastHub({ toasts, queuedAlerts, inClassStatus, onDismis
           className={`toast-root ${t.urgent ? "urgent" : ""}`}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-            <Toast.Title style={{ fontWeight: 700, fontSize: 13.5 }}>
-              {t.urgent ? "🚨 " : "🔔 "}
-              {t.title}
+            <Toast.Title style={{ fontWeight: 700, fontSize: 13.5, display: "flex", alignItems: "center", gap: 6 }}>
+              {t.urgent ? <AlertTriangle size={14} color="#fca5a5" /> : <Bell size={14} color="#ffd43b" />}
+              <span>{t.title}</span>
             </Toast.Title>
             <Toast.Close asChild>
               <button

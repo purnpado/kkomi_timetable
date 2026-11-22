@@ -1,6 +1,18 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { BookOpen, CalendarDays, CheckSquare, Clock, Lock, Rocket, ShieldAlert, Unlock, Users } from "lucide-react";
 import { formatUserDisplayName, hasRole } from "../../events/eventStore";
+import { ProgressBar, StatusDot } from "../../components/ui/SmartVisualKit";
+
+function currentHHMM() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function toMinutes(hhmm) {
+  const [h, m] = String(hhmm || "").split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return -1;
+  return h * 60 + m;
+}
 
 function StatGauge({ label, value, max, color }) {
   const pct = Math.min(100, Math.round((value / Math.max(1, max)) * 100));
@@ -27,22 +39,53 @@ function StatGauge({ label, value, max, color }) {
 
 // DashboardView는 눈에 확 들어오는 히어로 배너와 4대 KPI 요약 카드를 갖춘 오늘의 교무 통합 대시보드입니다.
 export default function DashboardView({ user, summary, teachersCount = 0, cellsCount = 0, onNavigate, onOpenApproval }) {
+  const [nowHHMM, setNowHHMM] = useState(currentHHMM);
+  useEffect(() => {
+    const id = setInterval(() => setNowHHMM(currentHHMM()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
   const myLessons = [...(summary?.myTodayLessons || [])].sort((a, b) => a.period - b.period);
   const homeroom = [...(summary?.homeroomLessons || [])].sort((a, b) => a.period - b.period);
   const todayEvents = summary?.todayEvents || [];
   const examSlots = summary?.myExamSlots || [];
   const pendingReqs = summary?.pendingApprovals || [];
   const openExt = summary?.openExternalExams || [];
+  const bells = useMemo(
+    () => [...(summary?.bellSchedule || [])].filter((b) => b.period > 0).sort((a, b) => a.period - b.period),
+    [summary?.bellSchedule]
+  );
   const bellMap = {};
-  (summary?.bellSchedule || []).forEach((b) => { bellMap[b.period] = b; });
+  bells.forEach((b) => { bellMap[b.period] = b; });
+
+  const timelineState = useMemo(() => {
+    if (bells.length === 0) return { statusLabel: "일과시간 미설정", tone: "gray", completedCount: 0, pct: 0, currentPeriod: 0 };
+    const nowMin = toMinutes(nowHHMM);
+    const firstStart = toMinutes(bells[0].startTime);
+    const lastEnd = toMinutes(bells[bells.length - 1].endTime);
+    let currentPeriod = 0;
+    let completedCount = 0;
+    bells.forEach((b) => {
+      const s = toMinutes(b.startTime);
+      const e = toMinutes(b.endTime);
+      if (nowMin >= s && nowMin < e) currentPeriod = b.period;
+      if (nowMin >= e) completedCount += 1;
+    });
+    if (nowMin < firstStart) return { statusLabel: `일과 시작 전 (${nowHHMM})`, tone: "gray", completedCount: 0, pct: 0, currentPeriod: 0 };
+    if (nowMin >= lastEnd) return { statusLabel: `정규 일과 종료 (${nowHHMM})`, tone: "green", completedCount: bells.length, pct: 100, currentPeriod: 0 };
+    const pct = Math.max(0, Math.min(100, Math.round(((nowMin - firstStart) / Math.max(1, lastEnd - firstStart)) * 100)));
+    if (currentPeriod > 0) return { statusLabel: `${currentPeriod}교시 수업 중 (${nowHHMM})`, tone: "amber", completedCount, pct, currentPeriod };
+    return { statusLabel: `쉬는·점심시간 (${nowHHMM})`, tone: "blue", completedCount, pct, currentPeriod: 0 };
+  }, [bells, nowHHMM]);
+
   const showSetupGuide = cellsCount === 0 && (hasRole(user, "MASTER") || hasRole(user, "TIMETABLE_ADMIN"));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="hero-banner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14 }}>
         <div>
-          <div style={{ fontSize: 12, color: "#bae6fd", fontWeight: 700, marginBottom: 4 }}>
-            🐾 꼬미시간 {summary?.serverVersion ? `v${summary.serverVersion}` : ""} · {summary?.todayDate} · {summary?.databaseMode}
+          <div style={{ fontSize: 12, color: "#bae6fd", fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+            <CalendarDays size={14} /> 꼬미시간 {summary?.serverVersion ? `v${summary.serverVersion}` : ""} · {summary?.todayDate} · {summary?.databaseMode}
           </div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
             안녕하세요, {formatUserDisplayName(user)}{user?.position && user?.position !== user?.name ? ` (${user.position})` : ""}
@@ -57,6 +100,52 @@ export default function DashboardView({ user, summary, teachersCount = 0, cellsC
           <StatGauge label="결보강" value={user?.substitutionCount || 0} max={12} color="#ffd43b" />
         </div>
       </div>
+
+      {bells.length > 0 && (
+        <div className="card" style={{ padding: "12px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 13.5 }}>
+              <Clock size={15} color="#3b5bdb" />
+              <span>오늘의 일과 · 현재 교시 타임라인</span>
+              <span className={`badge badge-${timelineState.tone}`} style={{ fontVariantNumeric: "tabular-nums" }}>
+                <StatusDot tone={timelineState.tone} label={timelineState.statusLabel} />
+              </span>
+            </div>
+            <span className="badge badge-gray" style={{ fontVariantNumeric: "tabular-nums" }}>
+              완료 {timelineState.completedCount} / {bells.length}교시
+            </span>
+          </div>
+          <ProgressBar value={timelineState.pct} max={100} tone={timelineState.tone} showPct={false} height={6} />
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(7, bells.length)}, minmax(0, 1fr))`, gap: 6, marginTop: 8 }}>
+            {bells.map((b) => {
+              const nowMin = toMinutes(nowHHMM);
+              const isCur = b.period === timelineState.currentPeriod;
+              const isDone = nowMin >= toMinutes(b.endTime);
+              const lesson = myLessons.find((l) => l.period === b.period);
+              return (
+                <div
+                  key={b.period}
+                  style={{
+                    padding: "6px 8px",
+                    borderRadius: 8,
+                    border: isCur ? "2px solid #e67700" : "1px solid var(--border)",
+                    background: isCur ? "#fff9db" : isDone ? "#f1f5f9" : "#ffffff",
+                    fontSize: 11.5,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <b>{b.label || `${b.period}교시`}</b>
+                    <StatusDot tone={isCur ? "amber" : isDone ? "green" : "gray"} />
+                  </div>
+                  <div style={{ color: "#64748b", fontSize: 10.5 }}>{b.startTime}~{b.endTime}</div>
+                  {lesson && <div style={{ color: "#1e3a8a", fontWeight: 700, marginTop: 2 }}>{lesson.className} · {lesson.subject}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {showSetupGuide && (
         <div className="card" style={{ borderColor: "#93c5fd", background: "#f8faff" }}>

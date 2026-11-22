@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { BarChart3, FileSpreadsheet, FileText, Printer, RefreshCw } from "lucide-react";
 import { apiFetch, isFacultyTeacher } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
+import { FoldCard } from "../../components/ui/SmartVisualKit";
+import { InlineActivityBar, MonthlyTrendBarChart } from "./ReportsCharts";
 
 // ReportsSettlementView는 월별·학기별·학년도별 결보강, 수업교환, 내외부 시험감독 및 행사 실적을
 // 교원별로 통합 집계하고 공문 결재용 한글(.hwpx)·엑셀(.xlsx)·고대비 인쇄물을 생성합니다.
@@ -133,51 +135,60 @@ export default function ReportsSettlementView({ serverUrl, user, teachers, onNot
 
           <div className="card">
             <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>월별 교무 실적 추이 ({report.monthlyTrend?.length || 0}개월)</h3>
-            {(report.monthlyTrend || []).length === 0 ? (
-              <div style={{ fontSize: 13, color: "#64748b" }}>해당 기간에 집계된 월별 데이터가 없습니다.</div>
-            ) : (
-              <table className="table">
-                <thead>
-                  <tr><th>월(YYYY-MM)</th><th>수업변경(확정)</th><th>결보강</th><th>교내감독</th><th>외부파견</th><th>확정행사</th></tr>
-                </thead>
-                <tbody>
-                  {report.monthlyTrend.map((tr) => (
-                    <tr key={tr.month}>
-                      <td><b>{tr.month}</b></td>
-                      <td>{tr.timetableChanges}건</td>
-                      <td>{tr.substituteSessions}건</td>
-                      <td>{tr.internalExamSlots}회</td>
-                      <td>{tr.externalDispatches}명</td>
-                      <td>{tr.approvedEvents}건</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <MonthlyTrendBarChart monthlyTrend={report.monthlyTrend || []} />
+            {(report.monthlyTrend || []).length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <FoldCard title="월별 상세 수치 표" badge={`${report.monthlyTrend.length}개월`} defaultOpen={false}>
+                  <table className="table">
+                    <thead>
+                      <tr><th>월(YYYY-MM)</th><th>수업변경(확정)</th><th>결보강</th><th>교내감독</th><th>외부파견</th><th>확정행사</th></tr>
+                    </thead>
+                    <tbody>
+                      {report.monthlyTrend.map((tr) => (
+                        <tr key={tr.month}>
+                          <td><b>{tr.month}</b></td>
+                          <td>{tr.timetableChanges}건</td>
+                          <td>{tr.substituteSessions}건</td>
+                          <td>{tr.internalExamSlots}회</td>
+                          <td>{tr.externalDispatches}명</td>
+                          <td>{tr.approvedEvents}건</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </FoldCard>
+              </div>
             )}
           </div>
 
           <div className="card">
             <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>교원별 기간 누적 실적 정산표 ({report.teacherStats?.length || 0}명)</h3>
             <div style={{ maxHeight: 360, overflowY: "auto" }}>
-              <table className="table">
-                <thead>
-                  <tr><th>교사 (교과)</th><th>수업교환</th><th>보강수행</th><th>결보강요청</th><th>교내감독 (정/부/복도)</th><th>외부파견</th><th>행사참여</th><th>총실적</th></tr>
-                </thead>
-                <tbody>
-                  {(report.teacherStats || []).map((st) => (
-                    <tr key={st.teacherId}>
-                      <td><b>{st.teacherName}</b> <span style={{ color: "#64748b", fontSize: 12 }}>({st.subject}{st.homeroomClass ? `·${st.homeroomClass}` : ""})</span></td>
-                      <td>{st.swapCount}</td>
-                      <td>{st.substituteGivenCount}</td>
-                      <td>{st.substituteTakenCount}</td>
-                      <td>{st.internalTotal} ({st.internalMainCount}/{st.internalSubCount}/{st.internalCorrCount})</td>
-                      <td>{st.externalExamCount}</td>
-                      <td>{st.eventLeadCount}</td>
-                      <td><span className="badge badge-blue"><b>{st.totalActivity}</b></span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {(() => {
+                const statsList = report.teacherStats || [];
+                const maxActivity = Math.max(1, ...statsList.map((s) => s.totalActivity || 0));
+                return (
+                  <table className="table">
+                    <thead>
+                      <tr><th>교사 (교과)</th><th>수업교환</th><th>보강수행</th><th>결보강요청</th><th>교내감독 (정/부/복도)</th><th>외부파견</th><th>행사참여</th><th>총실적</th></tr>
+                    </thead>
+                    <tbody>
+                      {statsList.map((st) => (
+                        <tr key={st.teacherId}>
+                          <td><b>{st.teacherName}</b> <span style={{ color: "#64748b", fontSize: 12 }}>({st.subject}{st.homeroomClass ? `·${st.homeroomClass}` : ""})</span></td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>{st.swapCount}</td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>{st.substituteGivenCount}</td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>{st.substituteTakenCount}</td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>{st.internalTotal} ({st.internalMainCount}/{st.internalSubCount}/{st.internalCorrCount})</td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>{st.externalExamCount}</td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>{st.eventLeadCount}</td>
+                          <td><InlineActivityBar value={st.totalActivity} max={maxActivity} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </div>
         </>

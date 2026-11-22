@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { Info, KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-react";
+import { CalendarDays, Info, KeyRound, RefreshCw, Server, ShieldCheck, UserCheck } from "lucide-react";
 import { apiFetch, connectDesktopBridge, setAuthToken } from "../../events/eventStore";
 import AppTooltip from "../../components/ui/AppTooltip";
 
@@ -102,7 +102,9 @@ export default function LoginView({ initialServerUrl, onLoginSuccess }) {
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #3b5bdb 100%)", padding: 20 }}>
       <div className="card" style={{ width: "min(560px, 95vw)", padding: 28, boxShadow: "0 24px 60px rgba(0,0,0,0.35)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
-          <div className="brand-logo" style={{ width: 48, height: 48, fontSize: 22 }}>🐾</div>
+          <div className="brand-logo" style={{ width: 48, height: 48 }}>
+            <CalendarDays size={24} color="#ffffff" />
+          </div>
           <div>
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>꼬미시간 (KkomiTimetable)</h1>
             <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 2 }}>

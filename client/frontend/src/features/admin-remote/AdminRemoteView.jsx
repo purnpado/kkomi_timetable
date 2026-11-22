@@ -1,38 +1,24 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CloudDownload, Database, RefreshCw, RotateCcw, Shield, UploadCloud, UserCog } from "lucide-react";
-import { apiFetch, applySelfUpdateBridge, isFacultyTeacher, isSystemAdminAccount, ROLE_LABELS } from "../../events/eventStore";
+import * as Tabs from "@radix-ui/react-tabs";
+import { AlertTriangle, CloudDownload, Database, RefreshCw, RotateCcw, Shield, UploadCloud, UserCog, Users } from "lucide-react";
+import { apiFetch, applySelfUpdateBridge, isFacultyTeacher, isSystemAdminAccount } from "../../events/eventStore";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import { StatusDot } from "../../components/ui/SmartVisualKit";
 import TeacherManagerCard from "./TeacherManagerCard";
+import RoleMatrixPanel from "./RoleMatrixPanel";
 
-const ALL_ROLES = ["MASTER", "TIMETABLE_ADMIN", "INTERNAL_EXAM_ADMIN", "EXTERNAL_EXAM_ADMIN", "EVENT_ADMIN", "TEACHER"];
-
-// AdminRemoteView는 최고관리자(MASTER)의 교사 관리, RBAC 권한 배정,
+// AdminRemoteView는 최고관리자(MASTER)의 교사 관리, RBAC 권한 매트릭스·인계,
 // 전체 시스템 초기화, 원격 DB 암호화 백업·복원 및 GitHub 릴리즈 기반 무중단 자가 업데이트를 담당합니다.
 export default function AdminRemoteView({ serverUrl, serverVersion = "", user, teachers, onRefresh, onResetComplete, onNotify }) {
+  const [adminTab, setAdminTab] = useState("teachers");
   const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
   const systemAdmin = useMemo(() => (teachers || []).find(isSystemAdminAccount), [teachers]);
   const roleTargets = useMemo(() => (systemAdmin ? [...facultyTeachers, systemAdmin] : facultyTeachers), [facultyTeachers, systemAdmin]);
   const [backups, setBackups] = useState([]);
   const [confirmRestoreFile, setConfirmRestoreFile] = useState("");
-  const [selectedTeacherId, setSelectedTeacherId] = useState("");
-  const [handoverFrom, setHandoverFrom] = useState("");
-  const [handoverTo, setHandoverTo] = useState("");
-  const [handoverRole, setHandoverRole] = useState("TIMETABLE_ADMIN");
   const [confirmResetMode, setConfirmResetMode] = useState("");
   const [ghRelease, setGhRelease] = useState(null);
   const [ghBusy, setGhBusy] = useState(false);
-
-  useEffect(() => {
-    if (roleTargets.length > 0 && !roleTargets.some((t) => t.id === selectedTeacherId)) {
-      setSelectedTeacherId((facultyTeachers[0] || roleTargets[0]).id);
-    }
-    if (roleTargets.length > 0 && !roleTargets.some((t) => t.id === handoverFrom)) {
-      setHandoverFrom(roleTargets[0].id);
-    }
-    if (facultyTeachers.length > 0 && !facultyTeachers.some((t) => t.id === handoverTo)) {
-      setHandoverTo((facultyTeachers[1] || facultyTeachers[0]).id);
-    }
-  }, [roleTargets, facultyTeachers, selectedTeacherId, handoverFrom, handoverTo]);
 
   const loadBackups = async () => {
     try {
@@ -44,43 +30,6 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
   };
 
   useEffect(() => { loadBackups(); }, [user?.id]);
-
-  const selectedTeacher = roleTargets.find((t) => t.id === selectedTeacherId);
-
-  const toggleRole = async (role) => {
-    if (!selectedTeacher) return;
-    const current = selectedTeacher.roles || ["TEACHER"];
-    if (selectedTeacher.username === "admin" && role === "MASTER" && current.includes("MASTER")) {
-      onNotify("변경 불가", "시스템 기본 최고관리자(admin) 계정의 최고관리자 권한은 해제할 수 없습니다.", true);
-      return;
-    }
-    const next = current.includes(role) ? current.filter((r) => r !== role) : [...current, role];
-    try {
-      await apiFetch(serverUrl, "/api/teachers/roles", user.id, {
-        method: "POST",
-        body: JSON.stringify({ teacherId: selectedTeacher.id, roles: next }),
-      });
-      const targetLabel = selectedTeacher.username === "admin" ? "최고관리자" : `${selectedTeacher.name} 선생님`;
-      onNotify("권한 변경 완료", `${targetLabel}의 RBAC 업무분장이 업데이트되었습니다.`);
-      onRefresh();
-    } catch (err) {
-      onNotify("권한 변경 실패", err.message, true);
-    }
-  };
-
-  const handleHandover = async () => {
-    if (!handoverFrom || !handoverTo) return;
-    try {
-      await apiFetch(serverUrl, "/api/teachers/handover", user.id, {
-        method: "POST",
-        body: JSON.stringify({ fromTeacherId: handoverFrom, toTeacherId: handoverTo, role: handoverRole }),
-      });
-      onNotify("업무분장 인계 완료", "선택한 관리자 권한이 후임 교사에게 안전하게 이관되었습니다.");
-      onRefresh();
-    } catch (err) {
-      onNotify("인계 실패", err.message, true);
-    }
-  };
 
   const handleCreateBackup = async () => {
     try {
@@ -176,104 +125,67 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
       : "교사 명렬표 및 학교 기본설정은 유지하고, 시간표·시수·시험감독·행사 데이터만 비웁니다.\n실행 직전 backups/ 폴더에 AES-256 암호화 백업이 자동 생성됩니다.";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} showSystemAdminSection />
+    <Tabs.Root value={adminTab} onValueChange={setAdminTab} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <h2 style={{ margin: 0, fontSize: 17 }}>시스템 · 교사 · 권한 · 백업 제어</h2>
+          <span className="badge badge-blue" style={{ fontVariantNumeric: "tabular-nums" }}>교원 {facultyTeachers.length}명</span>
+          <span className="badge badge-gray" style={{ fontVariantNumeric: "tabular-nums" }}>암호화 백업 {backups.length}개</span>
+        </div>
+        <Tabs.List className="radix-tabs-list" aria-label="시스템 관리 영역">
+          <Tabs.Trigger value="teachers" className="radix-tabs-trigger"><Users size={14} /> 교사 명렬표</Tabs.Trigger>
+          <Tabs.Trigger value="roles" className="radix-tabs-trigger"><UserCog size={14} /> 권한 매트릭스·인계</Tabs.Trigger>
+          <Tabs.Trigger value="backup" className="radix-tabs-trigger"><Database size={14} /> 백업·초기화</Tabs.Trigger>
+          <Tabs.Trigger value="update" className="radix-tabs-trigger"><UploadCloud size={14} /> 업데이트·배포</Tabs.Trigger>
+        </Tabs.List>
+      </div>
 
-      <div className="grid-2">
-        <div className="card">
-          <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
-            <UserCog size={15} style={{ verticalAlign: "middle" }} /> 교사별 RBAC 권한 다중 겸임 설정
+      <Tabs.Content value="teachers">
+        <TeacherManagerCard serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} showSystemAdminSection />
+      </Tabs.Content>
+
+      <Tabs.Content value="roles">
+        <RoleMatrixPanel
+          serverUrl={serverUrl}
+          user={user}
+          facultyTeachers={facultyTeachers}
+          systemAdmin={systemAdmin}
+          roleTargets={roleTargets}
+          onRefresh={onRefresh}
+          onNotify={onNotify}
+        />
+      </Tabs.Content>
+
+      <Tabs.Content value="backup" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="card" style={{ borderColor: "#ffa8a8", background: "#fff8f8" }}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 15, color: "#c92a2a" }}>
+            <AlertTriangle size={16} style={{ verticalAlign: "middle" }} /> 시스템 데이터 초기화 (자동 암호화 백업 후 실행)
           </h3>
-          <select className="select" value={selectedTeacherId} onChange={(e) => setSelectedTeacherId(e.target.value)} style={{ marginBottom: 8 }}>
-            <optgroup label="교원 목록">
-              {facultyTeachers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.username} · {t.position})
-                </option>
-              ))}
-            </optgroup>
-            {systemAdmin && (
-              <optgroup label="시스템 전용 계정">
-                <option value={systemAdmin.id}>최고관리자 ({systemAdmin.username} · 서버 시스템 계정)</option>
-              </optgroup>
-            )}
-          </select>
-          <div style={{ fontSize: 12, color: "#475569", marginBottom: 10 }}>
-            {selectedTeacher?.username === "admin"
-              ? "※ 기본 최고관리자(admin) 계정의 최고관리자 권한은 시스템 보호를 위해 해제할 수 없습니다."
-              : "※ 담당교사에게도 '최고관리자' 권한을 부여하여 일반 교사 업무와 최고관리자 기능을 함께 사용할 수 있습니다."}
+          <div style={{ fontSize: 12.5, color: "#475569", marginBottom: 12 }}>
+            모든 초기화 작업은 실행 직전 <code>backups/</code> 폴더에 AES-256 암호화 백업본을 자동 생성한 뒤 안전하게 실행됩니다.
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {ALL_ROLES.map((role) => {
-              const active = selectedTeacher?.roles?.includes(role);
-              return (
-                <button key={role} className={`btn btn-sm ${active ? "btn-primary" : ""}`} onClick={() => toggleRole(role)}>
-                  <Shield size={12} /> {ROLE_LABELS[role] || role}
-                </button>
-              );
-            })}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-sm" onClick={() => setConfirmResetMode("ACADEMIC_TERM_RESET")}>
+              1. 신학기 초기화 (교사 명렬표 유지 · 시간표/시험/행사 비우기)
+            </button>
+            <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmResetMode("FULL_FACTORY_RESET")}>
+              2. 전체 초기 설정 복원 (최고관리자 계정만 남기고 모두 삭제)
+            </button>
           </div>
         </div>
 
-        <div className="card">
-          <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>학년도 업무분장 권한 승계 (인계)</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div className="grid-2">
-              <select className="select" value={handoverFrom} onChange={(e) => setHandoverFrom(e.target.value)}>
-                {roleTargets.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    기존: {t.username === "admin" ? "최고관리자 (시스템)" : t.name}
-                  </option>
-                ))}
-              </select>
-              <select className="select" value={handoverTo} onChange={(e) => setHandoverTo(e.target.value)}>
-                {facultyTeachers.length === 0 ? (
-                  <option value="">후임 교원 없음</option>
-                ) : (
-                  facultyTeachers.map((t) => <option key={t.id} value={t.id}>후임: {t.name}</option>)
-                )}
-              </select>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <select className="select" value={handoverRole} onChange={(e) => setHandoverRole(e.target.value)}>
-                {ALL_ROLES.filter((r) => r !== "TEACHER").map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-              </select>
-              <button className="btn btn-primary" onClick={handleHandover}>권한 즉시 인계</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card" style={{ borderColor: "#ffa8a8", background: "#fff8f8" }}>
-        <h3 style={{ margin: "0 0 8px", fontSize: 15, color: "#c92a2a" }}>
-          <AlertTriangle size={16} style={{ verticalAlign: "middle" }} /> 시스템 데이터 초기화 (자동 암호화 백업 후 실행)
-        </h3>
-        <div style={{ fontSize: 12.5, color: "#475569", marginBottom: 12 }}>
-          모든 초기화 작업은 실행 직전 <code>backups/</code> 폴더에 AES-256 암호화 백업본을 자동 생성한 뒤 안전하게 실행됩니다.
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button type="button" className="btn btn-sm" onClick={() => setConfirmResetMode("ACADEMIC_TERM_RESET")}>
-            1. 신학기 초기화 (교사 명렬표 유지 · 시간표/시험/행사 비우기)
-          </button>
-          <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmResetMode("FULL_FACTORY_RESET")}>
-            2. 전체 초기 설정 복원 (최고관리자 계정만 남기고 모두 삭제)
-          </button>
-        </div>
-      </div>
-
-      <div className="grid-2">
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0, fontSize: 15 }}>
               <Database size={15} style={{ verticalAlign: "middle" }} /> 원격 DB AES-256 암호화 백업
             </h3>
-            <button className="btn btn-sm btn-green" onClick={handleCreateBackup}>지금 암호화 백업 생성</button>
+            <button type="button" className="btn btn-sm btn-green" onClick={handleCreateBackup}>지금 암호화 백업 생성</button>
           </div>
           {backups.length === 0 ? (
             <div style={{ fontSize: 13, color: "#64748b" }}>생성된 백업 파일이 아직 없습니다.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {backups.slice(0, 8).map((b) => (
+              {backups.slice(0, 10).map((b) => (
                 <div key={b} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 12 }}>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{b}</span>
                   <button type="button" className="btn btn-sm" style={{ flexShrink: 0 }} onClick={() => setConfirmRestoreFile(b)}>
@@ -284,7 +196,9 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
             </div>
           )}
         </div>
+      </Tabs.Content>
 
+      <Tabs.Content value="update">
         <div className="card">
           <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
             <UploadCloud size={15} style={{ verticalAlign: "middle" }} /> GitHub 릴리즈 & 무중단 자가 업데이트
@@ -295,7 +209,7 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
                 <span><b>저장소:</b> github.com/purnpado/kkomi_timetable {serverVersion ? `(현재 v${serverVersion})` : ""}</span>
                 {ghRelease && (
                   <span className={`badge ${ghRelease.hasUpdate ? "badge-amber" : "badge-green"}`}>
-                    최신: {ghRelease.tagName} {ghRelease.hasUpdate ? "(업데이트 가능)" : "(최신 상태)"}
+                    <StatusDot tone={ghRelease.hasUpdate ? "amber" : "green"} label={`최신: ${ghRelease.tagName} ${ghRelease.hasUpdate ? "(업데이트 가능)" : "(최신 상태)"}`} />
                   </span>
                 )}
               </div>
@@ -312,14 +226,15 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
               </div>
             </div>
             <div>
-              <b>수동 1. 메인 서버 교체 (`꼬미시간서버.exe`)</b>: 업로드 시 자동 DB 백업 후 재시작
+              <b>수동 1. 메인 서버 교체 (<code>꼬미시간서버.exe</code>)</b>: 업로드 시 자동 DB 백업 후 재시작
               <input type="file" style={{ display: "block", marginTop: 4 }} onChange={(e) => handleUploadBinary("/api/system/server-update", e.target.files?.[0])} />
             </div>
             <div>
-              <b>수동 2. 교사용 클라이언트 패치 배포 (`꼬미시간.exe`)</b>: 전 교사 PC 자동 패치 알림
+              <b>수동 2. 교사용 클라이언트 패치 배포 (<code>꼬미시간.exe</code>)</b>: 전 교사 PC 자동 패치 알림
               <input type="file" style={{ display: "block", marginTop: 4 }} onChange={(e) => handleUploadBinary("/api/system/client-patch", e.target.files?.[0])} />
             </div>
             <button
+              type="button"
               className="btn btn-sm"
               style={{ alignSelf: "flex-start" }}
               onClick={async () => {
@@ -334,7 +249,7 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
             </button>
           </div>
         </div>
-      </div>
+      </Tabs.Content>
 
       <ConfirmDialog
         open={Boolean(confirmResetMode)}
@@ -355,6 +270,6 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
         confirmLabel="복원 실행"
         onConfirm={() => handleRestoreBackup(confirmRestoreFile)}
       />
-    </div>
+    </Tabs.Root>
   );
 }

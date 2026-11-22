@@ -1,6 +1,7 @@
 import React from "react";
 import { BarChart3, CheckCircle2, RotateCcw, ShieldOff } from "lucide-react";
 import { apiFetch } from "../../events/eventStore";
+import { HelpTip } from "../../components/ui/SmartVisualKit";
 
 function exemptPresetValue(st) {
   if (st.isExempt) {
@@ -117,6 +118,45 @@ export default function ExamFairnessPanel({ serverUrl, user, fairness, isExamAdm
           )}
         </div>
       </div>
+
+      {(() => {
+        const activeStats = (fairness.stats || []).filter((st) => !st.isExempt);
+        const maxBar = Math.max(1, ...activeStats.map((st) => st.projectedTotal || 0));
+        if (activeStats.length === 0) return null;
+        return (
+          <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-alt)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, fontSize: 13.5 }}>
+                <span>교원별 연간 감독 분포 차트 (정 · 부 · 복도)</span>
+                <HelpTip label="스택드 막대 차트" text="참여 교원별 1년 합계(기실시 누적 + 이번 시험)를 정감독·부감독·복도감독 비율로 시각화했습니다." />
+              </div>
+              <div style={{ display: "flex", gap: 10, fontSize: 11.5, fontWeight: 700 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: "#3b5bdb" }} /> 정감독</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: "#099268" }} /> 부감독</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: "#e67700" }} /> 복도</span>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, maxHeight: 195, overflowY: "auto" }}>
+              {activeStats.map((st) => {
+                const mW = ((st.projectedMain || 0) / maxBar) * 100;
+                const sW = ((st.projectedSub || 0) / maxBar) * 100;
+                const cW = ((st.projectedCorridor || 0) / maxBar) * 100;
+                return (
+                  <div key={st.teacherId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                    <span style={{ width: 64, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.teacherName}</span>
+                    <div style={{ flex: 1, height: 10, background: "#e2e8f0", borderRadius: 999, overflow: "hidden", display: "flex" }}>
+                      {mW > 0 && <div title={`정감독 ${st.projectedMain}회`} style={{ width: `${mW}%`, background: "#3b5bdb" }} />}
+                      {sW > 0 && <div title={`부감독 ${st.projectedSub}회`} style={{ width: `${sW}%`, background: "#099268" }} />}
+                      {cW > 0 && <div title={`복도감독 ${st.projectedCorridor}회`} style={{ width: `${cW}%`, background: "#e67700" }} />}
+                    </div>
+                    <span style={{ width: 32, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{st.projectedTotal}회</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{ maxHeight: 320, overflowY: "auto" }}>
         <table className="table">
