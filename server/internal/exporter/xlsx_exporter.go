@@ -60,6 +60,8 @@ func EventLinkTypeLabel(lt protocol.EventLinkType) string {
 		return "인솔 교사 출장"
 	case protocol.EventLinkBellChange:
 		return "시종시간 변경"
+	case protocol.EventLinkHoliday:
+		return "공휴일/휴업일"
 	default:
 		return string(lt)
 	}

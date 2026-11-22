@@ -147,6 +147,8 @@ func (a *ServerApp) Handler(webFS fs.FS) http.Handler {
 	mux.HandleFunc("/api/calendar/events", a.handleCalendarEvents)
 	mux.HandleFunc("/api/calendar/commit", a.handleCommitCalendarEvent)
 	mux.HandleFunc("/api/calendar/bells", a.handleBellSchedule)
+	mux.HandleFunc("/api/calendar/conflicts", a.handleCalendarConflicts)
+	mux.HandleFunc("/api/calendar/bell-presets", a.handleCalendarBellPresets)
 
 	// 문서 출력(.hwpx / .xlsx / 고대비 인쇄 HTML), 월별/학기별 통합 정산 및 원격 서버 관리
 	mux.HandleFunc("/api/stats/summary", a.handleStatsSummary)

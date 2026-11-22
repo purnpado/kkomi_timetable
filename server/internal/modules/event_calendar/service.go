@@ -73,7 +73,7 @@ func (s *Service) EffectiveBellSchedule(dateStr string) ([]protocol.BellPeriod, 
 		}
 	}
 	for _, ev := range events {
-		if ev.Status != protocol.StatusApproved || ev.LinkType != protocol.EventLinkBellChange || ev.EventDate != targetDate {
+		if ev.Status != protocol.StatusApproved || ev.LinkType != protocol.EventLinkBellChange || !protocol.EventCoversDate(ev, targetDate) {
 			continue
 		}
 		for _, ov := range ev.BellOverride {
@@ -141,15 +141,32 @@ func (s *Service) SaveBellSchedule(bells []protocol.BellPeriod, actorName string
 	return saved, nil
 }
 
-// ProposeEvent는 부서별로 행사를 등록(STAGING 대기열)합니다.
-func (s *Service) ProposeEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, error) {
+func normalizeAndValidateEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, error) {
 	ev.Title = strings.TrimSpace(ev.Title)
+	ev.Department = strings.TrimSpace(ev.Department)
 	ev.EventDate = strings.TrimSpace(ev.EventDate)
+	ev.EndDate = strings.TrimSpace(ev.EndDate)
+	ev.Location = strings.TrimSpace(ev.Location)
+	ev.HolidayKind = strings.TrimSpace(ev.HolidayKind)
+	ev.BellPreset = strings.TrimSpace(ev.BellPreset)
+	ev.Recurrence = strings.ToUpper(strings.TrimSpace(ev.Recurrence))
+	ev.RecurrenceEnd = strings.TrimSpace(ev.RecurrenceEnd)
+
 	if ev.Title == "" {
 		return ev, fmt.Errorf("행사명을 입력해 주세요")
 	}
 	if _, err := time.Parse("2006-01-02", ev.EventDate); err != nil {
 		return ev, fmt.Errorf("행사 일자(YYYY-MM-DD) 형식이 올바르지 않습니다")
+	}
+	if ev.EndDate == "" {
+		ev.EndDate = ev.EventDate
+	} else {
+		if _, err := time.Parse("2006-01-02", ev.EndDate); err != nil {
+			return ev, fmt.Errorf("종료 일자(YYYY-MM-DD) 형식이 올바르지 않습니다")
+		}
+		if ev.EndDate < ev.EventDate {
+			return ev, fmt.Errorf("종료 일자(%s)는 시작 일자(%s)보다 같거나 이후여야 합니다", ev.EndDate, ev.EventDate)
+		}
 	}
 	if ev.StartPeriod < 0 || ev.EndPeriod < 0 {
 		return ev, fmt.Errorf("교시는 0(종일) 이상이어야 합니다")
@@ -163,14 +180,141 @@ func (s *Service) ProposeEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, e
 	if ev.LinkType == "" {
 		ev.LinkType = protocol.EventLinkSimpleNotice
 	}
-	if ev.ID == "" {
-		ev.ID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
+	if ev.LinkType == protocol.EventLinkHoliday {
+		ev.StartPeriod = 0
+		ev.EndPeriod = 0
+		if len(ev.TargetGrades) == 0 && len(ev.TargetClasses) == 0 {
+			ev.TargetGrades = []int{1, 2, 3}
+		}
+		if ev.HolidayKind == "" {
+			ev.HolidayKind = "PUBLIC_HOLIDAY"
+		}
 	}
-	ev.Status = protocol.StatusStaging
-	if err := s.store.SaveRecord("school_events", ev.ID, ev); err != nil {
-		return ev, err
+	if ev.LinkType == protocol.EventLinkBellChange && ev.BellPreset != "" && len(ev.BellOverride) == 0 {
+		if periods := BuildBellOverrideFromPreset(ev.BellPreset); len(periods) > 0 {
+			ev.BellOverride = periods
+		}
 	}
 	return ev, nil
+}
+
+// ProposeEvent는 부서별로 행사를 등록(STAGING 대기열)합니다. 반복 일정이 지정되면 일괄 생성합니다.
+func (s *Service) ProposeEvent(ev protocol.SchoolEvent) (protocol.SchoolEvent, error) {
+	norm, err := normalizeAndValidateEvent(ev)
+	if err != nil {
+		return ev, err
+	}
+	baseID := strings.TrimSpace(norm.ID)
+	if baseID == "" {
+		baseID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
+	}
+	norm.Status = protocol.StatusStaging
+
+	if pairs := expandRecurrencePairs(norm); len(pairs) > 1 {
+		groupID := strings.TrimSpace(norm.RecurrenceGroup)
+		if groupID == "" {
+			groupID = fmt.Sprintf("rec-%d", time.Now().UnixNano())
+		}
+		var first protocol.SchoolEvent
+		err := s.store.WithTx(func(tx *database.TxStore) error {
+			for idx, p := range pairs {
+				inst := norm
+				if idx == 0 {
+					inst.ID = baseID
+				} else {
+					inst.ID = fmt.Sprintf("%s-%d", baseID, idx+1)
+				}
+				inst.EventDate = p[0]
+				inst.EndDate = p[1]
+				inst.RecurrenceGroup = groupID
+				if sErr := tx.SaveRecord("school_events", inst.ID, inst); sErr != nil {
+					return sErr
+				}
+				if idx == 0 {
+					first = inst
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return norm, err
+		}
+		return first, nil
+	}
+
+	norm.ID = baseID
+	if err := s.store.SaveRecord("school_events", norm.ID, norm); err != nil {
+		return norm, err
+	}
+	return norm, nil
+}
+
+// UpdateEvent는 등록된 행사를 수정합니다. 행사 담당교사는 모든 행사를 수정 가능하며, 일반 교사는 본인 대기 행사만 수정할 수 있습니다.
+func (s *Service) UpdateEvent(ev protocol.SchoolEvent, actorName string, isEventAdmin bool) (protocol.SchoolEvent, error) {
+	id := strings.TrimSpace(ev.ID)
+	if id == "" {
+		return ev, fmt.Errorf("수정할 행사 ID가 필요합니다")
+	}
+	var saved protocol.SchoolEvent
+	err := s.store.WithTx(func(tx *database.TxStore) error {
+		loaded, lErr := database.LoadRecordTx[protocol.SchoolEvent](tx, "school_events", id)
+		if lErr != nil || loaded == nil {
+			return fmt.Errorf("행사(%s)를 찾을 수 없습니다", id)
+		}
+		if !isEventAdmin {
+			if loaded.Status != protocol.StatusStaging || strings.TrimSpace(loaded.ProposedBy) != strings.TrimSpace(actorName) {
+				return fmt.Errorf("본인이 등록한 승인 대기 상태의 행사만 수정할 수 있습니다")
+			}
+		}
+		ev.ID = loaded.ID
+		ev.Status = loaded.Status
+		ev.ProposedBy = loaded.ProposedBy
+		ev.CommittedBy = loaded.CommittedBy
+		if strings.TrimSpace(ev.RecurrenceGroup) == "" {
+			ev.RecurrenceGroup = loaded.RecurrenceGroup
+		}
+		norm, vErr := normalizeAndValidateEvent(ev)
+		if vErr != nil {
+			return vErr
+		}
+		if sErr := tx.SaveRecord("school_events", norm.ID, norm); sErr != nil {
+			return sErr
+		}
+		saved = norm
+		return nil
+	})
+	if err != nil {
+		return ev, err
+	}
+	if saved.Status == protocol.StatusApproved && s.bus != nil {
+		if saved.LinkType == protocol.EventLinkBellChange && len(saved.BellOverride) > 0 {
+			effective, _ := s.EffectiveBellSchedule(saved.EventDate)
+			s.bus.Publish(protocol.DomainEvent{
+				Type:      protocol.EventBellScheduleChanged,
+				Title:     fmt.Sprintf("⏰ [%s] 시종시간 변경 행사 수정", saved.Title),
+				Message:   fmt.Sprintf("%s 시종시간 변경 내용이 갱신되었습니다.", saved.EventDate),
+				ActorName: actorName,
+				Payload:   effective,
+			})
+		}
+		s.bus.Publish(protocol.DomainEvent{
+			Type:      protocol.EventSchoolEventPublished,
+			Title:     fmt.Sprintf("📅 [%s] 학사 행사 수정 반영", saved.Title),
+			Message:   fmt.Sprintf("%s (%s) 확정 행사 정보가 수정되었습니다.", saved.EventDate, saved.Department),
+			ActorName: actorName,
+			Payload:   saved,
+		})
+	}
+	return saved, nil
+}
+
+// CheckConflicts는 등록·수정하려는 행사의 장소 및 동일 학년 교시 충돌 목록을 검사합니다.
+func (s *Service) CheckConflicts(ev protocol.SchoolEvent) ([]protocol.EventConflict, error) {
+	existing, err := s.ListEvents()
+	if err != nil {
+		return nil, err
+	}
+	return DetectConflicts(ev, existing), nil
 }
 
 // CommitEvent는 행사 담당교사가 [최종 선택(서버 반영)]을 클릭하여 행사를 확정·반려할 때 호출됩니다.

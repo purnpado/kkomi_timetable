@@ -1,67 +1,55 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FileSpreadsheet, FileText, PlusCircle, Printer, XCircle } from "lucide-react";
-import { apiFetch, hasRole, isFacultyTeacher, printDesktopWindow } from "../../events/eventStore";
+import * as Tabs from "@radix-ui/react-tabs";
+import { CalendarDays, CalendarRange, FileSpreadsheet, FileText, Inbox, PlusCircle, Printer } from "lucide-react";
+import { apiFetch, hasRole, printDesktopWindow } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import CalendarEventForm from "./CalendarEventForm";
+import { MonthlyCalendarGrid, StagingQueueTable, WeeklyBriefingTable } from "./CalendarViewsGrid";
+import { DEFAULT_BELL_PRESETS, formatLocalYMD } from "./calendarUtils";
 
-const LINK_LABELS = {
-  SIMPLE_NOTICE: "[단순안내]",
-  CLASS_BLOCK: "[학년/전교 수업블록]",
-  TEACHER_TRIP: "[특정교사 출장/결보강]",
-  BELL_CHANGE: "[시종시간 변경]",
-};
-
-// CalendarView는 부서별 주중·월중 행사 취합, 연동 속성 지정, 행사 담당교사 최종 확정 및
-// 한글(.hwpx)·엑셀(.xlsx)·고대비 B4/A3 인쇄 출력을 제공합니다.
+// CalendarView는 월간 달력·주간업무표·취합 대기함 3종 뷰 전환과 다일·휴업일·시종 프리셋·반복 일정 관리를 제공합니다.
 export default function CalendarView({ serverUrl, user, events, teachers, onRefresh, onNotify }) {
-  const [title, setTitle] = useState("");
-  const [department, setDepartment] = useState("교무기획부");
-  const [eventDate, setEventDate] = useState(new Date().toISOString().slice(0, 10));
-  const [startPeriod, setStartPeriod] = useState(5);
-  const [endPeriod, setEndPeriod] = useState(6);
-  const [linkType, setLinkType] = useState("CLASS_BLOCK");
-  const [grade, setGrade] = useState(1);
-  const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
-  const [leadTeacherId, setLeadTeacherId] = useState("");
-
-  useEffect(() => {
-    if (facultyTeachers.length === 0) {
-      if (leadTeacherId) setLeadTeacherId("");
-      return;
-    }
-    if (!facultyTeachers.some((t) => t.id === leadTeacherId)) {
-      const preferred = facultyTeachers.find((t) => t.id === user?.id) || facultyTeachers[0];
-      setLeadTeacherId(preferred.id);
-    }
-  }, [facultyTeachers, leadTeacherId, user?.id]);
+  const [viewMode, setViewMode] = useState("month");
+  const [departmentFilter, setDepartmentFilter] = useState("ALL");
+  const [showForm, setShowForm] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [quickDate, setQuickDate] = useState(() => formatLocalYMD(new Date()));
+  const [bellPresets, setBellPresets] = useState(DEFAULT_BELL_PRESETS);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const isEventAdmin = hasRole(user, "EVENT_ADMIN");
 
-  const handlePropose = async (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    try {
-      await apiFetch(serverUrl, "/api/calendar/events", user.id, {
-        method: "POST",
-        body: JSON.stringify({
-          title,
-          department,
-          eventDate,
-          startPeriod: Number(startPeriod),
-          endPeriod: Number(endPeriod),
-          targetGrades: [Number(grade)],
-          leadTeachers: leadTeacherId ? [leadTeacherId] : [],
-          linkType,
-          description: `${department} 등록 행사`,
-          proposedBy: user.name,
-        }),
-      });
-      setTitle("");
-      onNotify("부서 행사 등록(STAGING) 완료", "행사 담당교사가 최종 선택 시 시간표/시종시간에 연동됩니다.");
-      onRefresh();
-    } catch (err) {
-      onNotify("행사 등록 실패", err.message, true);
-    }
-  };
+  useEffect(() => {
+    let active = true;
+    apiFetch(serverUrl, "/api/calendar/bell-presets", user.id)
+      .then((list) => {
+        if (active && Array.isArray(list) && list.length > 0) setBellPresets(list);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [serverUrl, user.id]);
+
+  const departments = useMemo(() => {
+    const set = new Set((events || []).map((ev) => String(ev.department || "").trim()).filter(Boolean));
+    return ["ALL", ...Array.from(set).sort()];
+  }, [events]);
+
+  const filteredEvents = useMemo(() => {
+    if (departmentFilter === "ALL") return events || [];
+    return (events || []).filter((ev) => String(ev.department || "").trim() === departmentFilter);
+  }, [events, departmentFilter]);
+
+  const counts = useMemo(() => {
+    const list = filteredEvents;
+    return {
+      total: list.length,
+      staging: list.filter((e) => e.status === "STAGING").length,
+      approved: list.filter((e) => e.status === "APPROVED").length,
+      holiday: list.filter((e) => e.linkType === "HOLIDAY").length,
+    };
+  }, [filteredEvents]);
 
   const handleCommit = async (eventId, approve) => {
     try {
@@ -69,133 +57,154 @@ export default function CalendarView({ serverUrl, user, events, teachers, onRefr
         method: "POST",
         body: JSON.stringify({ eventId, approve }),
       });
-      onNotify(approve ? "행사 최종 확정 반영" : "행사 반려", approve ? "시간표 및 시종 연동이 완료되었습니다." : "행사 신청이 반려되었습니다.");
+      onNotify(approve ? "행사 최종 확정 반영" : "행사 반려", approve ? "시간표·시종·시수 원장 연동이 완료되었습니다." : "행사 신청이 반려되었습니다.");
       onRefresh();
     } catch (err) {
       onNotify("처리 실패", err.message, true);
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await apiFetch(serverUrl, `/api/calendar/events?id=${encodeURIComponent(deleteTarget.id)}`, user.id, {
+        method: "DELETE",
+      });
+      onNotify("행사 삭제 완료", `'${deleteTarget.title}' 일정이 삭제되었습니다.`);
+      setDeleteTarget(null);
+      onRefresh();
+    } catch (err) {
+      onNotify("행사 삭제 실패", err.message, true);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const openCreateForm = (dateStr) => {
+    setEditingEvent(null);
+    setQuickDate(dateStr || formatLocalYMD(new Date()));
+    setShowForm(true);
+  };
+
+  const openEditForm = (ev) => {
+    setEditingEvent(ev);
+    setShowForm(true);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <h2 style={{ margin: 0, fontSize: 17 }}>주중·월중 행사 취합 및 학사일정 연동</h2>
-            <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 3 }}>
-              확정 시 연동 속성에 따라 수업 블록, 인솔교사 결보강 대기열 이관, 시종시간 변경이 자동 실행됩니다.
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontVariantNumeric: "tabular-nums" }}>
+              <span className="badge badge-gray">전체 {counts.total}건</span>
+              <span className="badge badge-amber">승인 대기 {counts.staging}건</span>
+              <span className="badge badge-green">확정 반영 {counts.approved}건</span>
+              <span className="badge badge-red">공휴·휴업 {counts.holiday}건</span>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() =>
-                downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=calendar", "주중월중_학사일정표.hwpx")
-                  .catch((err) => onNotify("한글 출력 실패", err.message, true))
-              }
-            >
+          <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-sm" onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/hwpx?kind=calendar", "주중월중_학사일정표.hwpx").catch((e) => onNotify("한글 출력 실패", e.message, true))}>
               <FileText size={14} /> 한글 행사표 (.hwpx)
             </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() =>
-                downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=calendar", "주중월중_학사일정.xlsx")
-                  .catch((err) => onNotify("엑셀 출력 실패", err.message, true))
-              }
-            >
+            <button type="button" className="btn btn-sm" onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/xlsx?kind=calendar", "주중월중_학사일정.xlsx").catch((e) => onNotify("엑셀 출력 실패", e.message, true))}>
               <FileSpreadsheet size={14} /> 엑셀 일정 (.xlsx)
             </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() =>
-                downloadAuthenticatedFile(serverUrl, "/api/export/print", "교무실_대형현황판.html", { openInTab: true })
-                  .catch((err) => onNotify("현황판 열기 실패", err.message, true))
-              }
-            >
+            <button type="button" className="btn btn-sm" onClick={() => downloadAuthenticatedFile(serverUrl, "/api/export/print", "교무실_대형현황판.html", { openInTab: true }).catch((e) => onNotify("현황판 열기 실패", e.message, true))}>
               <Printer size={14} /> B4/A3 고대비 현황판
             </button>
-            <button className="btn btn-sm" onClick={printDesktopWindow}>
+            <button type="button" className="btn btn-sm" onClick={printDesktopWindow}>
               <Printer size={14} /> 현재 화면 인쇄/PDF
             </button>
           </div>
         </div>
       </div>
 
-      <div className="card no-print">
-        <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>부서별 행사 입력 (대기열 등록)</h3>
-        <form onSubmit={handlePropose} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="행사명 (예: 1학년 학교폭력예방교육)" required />
-          <input className="input" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="주관 부서" />
-          <input className="input" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
-          <select className="select" value={linkType} onChange={(e) => setLinkType(e.target.value)}>
-            {Object.entries(LINK_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input className="input" type="number" min={0} max={7} value={startPeriod} onChange={(e) => setStartPeriod(e.target.value)} title="시작 교시" />
-            <input className="input" type="number" min={0} max={7} value={endPeriod} onChange={(e) => setEndPeriod(e.target.value)} title="종료 교시" />
+      <Tabs.Root value={viewMode} onValueChange={setViewMode} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div className="card no-print" style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <Tabs.List style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Tabs.Trigger value="month" className={`btn btn-sm ${viewMode === "month" ? "btn-primary" : ""}`}>
+              <CalendarDays size={14} /> 월간 달력
+            </Tabs.Trigger>
+            <Tabs.Trigger value="week" className={`btn btn-sm ${viewMode === "week" ? "btn-primary" : ""}`}>
+              <CalendarRange size={14} /> 주간업무표
+            </Tabs.Trigger>
+            <Tabs.Trigger value="staging" className={`btn btn-sm ${viewMode === "staging" ? "btn-primary" : ""}`}>
+              <Inbox size={14} /> 취합 대기함 {counts.staging > 0 ? `(${counts.staging})` : ""}
+            </Tabs.Trigger>
+          </Tabs.List>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select className="select" style={{ width: 170 }} value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)}>
+              {departments.map((d) => <option key={d} value={d}>{d === "ALL" ? "전체 부서" : d}</option>)}
+            </select>
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => (showForm ? setShowForm(false) : openCreateForm())}>
+              <PlusCircle size={14} /> {showForm ? "입력창 닫기" : "새 행사 등록"}
+            </button>
           </div>
-          <select className="select" value={grade} onChange={(e) => setGrade(e.target.value)}>
-            <option value={1}>1학년</option>
-            <option value={2}>2학년</option>
-            <option value={3}>3학년</option>
-          </select>
-          <select className="select" value={leadTeacherId} onChange={(e) => setLeadTeacherId(e.target.value)}>
-            {facultyTeachers.length === 0 ? (
-              <option value="">인솔 교원 없음</option>
-            ) : (
-              facultyTeachers.map((t) => (
-                <option key={t.id} value={t.id}>인솔: {t.name} ({t.subject})</option>
-              ))
-            )}
-          </select>
-          <button type="submit" className="btn btn-primary">
-            <PlusCircle size={15} /> 행사 등록 요청
-          </button>
-        </form>
-      </div>
+        </div>
 
-      <div className="card">
-        <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>취합 및 확정 학사일정 목록</h3>
-        <table className="table">
-          <thead>
-            <tr><th>일자/교시</th><th>부서</th><th>행사명</th><th>연동 속성</th><th>상태</th>{isEventAdmin && <th className="no-print">최종 선택</th>}</tr>
-          </thead>
-          <tbody>
-            {(events || []).map((ev) => (
-              <tr key={ev.id}>
-                <td>{ev.eventDate} ({ev.startPeriod}~{ev.endPeriod}교시)</td>
-                <td>{ev.department}</td>
-                <td><b>{ev.title}</b></td>
-                <td><span className="badge badge-blue">{LINK_LABELS[ev.linkType] || ev.linkType}</span></td>
-                <td>
-                  <span className={`badge ${ev.status === "APPROVED" ? "badge-green" : ev.status === "REJECTED" ? "badge-red" : "badge-amber"}`}>
-                    {ev.status === "APPROVED" ? "확정 반영" : ev.status === "REJECTED" ? "반려" : "승인 대기"}
-                  </span>
-                </td>
-                {isEventAdmin && (
-                  <td className="no-print">
-                    {ev.status === "STAGING" && (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button className="btn btn-sm btn-green" onClick={() => handleCommit(ev.id, true)}>
-                          <CheckCircle2 size={13} /> 최종 선택
-                        </button>
-                        <button className="btn btn-sm btn-danger" onClick={() => handleCommit(ev.id, false)}>
-                          <XCircle size={13} /> 반려
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        {showForm && (
+          <CalendarEventForm
+            serverUrl={serverUrl}
+            user={user}
+            teachers={teachers}
+            bellPresets={bellPresets}
+            editingEvent={editingEvent}
+            initialDate={quickDate}
+            onSaved={() => { setShowForm(false); setEditingEvent(null); onRefresh(); }}
+            onCancel={() => { setShowForm(false); setEditingEvent(null); }}
+            onNotify={onNotify}
+          />
+        )}
+
+        <Tabs.Content value="month">
+          <MonthlyCalendarGrid
+            events={filteredEvents}
+            teachers={teachers}
+            user={user}
+            isEventAdmin={isEventAdmin}
+            onCommit={handleCommit}
+            onEdit={openEditForm}
+            onDelete={setDeleteTarget}
+            onQuickAddDate={openCreateForm}
+          />
+        </Tabs.Content>
+        <Tabs.Content value="week">
+          <WeeklyBriefingTable
+            events={filteredEvents}
+            teachers={teachers}
+            user={user}
+            isEventAdmin={isEventAdmin}
+            onCommit={handleCommit}
+            onEdit={openEditForm}
+            onDelete={setDeleteTarget}
+          />
+        </Tabs.Content>
+        <Tabs.Content value="staging">
+          <StagingQueueTable
+            events={filteredEvents}
+            teachers={teachers}
+            user={user}
+            isEventAdmin={isEventAdmin}
+            onCommit={handleCommit}
+            onEdit={openEditForm}
+            onDelete={setDeleteTarget}
+          />
+        </Tabs.Content>
+      </Tabs.Root>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title="학사 행사 삭제"
+        description={deleteTarget ? `'${deleteTarget.title}' (${deleteTarget.eventDate}) 일정을 삭제하고 연동된 결보강·시종 상태를 정리하시겠습니까?` : ""}
+        confirmLabel="삭제"
+        danger
+        busy={deleting}
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 }

@@ -306,25 +306,33 @@ const (
 	EventLinkClassBlock   EventLinkType = "CLASS_BLOCK"   // [학년/전교 수업블록]
 	EventLinkTeacherTrip  EventLinkType = "TEACHER_TRIP"  // [특정교사 출장/결보강]
 	EventLinkBellChange   EventLinkType = "BELL_CHANGE"   // [시종시간 변경]
+	EventLinkHoliday      EventLinkType = "HOLIDAY"       // [공휴일/휴업일]
 )
 
 // SchoolEvent는 주중·월중 행사 취합 및 확정 항목입니다.
 type SchoolEvent struct {
-	ID            string         `json:"id"`
-	Title         string         `json:"title"`
-	Department    string         `json:"department"`  // 제안 부서 (예: 학생생활안전부, 교무기획부)
-	EventDate     string         `json:"eventDate"`   // YYYY-MM-DD
-	StartPeriod   int            `json:"startPeriod"` // 시작 교시 (0이면 종일/해당없음)
-	EndPeriod     int            `json:"endPeriod"`
-	TargetGrades  []int          `json:"targetGrades"`  // 대상 학년 (예: [1,2] 또는 [1,2,3])
-	TargetClasses []string       `json:"targetClasses"` // 특정 학급 지정 시
-	LeadTeachers  []string       `json:"leadTeachers"`  // 인솔/담당 교사 ID 목록
-	LinkType      EventLinkType  `json:"linkType"`      // 4종 연동 속성
-	BellOverride  []BellPeriod   `json:"bellOverride"`  // [시종시간 변경] 시 적용할 교시별 시각
-	Description   string         `json:"description"`
-	Status        ApprovalStatus `json:"status"` // STAGING -> APPROVED(행사 담당교사 최종 선택)
-	ProposedBy    string         `json:"proposedBy"`
-	CommittedBy   string         `json:"committedBy"`
+	ID              string         `json:"id"`
+	Title           string         `json:"title"`
+	Department      string         `json:"department"`                // 제안 부서 (예: 학생생활안전부, 교무기획부)
+	EventDate       string         `json:"eventDate"`                 // 시작 일자 YYYY-MM-DD
+	EndDate         string         `json:"endDate,omitempty"`         // 종료 일자 YYYY-MM-DD (다일 연속 행사)
+	StartPeriod     int            `json:"startPeriod"`               // 시작 교시 (0이면 종일/해당없음)
+	EndPeriod       int            `json:"endPeriod"`
+	TargetGrades    []int          `json:"targetGrades"`              // 대상 학년 (예: [1,2] 또는 [1,2,3])
+	TargetClasses   []string       `json:"targetClasses"`             // 특정 학급 지정 시
+	LeadTeachers    []string       `json:"leadTeachers"`              // 인솔/담당 교사 ID 목록
+	LinkType        EventLinkType  `json:"linkType"`                  // 5종 연동 속성
+	HolidayKind     string         `json:"holidayKind,omitempty"`     // PUBLIC_HOLIDAY, DISCRETIONARY, FOUNDATION, ETC
+	Location        string         `json:"location,omitempty"`        // 행사 장소 (강당, 시청각실 등)
+	BellPreset      string         `json:"bellPreset,omitempty"`      // SHORT_40, SHORT_45, MORNING_EVENT, CUSTOM
+	BellOverride    []BellPeriod   `json:"bellOverride"`              // [시종시간 변경] 시 적용할 교시별 시각
+	Recurrence      string         `json:"recurrence,omitempty"`      // NONE, WEEKLY, MONTHLY
+	RecurrenceEnd   string         `json:"recurrenceEnd,omitempty"`   // YYYY-MM-DD
+	RecurrenceGroup string         `json:"recurrenceGroup,omitempty"` // 반복 일정 그룹 ID
+	Description     string         `json:"description"`
+	Status          ApprovalStatus `json:"status"` // STAGING -> APPROVED(행사 담당교사 최종 선택)
+	ProposedBy      string         `json:"proposedBy"`
+	CommittedBy     string         `json:"committedBy"`
 }
 
 // BellPeriod는 교시별 시종시간(수업 중 방해 금지 모드 판정 기준)입니다.

@@ -113,12 +113,12 @@
 3. **[3단계] 교내 · 외부 시험감독 고도화:** *(구현 완료)*
    - [x] **교내:** 동일 고사실 중복 배정 금지(`PreventSameRoomRepeat`), 사회적 약자(임산부·원로교사 등)·보직 차등 감면(`ExamMaxCount`·`ExamReductionWeight`·`ExamNoConsecutive`), 해당 학년/출제 교사만 배제 옵션(`SubjectExcludeMode`: `ALL_SUBJECT`/`GRADE_ONLY`/`AUTHORS_ONLY`), 감염병 분리고사실 1·2·3실 복수 개설(`room_catalog.go`), 고교학점제 다과목 동시 이동시험(`effectiveRoomSubjects`) 및 공강 학생 자습실 감독(`STUDY_HALL`), 자동 배정 후 수동 맞교환(`SwapSlots`·`InternalExamSwapAndPersonalPanel.jsx`), 개인별 감독 시간표(`PersonalSchedule`)
    - [x] **외부:** 기본 3종(`검정고시`·`수능감독`·`임용고사`) + 담당자 자유 추가, 종목별 가중치 점수제(`WEIGHTED_SCORE`) 및 별도 순번 트랙(`SEPARATE_TRACK`), 전입순 양방향(`LATE_TRANSFER`/`EARLY_TRANSFER`) + 전입 1년차 유예(`TransferGraceYear`), 시험 종류별 제외 규칙(`GRADE3_HOMEROOM`·`EXAM_CHILD`·`PREGNANT`·`SENIOR`·`CONTRACT_TEACHER`·`DEPT_HEAD`), 동점자 공정 처리(`NAME_ASC`·`AGE_YOUNG`·`AGE_OLD`·`SALARY_LOW`·`SALARY_HIGH`·`LOTTERY`), 지원자 초과 시 선발 기준(`VolunteerOverflowMode`), 학교 기본 내규 프리셋 저장(`ExternalExamSchoolConfig`·`ExternalExamConfigModal.jsx`), 공고 수정/삭제 UI(`ExternalExamView.jsx`·`ExternalExamRulePanel.jsx`)
-4. **[4단계] 주중 · 월중 행사 고도화 (`event_calendar`, `CalendarView.jsx`):** *(다음 착수 대상)*
-   - `월간 달력` · `주간업무표(월~금 교무회의/공문용)` · `취합 대기함` 3종 뷰 전환
-   - 다일 연속 행사(`EndDate`) 및 공휴일·재량휴업일·개교기념일 유형 지원(학기 필수 시수 원장에서 휴업일 자동 차감 연동)
-   - 단축수업(`40분`/`45분`/오전행사) 시종시간 변경(`BellOverride`) 원클릭 프리셋 UI 연결
-   - 전교/복수 학년/특정 반 및 복수 인솔교사 선택, 행사 장소(강당·시청각실 등)·동일 학년 교시 충돌 경고, 행사 수정·삭제·부서별 필터·반복 일정
-5. **[5단계] 전 페이지 UI/UX 스마트 시각화 (`방식 ①: Radix UI 확장 + 데이터 시각화`):**
+4. **[4단계] 주중 · 월중 행사 고도화 (`event_calendar`, `CalendarView.jsx`):** *(구현 완료)*
+   - [x] `월간 달력` · `주간업무표(월~금 교무회의/공문용)` · `취합 대기함` 3종 뷰 전환 (`CalendarView.jsx` · `CalendarViewsGrid.jsx` · `calendarUtils.js`)
+   - [x] 다일 연속 행사(`EndDate` · `event_helpers.go`) 및 공휴일·재량휴업일·개교기념일(`EventLinkHoliday`) 지원(학기 필수 시수 원장 `ledger.go` 자동 차감 및 교사 결강 부채 미생성 · `multiweek.go`/`solver.go` 휴업일 블록 연동)
+   - [x] 단축수업(`40분`/`45분`/오전행사) 시종시간 변경(`BellOverride` · `DefaultBellPresets`) 원클릭 프리셋 UI 연결 (`CalendarEventForm.jsx` · `/api/calendar/bell-presets`)
+   - [x] 전교/복수 학년/특정 반 및 복수 인솔교사 선택, 행사 장소(강당·시청각실 등)·동일 학년 교시 충돌 경고(`DetectConflicts` · `/api/calendar/conflicts`), 행사 수정(`UpdateEvent`)·삭제·부서별 필터·매주/매월 반복 일정(`expandRecurrencePairs`)
+5. **[5단계] 전 페이지 UI/UX 스마트 시각화 (`방식 ①: Radix UI 확장 + 데이터 시각화`):** *(다음 착수 대상)*
    - `@radix-ui/react-switch`, `collapsible`, `popover`, `progress` 추가 적용 및 이모지 → Lucide SVG/상태 도트 통일
    - 긴 설명문/상시 노출 폼 다이어트(접이식/모달 등록), 반응형 `TimetableCanvas`, 대시보드 현재 교시 타임라인 바
    - 클릭형 5×7 공강 히트맵(`ConstraintManager`), 학급 시수 게이지(`CurriculumLoadManager`), 정/부/복도 스택드 막대 차트(`ExamFairnessPanel`), D-Day 모집 카드(`ExternalExamView`), 월별 SVG 막대 차트·인라인 데이터 바(`ReportsSettlementView`), 시스템 관리 4탭·권한 체크 매트릭스(`AdminRemoteView`)

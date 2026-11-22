@@ -399,6 +399,9 @@ func slotConflictReasonWithConfig(
 }
 
 func matchesEventTarget(ev protocol.SchoolEvent, grade int, className string) bool {
+	if ev.LinkType == protocol.EventLinkHoliday && len(ev.TargetClasses) == 0 && len(ev.TargetGrades) == 0 {
+		return true
+	}
 	if len(ev.TargetClasses) > 0 && slices.Contains(ev.TargetClasses, className) {
 		return true
 	}
@@ -415,9 +418,9 @@ func eventBlockReason(grade int, className string, day, period int, weekMon stri
 	}
 	targetDate := DateForWeekday(weekMon, day)
 	for _, ev := range events {
-		if ev.Status == protocol.StatusApproved && ev.LinkType == protocol.EventLinkClassBlock && ev.EventDate == targetDate {
+		if protocol.EventBlocksClasses(ev) && protocol.EventCoversDate(ev, targetDate) {
 			if matchesEventTarget(ev, grade, className) && (ev.StartPeriod == 0 || (period >= ev.StartPeriod && period <= ev.EndPeriod)) {
-				return fmt.Sprintf("확정 행사 '%s'(%s) 수업블록과 충돌", ev.Title, ev.EventDate)
+				return fmt.Sprintf("확정 행사 '%s'(%s) 수업블록과 충돌", ev.Title, targetDate)
 			}
 		}
 	}

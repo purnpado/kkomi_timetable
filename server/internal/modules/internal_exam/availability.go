@@ -79,7 +79,7 @@ func buildUnavailableFromData(
 			}
 		}
 		for _, ev := range events {
-			if ev.Status == protocol.StatusApproved && ev.LinkType == protocol.EventLinkTeacherTrip && ev.EventDate == trimmed {
+			if ev.Status == protocol.StatusApproved && ev.LinkType == protocol.EventLinkTeacherTrip && protocol.EventCoversDate(ev, trimmed) {
 				for _, tid := range ev.LeadTeachers {
 					if res[tid] == "" {
 						res[tid] = fmt.Sprintf("학사행사 출장(%s)", ev.Title)

@@ -88,16 +88,16 @@ func (s *Service) onSchoolEventPublished(evt protocol.DomainEvent) {
 	if !ok || ev.Status != protocol.StatusApproved {
 		return
 	}
-	// [학년/전교 수업블록]은 정규 timetable_cells를 오염시키지 않고 해당 주차 조회(buildEffectiveWeekCells)에서 동적 합성
+	// 기존 승인 대기가 있던 행사 수정 재발행 시 이전 대기열 정리
+	prefix := fmt.Sprintf("evt-trip-%s-", ev.ID)
+	existingReqs, _ := s.ListRequests()
+	for _, rq := range existingReqs {
+		if strings.HasPrefix(rq.ID, prefix) && rq.Status == protocol.StatusStaging {
+			_ = s.store.DeleteRecord("timetable_requests", rq.ID)
+		}
+	}
+	// [학년/전교 수업블록]·[공휴일/휴업일]은 정규 timetable_cells를 오염시키지 않고 해당 주차 조회에서 동적 합성
 	if ev.LinkType != protocol.EventLinkTeacherTrip {
-		return
-	}
-	parsedDate, err := time.Parse("2006-01-02", ev.EventDate)
-	if err != nil {
-		return
-	}
-	wd := int(parsedDate.Weekday())
-	if wd < 1 || wd > 5 {
 		return
 	}
 	cells, _ := s.ListCells()
@@ -108,21 +108,37 @@ func (s *Service) onSchoolEventPublished(evt protocol.DomainEvent) {
 	}
 
 	nowStr := time.Now().Format("2006-01-02 15:04:05")
-	for _, tid := range ev.LeadTeachers {
-		for _, c := range cells {
-			if c.DayOfWeek == wd && slices.Contains(protocol.AllCellTeachers(c), tid) &&
-				(ev.StartPeriod == 0 || (c.Period >= ev.StartPeriod && c.Period <= ev.EndPeriod)) {
-				req := protocol.TimetableChangeRequest{
-					ID: fmt.Sprintf("evt-trip-%s-%s-%s", ev.ID, tid, c.ID),
-					RequestType: "EVENT_TRIP", Scope: "DATE_ONLY",
-					SourceDate: ev.EventDate, TargetDate: ev.EventDate,
-					RequesterID: tid, RequesterName: tNameMap[tid],
-					PartnerName: "보강교사 미배정", SourceCell: c, TargetCell: c,
-					Reason:    fmt.Sprintf("[행사 자동이관] %s 인솔 출장", ev.Title),
-					Status:    protocol.StatusStaging,
-					CreatedAt: nowStr,
+	dates := protocol.EventDates(ev)
+	multiDay := len(dates) > 1
+	for _, dateStr := range dates {
+		parsedDate, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			continue
+		}
+		wd := int(parsedDate.Weekday())
+		if wd < 1 || wd > 5 {
+			continue
+		}
+		for _, tid := range ev.LeadTeachers {
+			for _, c := range cells {
+				if c.DayOfWeek == wd && slices.Contains(protocol.AllCellTeachers(c), tid) &&
+					(ev.StartPeriod == 0 || (c.Period >= ev.StartPeriod && c.Period <= ev.EndPeriod)) {
+					reqID := fmt.Sprintf("evt-trip-%s-%s-%s", ev.ID, tid, c.ID)
+					if multiDay {
+						reqID = fmt.Sprintf("evt-trip-%s-%s-%s-%s", ev.ID, dateStr, tid, c.ID)
+					}
+					req := protocol.TimetableChangeRequest{
+						ID: reqID,
+						RequestType: "EVENT_TRIP", Scope: "DATE_ONLY",
+						SourceDate: dateStr, TargetDate: dateStr,
+						RequesterID: tid, RequesterName: tNameMap[tid],
+						PartnerName: "보강교사 미배정", SourceCell: c, TargetCell: c,
+						Reason:    fmt.Sprintf("[행사 자동이관] %s 인솔 출장", ev.Title),
+						Status:    protocol.StatusStaging,
+						CreatedAt: nowStr,
+					}
+					_ = s.store.SaveRecord("timetable_requests", req.ID, req)
 				}
-				_ = s.store.SaveRecord("timetable_requests", req.ID, req)
 			}
 		}
 	}

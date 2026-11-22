@@ -82,26 +82,35 @@ func buildEffectiveWeekCells(
 		out[i] = c
 	}
 
-	// 1. 해당 주차 확정 행사(CLASS_BLOCK) 반영
+	// 1. 해당 주차 확정 행사(CLASS_BLOCK) 및 공휴일/휴업일(HOLIDAY) 반영
 	for _, ev := range events {
-		if ev.Status != protocol.StatusApproved || ev.LinkType != protocol.EventLinkClassBlock {
+		if !protocol.EventBlocksClasses(ev) || !protocol.EventOverlapsRange(ev, monStr, friStr) {
 			continue
 		}
-		if ev.EventDate < monStr || ev.EventDate > friStr {
-			continue
+		notePrefix := "[행사블록]"
+		if ev.LinkType == protocol.EventLinkHoliday {
+			notePrefix = "[휴업일]"
 		}
-		parsed, err := time.Parse("2006-01-02", ev.EventDate)
-		if err != nil {
-			continue
-		}
-		wd := int(parsed.Weekday())
-		for i := range out {
-			if out[i].DayOfWeek != wd || !matchesEventTarget(ev, out[i].Grade, out[i].ClassName) {
+		for _, dateStr := range protocol.EventDates(ev) {
+			if dateStr < monStr || dateStr > friStr {
 				continue
 			}
-			if ev.StartPeriod == 0 || (out[i].Period >= ev.StartPeriod && out[i].Period <= ev.EndPeriod) {
-				out[i].BlockedBy = ev.Title
-				out[i].ChangeNote = fmt.Sprintf("[행사블록] %s", ev.Title)
+			parsed, err := time.Parse("2006-01-02", dateStr)
+			if err != nil {
+				continue
+			}
+			wd := int(parsed.Weekday())
+			if wd < 1 || wd > 5 {
+				continue
+			}
+			for i := range out {
+				if out[i].DayOfWeek != wd || !matchesEventTarget(ev, out[i].Grade, out[i].ClassName) {
+					continue
+				}
+				if ev.StartPeriod == 0 || (out[i].Period >= ev.StartPeriod && out[i].Period <= ev.EndPeriod) {
+					out[i].BlockedBy = ev.Title
+					out[i].ChangeNote = fmt.Sprintf("%s %s", notePrefix, ev.Title)
+				}
 			}
 		}
 	}

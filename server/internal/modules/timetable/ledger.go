@@ -124,55 +124,72 @@ func (s *Service) CalculateSemesterLedger() (protocol.SemesterLedgerReport, erro
 
 	var debts []protocol.MakeupDebtItem
 
-	// 1. 확정 학교 행사(CLASS_BLOCK)로 결손된 수업 집계 및 미보충 부채 등록
+	// 1. 확정 학교 행사(CLASS_BLOCK) 및 공휴일/휴업일(HOLIDAY) 처리 (다일 연속 행사 지원)
+	holidayDeductedHours := 0
 	for _, ev := range events {
-		if ev.Status != protocol.StatusApproved || ev.LinkType != protocol.EventLinkClassBlock {
+		if ev.Status != protocol.StatusApproved ||
+			(ev.LinkType != protocol.EventLinkClassBlock && ev.LinkType != protocol.EventLinkHoliday) {
 			continue
 		}
-		parsed, pErr := time.Parse("2006-01-02", ev.EventDate)
-		if pErr != nil {
-			continue
-		}
-		wd := int(parsed.Weekday())
-		if wd < 1 || wd > 5 {
-			continue
-		}
-		for _, c := range cells {
-			if c.DayOfWeek != wd || !matchesEventTarget(ev, c.Grade, c.ClassName) {
+		dates := protocol.EventDates(ev)
+		multiDay := len(dates) > 1
+		for _, dateStr := range dates {
+			parsed, pErr := time.Parse("2006-01-02", dateStr)
+			if pErr != nil {
 				continue
 			}
-			if ev.StartPeriod != 0 && (c.Period < ev.StartPeriod || c.Period > ev.EndPeriod) {
+			wd := int(parsed.Weekday())
+			if wd < 1 || wd > 5 {
 				continue
 			}
-			debtID := fmt.Sprintf("debt-evt-%s-%s", ev.ID, c.ID)
-			isResolved := resolvedMap[debtID]
-			status := "UNRESOLVED"
-			if isResolved {
-				status = "RESOLVED"
-			}
-			debts = append(debts, protocol.MakeupDebtItem{
-				ID:          debtID,
-				CellID:      c.ID,
-				Date:        ev.EventDate,
-				DayOfWeek:   c.DayOfWeek,
-				Period:      c.Period,
-				ClassName:   c.ClassName,
-				Subject:     c.Subject,
-				TeacherID:   c.TeacherID,
-				TeacherName: teacherName(c.TeacherID, tMap),
-				Reason:      fmt.Sprintf("[행사 결손] %s", ev.Title),
-				Status:      status,
-			})
-			rk := rowKey{className: c.ClassName, subject: c.Subject}
-			if row, ok := rowAcc[rk]; ok {
-				row.BlockedHours++
-				if isResolved {
-					row.AddedHours++
+			for _, c := range cells {
+				if c.DayOfWeek != wd || !matchesEventTarget(ev, c.Grade, c.ClassName) {
+					continue
 				}
-			}
-			if !isResolved {
-				if b := ensureBal(c.TeacherID); b != nil {
-					b.PendingDebts++
+				if ev.StartPeriod != 0 && (c.Period < ev.StartPeriod || c.Period > ev.EndPeriod) {
+					continue
+				}
+				rk := rowKey{className: c.ClassName, subject: c.Subject}
+				if ev.LinkType == protocol.EventLinkHoliday {
+					// 공휴일/재량휴업일은 학기 시수 원장에서 자동 차감하고 교사 미보충 부채는 생성하지 않음
+					if row, ok := rowAcc[rk]; ok {
+						row.BlockedHours++
+					}
+					holidayDeductedHours++
+					continue
+				}
+				debtID := fmt.Sprintf("debt-evt-%s-%s", ev.ID, c.ID)
+				if multiDay {
+					debtID = fmt.Sprintf("debt-evt-%s-%s-%s", ev.ID, dateStr, c.ID)
+				}
+				isResolved := resolvedMap[debtID]
+				status := "UNRESOLVED"
+				if isResolved {
+					status = "RESOLVED"
+				}
+				debts = append(debts, protocol.MakeupDebtItem{
+					ID:          debtID,
+					CellID:      c.ID,
+					Date:        dateStr,
+					DayOfWeek:   c.DayOfWeek,
+					Period:      c.Period,
+					ClassName:   c.ClassName,
+					Subject:     c.Subject,
+					TeacherID:   c.TeacherID,
+					TeacherName: teacherName(c.TeacherID, tMap),
+					Reason:      fmt.Sprintf("[행사 결손] %s", ev.Title),
+					Status:      status,
+				})
+				if row, ok := rowAcc[rk]; ok {
+					row.BlockedHours++
+					if isResolved {
+						row.AddedHours++
+					}
+				}
+				if !isResolved {
+					if b := ensureBal(c.TeacherID); b != nil {
+						b.PendingDebts++
+					}
 				}
 			}
 		}
@@ -247,11 +264,12 @@ func (s *Service) CalculateSemesterLedger() (protocol.SemesterLedgerReport, erro
 
 	var rows []protocol.SemesterLedgerRow
 	summary := map[string]int{
-		"totalTargetHours":    0,
-		"totalActualHours":    0,
-		"totalDeficitHours":   0,
-		"shortRowCount":       0,
-		"unresolvedDebtCount": 0,
+		"totalTargetHours":     0,
+		"totalActualHours":     0,
+		"totalDeficitHours":    0,
+		"shortRowCount":        0,
+		"unresolvedDebtCount":  0,
+		"holidayDeductedHours": holidayDeductedHours,
 	}
 	for _, r := range rowAcc {
 		r.ActualHours = r.TargetHours - r.BlockedHours + r.AddedHours

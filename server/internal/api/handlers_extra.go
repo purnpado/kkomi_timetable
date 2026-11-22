@@ -339,6 +339,10 @@ func (a *ServerApp) handleCalendarEvents(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, saved)
 		return
 	}
+	if r.Method == http.MethodPut {
+		a.handleCalendarUpdateEvent(w, r)
+		return
+	}
 	if r.Method == http.MethodDelete {
 		actor, ok := a.requireRole(w, r, protocol.RoleEventAdmin)
 		if !ok {
