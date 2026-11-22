@@ -8,15 +8,6 @@ import (
 	"kkomi-timetable/server/internal/database"
 )
 
-func equalizeAnnualLoads(
-	slots []protocol.ExamSlot,
-	regularTeachers []protocol.Teacher,
-	load map[string]*roleLoad,
-	deputyMode bool,
-) {
-	equalizeAnnualLoadsWithConstraints(slots, regularTeachers, load, deputyMode, nil, false, 0)
-}
-
 func equalizeAnnualLoadsWithConstraints(
 	slots []protocol.ExamSlot,
 	regularTeachers []protocol.Teacher,

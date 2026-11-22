@@ -31,9 +31,10 @@ func (s *Service) SwapSlots(slotID1, slotID2, actorName string) ([]protocol.Exam
 
 		idx1, idx2 := -1, -1
 		for i := range slots {
-			if slots[i].ID == slotID1 {
+			switch slots[i].ID {
+			case slotID1:
 				idx1 = i
-			} else if slots[i].ID == slotID2 {
+			case slotID2:
 				idx2 = i
 			}
 		}
