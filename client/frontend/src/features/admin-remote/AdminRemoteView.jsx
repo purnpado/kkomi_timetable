@@ -78,7 +78,7 @@ export default function AdminRemoteView({ serverUrl, serverVersion = "", user, t
     if (!file) return;
     const form = new FormData();
     form.append("file", file);
-    form.append("version", serverVersion || "0.1.01");
+    form.append("version", serverVersion || "0.2.0");
     try {
       const res = await apiFetch(serverUrl, endpoint, user.id, { method: "POST", body: form });
       onNotify("바이너리 원격 업데이트 전달", res.status || "패치가 등록되었습니다.", true);

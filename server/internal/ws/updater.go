@@ -23,7 +23,7 @@ import (
 )
 
 // ServerVersion은 현재 서버 바이너리의 릴리즈 버전입니다.
-const ServerVersion = "0.1.01"
+const ServerVersion = "0.2.0"
 
 // ClientPatchMeta는 서버에 등록된 최신 클라이언트 패치의 무결성 검증 메타데이터입니다.
 type ClientPatchMeta struct {

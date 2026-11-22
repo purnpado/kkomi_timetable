@@ -16,7 +16,7 @@ import (
 )
 
 // ClientVersion은 현재 교사 클라이언트의 릴리즈 버전입니다.
-const ClientVersion = "0.1.01"
+const ClientVersion = "0.2.0"
 
 // ClientConfig는 교사용 클라이언트의 서버 접속 정보(os.Executable() 기준 절대 경로 저장)입니다.
 type ClientConfig struct {

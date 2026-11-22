@@ -63,7 +63,7 @@ async function copyText(text) {
 
 function renderStatus(snap) {
   latestLanUrl = snap.lanUrl || "http://127.0.0.1:18090";
-  els.versionBadge.textContent = `v${snap.version || "0.1.01"}`;
+  els.versionBadge.textContent = `v${snap.version || "0.2.0"}`;
   els.lanUrlText.textContent = latestLanUrl;
   els.baseDirText.textContent = snap.baseDir ? `기준 폴더: ${snap.baseDir}` : "";
   els.dbModeBadge.textContent = snap.dbMode || "MariaDB 준비 중";

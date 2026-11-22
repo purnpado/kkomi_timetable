@@ -12,16 +12,16 @@
 ## 1. 배포 및 실행 파일명 규칙
 
 * **Windows 릴리즈 전용 (`dist/release/`):**
-  * **메인 서버:** `꼬미시간서버.exe` (교무실 공용 PC 1대에 배치. 가벼운 CMD 콘솔 서버로 실행되어 업무망 고정 IP/포트 및 DB 상태를 안내하며, 모든 기초 시간표·교사 등록·운영 작업은 클라이언트에서 마스터/담당 권한으로 원격 수행)
+  * **메인 서버:** `꼬미시간서버.exe` (교무실 공용 PC 1대에 배치. Wails v3 GUI 컨트롤 센터 및 시스템 트레이 상주로 LAN 주소 복사·초기화 진행률·즉시 백업·로그 뷰어를 제공하며 `--headless` 콘솔 모드도 지원)
   * **교사 클라이언트:** `꼬미시간.exe` (교사 개인 PC에 배치, Wails v3 GUI, 트레이 상주, 260px 사이드 도킹 위젯, 마스터/담당자용 학년별·학급별 기초 시간표 작성 및 교사 관리 지원)
-  * **통합 포터블 배포판:** `꼬미시간_v0.1.01_windows_portable.zip` (영문 호환본 `kkomi-timetable_v0.1.01.zip`)
+  * **통합 포터블 배포판:** `꼬미시간_v0.2.0_windows_portable.zip` (영문 호환본 `kkomi-timetable_v0.2.0.zip`)
 
 * **macOS 개발/검증 빌드 (`bin/darwin/`):**
   * `꼬미시간서버`, `꼬미시간서버.app`, `꼬미시간`, `꼬미시간.app` (Apple `codesign` 호환을 위해 `.app/Contents/MacOS/` 내부 실행 파일은 `kkomi-timetable-server`, `kkomi-timetable` 영문 식별자 사용)
 
 > **운영 원칙 (선 테스트 후 빌드 & GitHub Releases 기반 자동 업데이트):**
 > 1. **추측 구현 금지 ([AGENTS.md](AGENTS.md)):** 모든 변경은 로컬에서 `go vet ./...`, `go test -v ./...`(단위 + API/WebSocket E2E) 및 프론트엔드 빌드로 실제 검증을 통과한 뒤에만 `bin/` 및 릴리즈 빌드를 실행합니다.
-> 2. **현재 정식 릴리즈 버전 (`v0.1.01`):** `시스템·초기화·권한` 화면 또는 클라이언트 패치 기능에서 **GitHub Releases(`purnpado/kkomi_timetable`)** 최신 버전을 조회하고 서버·클라이언트를 원클릭으로 자동 업데이트할 수 있습니다.
+> 2. **현재 정식 릴리즈 버전 (`v0.2.0`):** `시스템·초기화·권한` 화면 또는 클라이언트 패치 기능에서 **GitHub Releases(`purnpado/kkomi_timetable`)** 최신 버전을 조회하고 서버·클라이언트를 원클릭으로 자동 업데이트할 수 있습니다.
 
 ---
 
@@ -125,7 +125,7 @@ go test -v ./...
 * **로컬/현장 테스트 시 파일 이동 안내:**
   * 본 프로그램은 `os.Executable()` 기준 절대 경로를 사용하는 **완전 포터블** 구조이므로, `bin/` 폴더 안의 실행 파일(`꼬미시간서버.exe`, `꼬미시간.exe` 또는 `꼬미시간서버.app`, `꼬미시간.app`)을 **다른 테스트 폴더(예: `바탕화면\테스트서버`, `바탕화면\테스트클라이언트`)로 그대로 복사하여 실행**하면 소스 폴더를 오염시키지 않고 깔끔하게 테스트할 수 있습니다. (단, macOS에서 `꼬미시간서버.app` / `꼬미시간.app`은 번들이므로 내부 파일만 빼지 말고 `.app` 폴더 전체를 복사해야 합니다.)
 * **Windows 정식 릴리즈 산출물 (`dist/release/`, `--release` 실행 시 생성):**
-  * `dist/release/꼬미시간서버.exe`, `dist/release/꼬미시간.exe`, `dist/release/꼬미시간_v0.1.01_windows_portable.zip`, `dist/release/kkomi-timetable_v0.1.01.zip`
+  * `dist/release/꼬미시간서버.exe`, `dist/release/꼬미시간.exe`, `dist/release/kkomi-timetable-server.exe`, `dist/release/kkomi-timetable-client.exe`, `dist/release/꼬미시간_v0.2.0_windows_portable.zip`, `dist/release/kkomi-timetable_v0.2.0.zip`
 
 ### 5.3. 초기 최고관리자 접속 및 개발용 예시 계정 (`--seed-demo` 옵션 실행 시)
 > * **기본 실사용 기동 (`꼬미시간서버`):** `admin` (`최고관리자`, 초기 비밀번호 `1234`) 1개 계정과 기본 일과·학교설정만 깨끗하게 초기화됩니다. 로그인 후 비밀번호를 변경하고 교사 명렬표 및 시수표를 등록하세요.
@@ -145,9 +145,9 @@ go test -v ./...
 
 ## 6. 현재 개발 상태 · 로드맵 ([ROADMAP.md](ROADMAP.md))
 
-* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.x` 차기 6단계 통합 고도화 전원 완료):**
+* **✅ 구현 완료 (`v0.1.01` ~ `v0.2.0` 차기 6단계 통합 고도화 전원 완료):**
   * [x] 1~6단계 코어 인프라, 포터블 MariaDB(TDE), 6종 RBAC(`최고관리자` 기본 계정 분리·권한 위임), 정규·다주간 시간표 & 1~4단계 연쇄교환, 교내·외부 시험감독, 행사 4종 연동, `.hwpx`/`.xlsx`/고대비 출력 완성
-  * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.1.01` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화 및 1~2단계 보안·동시성·도메인·문서 정합성 강화 완료
+  * [x] GitHub Releases(`purnpado/kkomi_timetable`) `v0.2.0` 자동 업데이트(OS 바이너리 헤더 검증 포함), macOS/Windows 실행 안정화 및 1~2단계 보안·동시성·도메인·문서 정합성 강화 완료
   * [x] **`v0.2.x` 3단계 완료:** 교사별 절대 금지·회의 공강(부장/교과 일괄)·기피 교시 제약(`constraints.go`), 시간표 A/B/C안 품질 비교·채택(`scenarios.go`), 서버 측 20단계 실행취소/다시실행(`history.go`)
   * [x] **`v0.2.x` 4단계 완료:** 다중일(3~5일) 지필고사 통합 편성·연강 감독 방지·일자별 부분 공개(`multiday.go`), 월별/학기별 교무업무 통합 정산·결보강 확인서 `.hwpx`/`.xlsx` 출력(`stats/service.go`, `settlement_exporter.go`)
   * [x] **`v0.2.x` 5단계 완료:** 시작·관리 화면 테스트/시연 문구 및 데모 ID 정리, 깨끗한 초기 기동(`EnsureCleanInit` + `--seed-demo` 분리), Radix UI 7종 전면 적용(`Tabs`, `ContextMenu`, `AlertDialog`, `Tooltip`, `DropdownMenu`, `Dialog`, `Toast`), 모션·접근성 마감 및 포터블 MariaDB `ibdata1` 초기화 중단 자동 복구(`InspectMariaDBDataDir`) 완료
