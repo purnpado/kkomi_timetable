@@ -6,6 +6,7 @@ import { downloadAuthenticatedFile } from "../../events/downloadHelper";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import AppTooltip from "../../components/ui/AppTooltip";
 import BellScheduleEditor from "./BellScheduleEditor";
+import BaseCellEditorCard from "./BaseCellEditorCard";
 
 const DAYS = ["", "월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
@@ -42,6 +43,7 @@ export default function BaseTimetableBuilder({
   }, [facultyTeachers]);
   const [teacherId, setTeacherId] = useState("");
   const [coTeacherId, setCoTeacherId] = useState("");
+  const [coTeacherIds, setCoTeacherIds] = useState([]);
   const [room, setRoom] = useState("1-1교실");
   const [electiveGroup, setElectiveGroup] = useState("");
   const [confirmDeleteSlot, setConfirmDeleteSlot] = useState(null);
@@ -81,11 +83,13 @@ export default function BaseTimetableBuilder({
       setSubjectCode(ex.subjectCode || "");
       setTeacherId(ex.teacherId || regularTeachers[0]?.id || "");
       setCoTeacherId(ex.coTeacherId || "");
+      setCoTeacherIds(ex.coTeacherIds || []);
       setRoom(ex.room || `${className}교실`);
       setElectiveGroup(ex.electiveGroup || "");
     } else {
       setRoom(`${className}교실`);
       setCoTeacherId("");
+      setCoTeacherIds([]);
       setElectiveGroup("");
     }
   };
@@ -105,6 +109,7 @@ export default function BaseTimetableBuilder({
           subjectCode,
           teacherId,
           coTeacherId,
+          coTeacherIds,
           room,
           electiveGroup,
           isLocked: Boolean(currentSlot?.isLocked),
@@ -363,73 +368,30 @@ export default function BaseTimetableBuilder({
           </table>
         </div>
 
-        <div className="card">
-          <h3 style={{ margin: "0 0 12px", fontSize: 15 }}>
-            {className}반 {DAYS[selectedDay]}요일 {selectedPeriod}교시 편집
-          </h3>
-          {regularTeachers.length === 0 ? (
-            <div style={{ fontSize: 13, color: "#64748b", padding: "12px 0" }}>
-              아직 등록된 교과 교사가 없습니다. 먼저 [교사 명렬표 관리] 탭에서 교사를 등록해 주세요.
-            </div>
-          ) : (
-            <form onSubmit={handleSaveCell} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="grid-2">
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700 }}>과목명</label>
-                  <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} required />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700 }}>나이스 과목코드</label>
-                  <input className="input" value={subjectCode} onChange={(e) => setSubjectCode(e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700 }}>담당교사 (중복·순회일 자동 검증)</label>
-                <select
-                  className="select"
-                  value={teacherId}
-                  onChange={(e) => {
-                    setTeacherId(e.target.value);
-                    if (teachersMap[e.target.value]?.subject) setSubject(teachersMap[e.target.value].subject);
-                  }}
-                >
-                  {regularTeachers.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.subject}{t.homeroomClass ? ` · ${t.homeroomClass}담임` : ""})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid-2">
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700 }}>코티칭 협력교사 (선택)</label>
-                  <select className="select" value={coTeacherId} onChange={(e) => setCoTeacherId(e.target.value)}>
-                    <option value="">없음</option>
-                    {regularTeachers.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.subject})</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700 }}>교실/특별실</label>
-                  <input className="input" value={room} onChange={(e) => setRoom(e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700 }}>고교학점제 선택블록 ID (선택)</label>
-                <input className="input" value={electiveGroup} onChange={(e) => setElectiveGroup(e.target.value)} placeholder="예: G2-EL-A (일반수업은 비워둠)" />
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button type="submit" className="btn btn-primary">
-                  <Save size={14} /> 교시 저장/반영
-                </button>
-                {currentSlot && (
-                  <button type="button" className="btn btn-danger" onClick={() => setConfirmDeleteSlot(currentSlot)}>
-                    <Trash2 size={14} /> 삭제
-                  </button>
-                )}
-              </div>
-            </form>
-          )}
-        </div>
+        <BaseCellEditorCard
+          className={className}
+          selectedDay={selectedDay}
+          selectedPeriod={selectedPeriod}
+          regularTeachers={regularTeachers}
+          teachersMap={teachersMap}
+          subject={subject}
+          setSubject={setSubject}
+          subjectCode={subjectCode}
+          setSubjectCode={setSubjectCode}
+          teacherId={teacherId}
+          setTeacherId={setTeacherId}
+          coTeacherId={coTeacherId}
+          setCoTeacherId={setCoTeacherId}
+          coTeacherIds={coTeacherIds}
+          setCoTeacherIds={setCoTeacherIds}
+          room={room}
+          setRoom={setRoom}
+          electiveGroup={electiveGroup}
+          setElectiveGroup={setElectiveGroup}
+          currentSlot={currentSlot}
+          onSaveCell={handleSaveCell}
+          onRequestDelete={setConfirmDeleteSlot}
+        />
       </div>
 
       <ConfirmDialog

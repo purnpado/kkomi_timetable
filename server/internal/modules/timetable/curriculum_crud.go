@@ -40,6 +40,14 @@ func (s *Service) GetSchoolConfig() (protocol.SchoolConfig, error) {
 	return database.DefaultSchoolConfig(), nil
 }
 
+func loadSchoolConfigTx(tx *database.TxStore) protocol.SchoolConfig {
+	loaded, err := database.LoadRecordTx[protocol.SchoolConfig](tx, "school_configs", "default")
+	if err == nil && loaded != nil {
+		return normalizeSchoolConfig(*loaded)
+	}
+	return database.DefaultSchoolConfig()
+}
+
 // SaveSchoolConfig는 학교 학급수, 요일별 시수 및 교과교실/특별실 목록을 저장합니다.
 func (s *Service) SaveSchoolConfig(cfg protocol.SchoolConfig) (protocol.SchoolConfig, error) {
 	cfg = normalizeSchoolConfig(cfg)
@@ -68,6 +76,11 @@ func normalizeSchoolConfig(cfg protocol.SchoolConfig) protocol.SchoolConfig {
 	}
 	if len(cfg.DailyPeriodLimits) == 0 {
 		cfg.DailyPeriodLimits = def.DailyPeriodLimits
+	}
+	for i := range cfg.SpecialRooms {
+		if cfg.SpecialRooms[i].MaxConcurrent <= 0 {
+			cfg.SpecialRooms[i].MaxConcurrent = 1
+		}
 	}
 	return cfg
 }
@@ -125,21 +138,23 @@ func (s *Service) SaveTeachingLoad(ld protocol.TeachingLoad) (protocol.TeachingL
 	ld.ClassHours = cleanedHours
 	ld.TotalHours = sum
 
+	cfg, _ := s.GetSchoolConfig()
 	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
+	tMap := make(map[string]protocol.Teacher, len(teachers))
 	for _, t := range teachers {
-		if t.ID == ld.TeacherID {
+		tMap[t.ID] = t
+	}
+	for _, tid := range protocol.AllLoadTeachers(ld) {
+		if t, ok := tMap[tid]; ok {
 			if protocol.IsSystemAdminAccount(t) || t.IsParentHonorary {
 				return ld, fmt.Errorf("%s 계정은 교과 시수표에 배정할 수 없습니다", t.Name)
 			}
-			ld.TeacherName = t.Name
-			if ld.DedicatedRoom == "" && t.DefaultRoom != "" {
-				ld.DedicatedRoom = t.DefaultRoom
-			}
 		}
-		if ld.CoTeacherID != "" && t.ID == ld.CoTeacherID {
-			if protocol.IsSystemAdminAccount(t) || t.IsParentHonorary {
-				return ld, fmt.Errorf("%s 계정은 교과 시수표 코티칭 교사로 배정할 수 없습니다", t.Name)
-			}
+	}
+	if mainT, ok := tMap[ld.TeacherID]; ok {
+		ld.TeacherName = mainT.Name
+		if ld.DedicatedRoom == "" && protocol.IsSubjectClassroomEnabled(cfg) && mainT.DefaultRoom != "" {
+			ld.DedicatedRoom = mainT.DefaultRoom
 		}
 	}
 	if ld.ID == "" {

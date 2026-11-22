@@ -17,6 +17,9 @@ import (
 
 // SaveCell은 마스터 또는 시간표 담당교사가 학년별·학급별 기초 시간표의 특정 교시 셀을 생성·수정합니다.
 func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell, error) {
+	if locked, wf := s.isWorkflowLocked(); locked {
+		return cell, fmt.Errorf("정규 시간표가 '%s'에 의해 최종 확정(잠금)되어 수정할 수 없습니다", wf.LockedBy)
+	}
 	if cell.DayOfWeek < 1 || cell.DayOfWeek > 5 || cell.Period < 1 || cell.Period > 7 {
 		return cell, errors.New("요일(1~5)과 교시(1~7)를 올바르게 지정해 주세요")
 	}
@@ -52,21 +55,29 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 	if protocol.IsSystemAdminAccount(teacher) || teacher.IsParentHonorary {
 		return cell, fmt.Errorf("%s 계정은 정규 시간표에 배정할 수 없습니다", teacher.Name)
 	}
-	if cell.CoTeacherID != "" {
-		coT, coOK := tMap[cell.CoTeacherID]
+	allCellTeachers := protocol.AllCellTeachers(cell)
+	for _, tid := range allCellTeachers {
+		if tid == cell.TeacherID {
+			continue
+		}
+		coT, coOK := tMap[tid]
 		if !coOK {
-			return cell, fmt.Errorf("지정한 코티칭 교사(%s)를 찾을 수 없습니다", cell.CoTeacherID)
+			return cell, fmt.Errorf("지정한 코티칭 교사(%s)를 찾을 수 없습니다", tid)
 		}
 		if protocol.IsSystemAdminAccount(coT) || coT.IsParentHonorary {
 			return cell, fmt.Errorf("%s 계정은 코티칭 교사로 배정할 수 없습니다", coT.Name)
+		}
+		if len(coT.ItinerantDays) > 0 && !slices.Contains(coT.ItinerantDays, cell.DayOfWeek) {
+			return cell, fmt.Errorf("코티칭 순회교사 %s 선생님은 해당 요일에 출강하지 않습니다", coT.Name)
 		}
 	}
 	if len(teacher.ItinerantDays) > 0 && !slices.Contains(teacher.ItinerantDays, cell.DayOfWeek) {
 		return cell, fmt.Errorf("순회교사 %s 선생님은 해당 요일에 출강하지 않습니다", teacher.Name)
 	}
 
+	cfg, _ := s.GetSchoolConfig()
 	if cell.Room == "" {
-		if teacher.DefaultRoom != "" {
+		if protocol.IsSubjectClassroomEnabled(cfg) && teacher.DefaultRoom != "" {
 			cell.Room = teacher.DefaultRoom
 		} else {
 			cell.Room = cell.ClassName + "교실"
@@ -74,16 +85,16 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 	}
 
 	constraints, _ := s.ListConstraints()
-	if reason := hardConstraintReason(cell.TeacherID, cell.DayOfWeek, cell.Period, constraints, tMap); reason != "" {
-		return cell, errors.New(reason)
-	}
-	if cell.CoTeacherID != "" {
-		if reason := hardConstraintReason(cell.CoTeacherID, cell.DayOfWeek, cell.Period, constraints, tMap); reason != "" {
+	for _, tid := range allCellTeachers {
+		if reason := hardConstraintReason(tid, cell.DayOfWeek, cell.Period, constraints, tMap); reason != "" {
 			return cell, errors.New(reason)
 		}
 	}
 
 	cells, _ := s.ListCells()
+	roomUsers := 0
+	var roomSample protocol.TimetableCell
+	roomLimited := protocol.IsSubjectClassroomEnabled(cfg) && cell.Room != cell.ClassName+"교실"
 	// 같은 학급·요일·교시에 기존 셀이 있으면 덮어쓰기 대상으로 통일
 	for _, existing := range cells {
 		if existing.DayOfWeek == cell.DayOfWeek && existing.Period == cell.Period && existing.ClassName == cell.ClassName {
@@ -91,16 +102,24 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 			continue
 		}
 		if existing.ID != cell.ID && existing.DayOfWeek == cell.DayOfWeek && existing.Period == cell.Period {
-			if existing.TeacherID == cell.TeacherID || existing.CoTeacherID == cell.TeacherID {
-				return cell, fmt.Errorf("%s 선생님은 동시간대에 %s반(%s) 수업이 이미 배정되어 있습니다", teacher.Name, existing.ClassName, existing.Subject)
+			existingTeachers := protocol.AllCellTeachers(existing)
+			for _, tid := range allCellTeachers {
+				if slices.Contains(existingTeachers, tid) {
+					return cell, fmt.Errorf("%s 선생님은 동시간대에 %s반(%s) 수업이 이미 배정되어 있습니다", teacherName(tid, tMap), existing.ClassName, existing.Subject)
+				}
 			}
-			if cell.CoTeacherID != "" && (existing.TeacherID == cell.CoTeacherID || existing.CoTeacherID == cell.CoTeacherID) {
-				coName := tMap[cell.CoTeacherID].Name
-				return cell, fmt.Errorf("코티칭 교사 %s 선생님이 동시간대 %s반 수업 중입니다", coName, existing.ClassName)
+			if roomLimited && existing.Room == cell.Room {
+				roomUsers++
+				if roomSample.ID == "" {
+					roomSample = existing
+				}
 			}
-			if cell.Room != cell.ClassName+"교실" && existing.Room == cell.Room {
-				return cell, fmt.Errorf("교과교실(%s)이 동시간대 %s반(%s)에서 이미 사용 중입니다", cell.Room, existing.ClassName, existing.Subject)
-			}
+		}
+	}
+	if roomLimited {
+		maxConc := protocol.RoomMaxConcurrent(cfg, cell.Room)
+		if roomUsers >= maxConc {
+			return cell, fmt.Errorf("교과교실(%s) 동시 수용(%d학급) 초과로 %s반(%s)에서 이미 사용 중입니다", cell.Room, maxConc, roomSample.ClassName, roomSample.Subject)
 		}
 	}
 
@@ -139,6 +158,9 @@ func (s *Service) SaveCell(cell protocol.TimetableCell) (protocol.TimetableCell,
 
 // DeleteCell은 기초 시간표의 특정 교시 셀을 삭제합니다.
 func (s *Service) DeleteCell(cellID string) error {
+	if locked, wf := s.isWorkflowLocked(); locked {
+		return fmt.Errorf("정규 시간표가 '%s'에 의해 최종 확정(잠금)되어 삭제할 수 없습니다", wf.LockedBy)
+	}
 	if strings.TrimSpace(cellID) == "" {
 		return errors.New("삭제할 셀 ID가 필요합니다")
 	}

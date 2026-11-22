@@ -330,16 +330,53 @@ func (a *ServerApp) handleTimetableRequests(w http.ResponseWriter, r *http.Reque
 		if !auth.HasRole(actor, protocol.RoleTimetableAdmin) {
 			req.RequesterID = actor.ID
 			req.RequesterName = actor.Name
+			req.AutoApprove = false
 		}
 		saved, err := a.Timetable.SubmitRequest(req)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if req.AutoApprove && auth.HasRole(actor, protocol.RoleTimetableAdmin) {
+			committed, cErr := a.Timetable.CommitRequest(saved.ID, actor.Name, true, "")
+			if cErr != nil {
+				_ = a.Store.DeleteRecord("timetable_requests", saved.ID)
+				writeError(w, http.StatusBadRequest, cErr.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, committed)
+			return
+		}
 		writeJSON(w, http.StatusOK, saved)
 		return
 	}
 	writeError(w, http.StatusMethodNotAllowed, "지원하지 않는 메서드입니다")
+}
+
+func (a *ServerApp) handleAgreeTimetableRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST 요청만 허용됩니다")
+		return
+	}
+	actor, ok := a.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		RequestID string `json:"requestId"`
+		Agreed    bool   `json:"agreed"`
+		Note      string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := a.Timetable.AgreeRequest(body.RequestID, actor.ID, actor.Name, body.Agreed, body.Note, auth.HasRole(actor, protocol.RoleTimetableAdmin))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (a *ServerApp) handleCommitTimetableRequest(w http.ResponseWriter, r *http.Request) {

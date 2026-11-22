@@ -80,10 +80,12 @@ func (a *ServerApp) handleAutoGenerateBaseTimetable(w http.ResponseWriter, r *ht
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"createdCount":  len(res.Cells),
-			"cells":         res.Cells,
-			"unplacedCount": res.UnplacedCount,
-			"warnings":      res.Warnings,
+			"createdCount":          len(res.Cells),
+			"cells":                 res.Cells,
+			"unplacedCount":         res.UnplacedCount,
+			"ejectionRepairedCount": res.EjectionRepairedCount,
+			"warnings":              res.Warnings,
+			"diagnostics":           res.Diagnostics,
 		})
 		return
 	}

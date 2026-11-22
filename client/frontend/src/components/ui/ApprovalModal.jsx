@@ -29,10 +29,18 @@ export default function ApprovalModal({ open, onOpenChange, queue, currentIndex,
           </div>
 
           <div style={{ fontSize: 13, color: "#475569", marginBottom: 14, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-            {item.scope === "DATE_ONLY" && <span className="badge badge-blue">해당 일자·주차 한정</span>}
+            {item.scope === "DATE_ONLY" || item.requestType === "CROSS_WEEK_SWAP" ? (
+              <span className="badge badge-blue">일회성 · 해당 일자·주차 한정</span>
+            ) : (
+              <span className="badge badge-amber">정규 시간표 영구 수정</span>
+            )}
+            <span className={`badge ${item.partnerAgreed ? "badge-green" : "badge-red"}`}>
+              {item.partnerAgreed ? "상대 교사 사전 합의 완료" : "상대 교사 합의 확인 필요"}
+            </span>
             <span>
-              {item.sourceDate ? `원본일 ${item.sourceDate} ↔ ` : ""}적용일 <b>{item.targetDate}</b> · 요청자 <b>{item.requesterName}</b> · 유형{" "}
+              {item.sourceDate ? `원본일 ${item.sourceDate} ↔ ` : ""}적용일 <b>{item.targetDate || "정규 공통"}</b> · 요청자 <b>{item.requesterName}</b> · 유형{" "}
               <b>{item.requestType}</b> · 사유: {item.reason}
+              {item.agreementNote ? ` (합의 메모: ${item.agreementNote})` : ""}
             </span>
           </div>
 

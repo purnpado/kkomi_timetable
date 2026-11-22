@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, Copy, FileSpreadsheet, FileText, History, PlusCircle, Redo2, Sliders, TableProperties, Undo2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, BookOpenCheck, CheckSquare, ChevronLeft, ChevronRight, ClipboardList, Compass, FileSpreadsheet, FileText, History, Lock, Redo2, Sliders, TableProperties, Undo2, Users, Workflow, Wrench } from "lucide-react";
 import TimetableCanvas from "../../components/canvas/TimetableCanvas";
 import { apiFetch, hasRegularClasses, hasRole, isFacultyTeacher, isSubstituteExcluded } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
@@ -13,12 +13,21 @@ import ConstraintManager from "./ConstraintManager";
 import ScenarioComparePanel from "./ScenarioComparePanel";
 import MultiWeekAbsenceView, { addDaysISO, getMondayISO } from "./MultiWeekAbsenceView";
 import TeacherManagerCard from "../admin-remote/TeacherManagerCard";
+import SwapExplorerModal from "./SwapExplorerModal";
+import TimetableRequestAndNEISPanel from "./TimetableRequestAndNEISPanel";
+import TimetableWorkflowPanel from "./TimetableWorkflowPanel";
+import SemesterLedgerPanel from "./SemesterLedgerPanel";
 
 // TimetableView는 60fps HTML5 Canvas 다주간 시간표 조정, 주중 미출근·주차간 교환,
 // 교사별 시수표/교과교실·공강제약·시나리오 비교 및 실행취소(Undo/Redo)·나이스(NEIS) 입력 도우미를 제공합니다.
 export default function TimetableView({ serverUrl, user, cells, teachers, requests, bellSchedule, onRefresh, onOpenApproval, onNotify }) {
-  const [subTab, setSubTab] = useState("board"); // "board" | "multiweek" | "curriculum" | "constraints" | "scenarios" | "builder" | "teachers"
+  const [subTab, setSubTab] = useState("board");
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => getMondayISO());
+  const [changeScope, setChangeScope] = useState("DATE_ONLY");
+  const [moveWholeBlock, setMoveWholeBlock] = useState(true);
+  const [explorerOpen, setExplorerOpen] = useState(false);
+  const [selectedCellId, setSelectedCellId] = useState("");
+  const [workflowState, setWorkflowState] = useState({ phase: "COLLECTING" });
   const [weekCells, setWeekCells] = useState(null);
   const [filterClass, setFilterClass] = useState("ALL");
   const [activeChain, setActiveChain] = useState(null);
@@ -27,6 +36,14 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
   const [reqType, setReqType] = useState("SWAP");
   const [sourceId, setSourceId] = useState(cells[0]?.id || "");
   const [partnerId, setPartnerId] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    apiFetch(serverUrl, "/api/timetable/workflow", user.id)
+      .then((wf) => { if (alive && wf) setWorkflowState(wf); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [serverUrl, user?.id, cells]);
 
   const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
   const partnerTeachers = useMemo(() => {
@@ -149,7 +166,8 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           targetPeriod,
           targetClass: sourceCell.className,
           targetTeacher: sourceCell.teacherId,
-          targetDate: selectedWeekStart,
+          targetDate: changeScope === "DATE_ONLY" ? selectedWeekStart || getMondayISO() : "",
+          moveWholeBlock,
         }),
       });
     } catch {
@@ -158,16 +176,21 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
   };
 
   const handleRequestFromCanvas = async (srcCell, tgtCell, targetDay, targetPeriod, evalRes) => {
-    if (evalRes.mode === "TRIANGLE" || evalRes.mode === "QUAD") {
+    if (evalRes.mode === "TRIANGLE" || evalRes.mode === "QUAD" || evalRes.mode === "BLOCK_MOVE") {
       setActiveChain({ evalResult: evalRes });
-      onNotify(`${evalRes.chainSteps?.length || 3}단계 연쇄 교환 경로 확인`, "아래 연쇄 교환 미리보기에서 1~4단계 변경 과정을 확인한 뒤 신청하세요.");
+      onNotify(`${evalRes.chainSteps?.length || 3}단계 변경 경로 확인`, "아래 연쇄 교환 미리보기에서 단계별 변경 과정을 확인한 뒤 신청하세요.");
       return;
     }
+    const isDateOnly = changeScope === "DATE_ONLY";
+    const effDate = isDateOnly ? srcCell.lessonDate || selectedWeekStart || getMondayISO() : "";
     try {
       await apiFetch(serverUrl, "/api/timetable/requests", user.id, {
         method: "POST",
         body: JSON.stringify({
-          requestType: tgtCell ? "SWAP" : "MOVE",
+          requestType: evalRes.mode || (tgtCell ? "SWAP" : "MOVE"),
+          scope: changeScope,
+          sourceDate: effDate,
+          targetDate: effDate,
           requesterId: user.id,
           requesterName: teachersMap[srcCell.teacherId]?.name || user.name,
           partnerId: tgtCell ? tgtCell.teacherId : srcCell.teacherId,
@@ -176,39 +199,13 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           sourceCell: srcCell,
           targetCell: tgtCell || { ...srcCell, id: "", dayOfWeek: targetDay, period: targetPeriod },
           chainSteps: evalRes.chainSteps || [],
-          reason: `[Canvas 조정: ${evalRes.mode}] ${evalRes.reason}`,
+          reason: `[Canvas ${isDateOnly ? "일회성" : "정규"}:${evalRes.mode}] ${evalRes.reason}`,
         }),
       });
-      onNotify("대기열(STAGING) 등록 완료", "시간표 담당교사가 최종 선택(서버 반영)을 누르면 마스터 시간표에 반영됩니다.");
+      onNotify("대기열(STAGING) 등록 완료", "시간표 담당교사가 최종 선택(서버 반영)을 누르면 반영됩니다.");
       onRefresh();
     } catch (err) {
       onNotify("등록 오류", err.message, true);
-    }
-  };
-
-  const handleManualSubmit = async (e) => {
-    e.preventDefault();
-    const src = cells.find((c) => c.id === sourceId) || cells[0];
-    if (!src || !partnerId) return;
-    try {
-      await apiFetch(serverUrl, "/api/timetable/requests", user.id, {
-        method: "POST",
-        body: JSON.stringify({
-          requestType: reqType,
-          requesterId: user.id,
-          requesterName: user.name,
-          partnerId,
-          partnerName: teachersMap[partnerId]?.name || partnerId,
-          partnerAgreed: true,
-          sourceCell: src,
-          targetCell: { ...src, teacherId: partnerId },
-          reason,
-        }),
-      });
-      onNotify("수업 변경 신청 완료", "담당교사의 승인 대기열로 전달되었습니다.");
-      onRefresh();
-    } catch (err) {
-      onNotify("신청 실패", err.message, true);
     }
   };
 
@@ -236,6 +233,12 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
             </Tabs.Trigger>
             <Tabs.Trigger value="multiweek" className="radix-tabs-trigger">
               <AlertTriangle size={14} /> 주중 미출근 · 다음주 교환
+            </Tabs.Trigger>
+            <Tabs.Trigger value="workflow" className="radix-tabs-trigger">
+              <Workflow size={14} /> 창체 · 편성단계
+            </Tabs.Trigger>
+            <Tabs.Trigger value="ledger" className="radix-tabs-trigger">
+              <ClipboardList size={14} /> 학기 시수 원장
             </Tabs.Trigger>
             {isAdmin && (
               <>
@@ -285,6 +288,10 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
           onRefresh={onRefresh}
           onNotify={onNotify}
         />
+      ) : subTab === "workflow" ? (
+        <TimetableWorkflowPanel serverUrl={serverUrl} user={user} onRefresh={onRefresh} onNotify={onNotify} />
+      ) : subTab === "ledger" ? (
+        <SemesterLedgerPanel serverUrl={serverUrl} user={user} onNotify={onNotify} />
       ) : isAdmin && subTab === "curriculum" ? (
         <CurriculumLoadManager serverUrl={serverUrl} user={user} teachers={teachers} onRefresh={onRefresh} onNotify={onNotify} />
       ) : isAdmin && subTab === "constraints" ? (
@@ -310,15 +317,21 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
         <>
           <div className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, fontSize: 17 }}>정규·다주간 스마트 시간표 보드 (Canvas)</h2>
                 <select className="select" style={{ width: 150 }} value={filterClass} onChange={(e) => setFilterClass(e.target.value)}>
                   {classList.map((c) => (
                     <option key={c} value={c}>{c === "ALL" ? "전체 학급 보기" : `${c}반 시간표`}</option>
                   ))}
                 </select>
+                {workflowState.phase === "LOCKED" && (
+                  <span className="badge badge-red"><Lock size={11} /> 정규 잠금됨</span>
+                )}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setExplorerOpen(true)}>
+                  <Compass size={14} /> 수업 교체 전수 탐색
+                </button>
                 {isAdmin && (
                   <button type="button" className="btn btn-primary btn-sm" onClick={onOpenApproval}>
                     <CheckSquare size={14} /> 대기열 비교 승인 ({(requests || []).filter((r) => r.status === "STAGING").length}건)
@@ -328,7 +341,7 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
               </div>
             </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "8px 10px", marginBottom: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "8px 10px", marginBottom: 8, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 <button type="button" className="btn btn-sm" onClick={() => setSelectedWeekStart(addDaysISO(selectedWeekStart || thisMonday, -7))}>
                   <ChevronLeft size={13} /> 이전 주
@@ -345,13 +358,23 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
                 <button type="button" className="btn btn-sm" onClick={() => setSelectedWeekStart(addDaysISO(selectedWeekStart || thisMonday, 7))}>
                   다음 주 <ChevronRight size={13} />
                 </button>
-                <button type="button" className={`btn btn-sm ${selectedWeekStart === "" ? "btn-primary" : ""}`} onClick={() => setSelectedWeekStart("")}>
+                <button type="button" className={`btn btn-sm ${selectedWeekStart === "" ? "btn-primary" : ""}`} onClick={() => { setSelectedWeekStart(""); setChangeScope(""); }}>
                   정규 기본 시간표
                 </button>
               </div>
-              <span className="badge badge-blue">
-                {selectedWeekStart ? `조회 주간: ${selectedWeekStart} ~ ${addDaysISO(selectedWeekStart, 4)}` : "정규 기본 시간표 (전체 주차 공통)"}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <select className="select" style={{ width: 175 }} value={changeScope} onChange={(e) => setChangeScope(e.target.value)}>
+                  <option value="DATE_ONLY">변경 모드: 일회성(주차 한정)</option>
+                  <option value="">변경 모드: 정규 영구 수정</option>
+                </select>
+                <label style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <input type="checkbox" checked={moveWholeBlock} onChange={(e) => setMoveWholeBlock(e.target.checked)} />
+                  선택·연강 통째이동
+                </label>
+                <span className="badge badge-blue">
+                  {selectedWeekStart ? `조회 주간: ${selectedWeekStart} ~ ${addDaysISO(selectedWeekStart, 4)}` : "정규 기본 시간표 (전체 주차 공통)"}
+                </span>
+              </div>
             </div>
 
             <TimetableCanvas
@@ -360,6 +383,7 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
               bellSchedule={bellSchedule}
               filterClass={filterClass}
               weekStart={selectedWeekStart}
+              onSelectCell={(c) => { setSelectedCellId(c.id); setSourceId(c.id); }}
               onEvaluateDrop={handleEvaluateDrop}
               onRequestCommit={handleRequestFromCanvas}
             />
@@ -370,79 +394,51 @@ export default function TimetableView({ serverUrl, user, cells, teachers, reques
             user={user}
             cells={activeCells}
             teachersMap={teachersMap}
+            weekStart={selectedWeekStart}
+            changeScope={changeScope}
             activeChain={activeChain}
             onClearChain={() => setActiveChain(null)}
             onRefresh={onRefresh}
             onNotify={onNotify}
           />
 
-          <div className="grid-2">
-            <div className="card">
-              <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>수업 교환 / 결보강 신청 (STAGING 등록)</h3>
-              <form onSubmit={handleManualSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="grid-2">
-                  <select className="select" value={reqType} onChange={(e) => setReqType(e.target.value)}>
-                    <option value="SWAP">수업 맞교환</option>
-                    <option value="SUBSTITUTE">결보강 신청</option>
-                  </select>
-                  <select className="select" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-                    {(cells || []).map((c) => (
-                      <option key={c.id} value={c.id}>{c.className} {c.dayOfWeek}요일 {c.period}교시 ({c.subject})</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid-2">
-                  <select className="select" value={partnerId} onChange={(e) => setPartnerId(e.target.value)}>
-                    {partnerTeachers.length === 0 ? (
-                      <option value="">선택 가능한 교사 없음</option>
-                    ) : (
-                      partnerTeachers.map((t) => (
-                        <option key={t.id} value={t.id}>{t.name} ({t.subject})</option>
-                      ))
-                    )}
-                  </select>
-                  <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="신청 사유" />
-                </div>
-                <button type="submit" className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={cells.length === 0}>
-                  <PlusCircle size={15} /> 대기열 등록 요청
-                </button>
-              </form>
-            </div>
+          <TimetableRequestAndNEISPanel
+            serverUrl={serverUrl}
+            user={user}
+            isAdmin={isAdmin}
+            cells={cells}
+            requests={requests}
+            approvedList={approvedList}
+            teachersMap={teachersMap}
+            partnerTeachers={partnerTeachers}
+            reqType={reqType}
+            setReqType={setReqType}
+            sourceId={sourceId}
+            setSourceId={setSourceId}
+            partnerId={partnerId}
+            setPartnerId={setPartnerId}
+            reason={reason}
+            setReason={setReason}
+            changeScope={changeScope}
+            setChangeScope={setChangeScope}
+            selectedWeekStart={selectedWeekStart}
+            onRefresh={onRefresh}
+            onNotify={onNotify}
+          />
 
-            <div className="card">
-              <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>나이스(NEIS) 입력 도우미 (확정 순 정렬)</h3>
-              {approvedList.length === 0 ? (
-                <div style={{ fontSize: 13, color: "#64748b" }}>확정된 수업 변경 내역이 없습니다.</div>
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr><th>일자/학급</th><th>교시</th><th>과목코드</th><th>변경 내역</th></tr>
-                  </thead>
-                  <tbody>
-                    {approvedList.map((r) => (
-                      <tr key={r.id}>
-                        <td>{r.targetDate} · {r.sourceCell?.className}</td>
-                        <td>{r.sourceCell?.period}교시</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            onClick={() => {
-                              navigator.clipboard?.writeText(r.sourceCell?.subjectCode || "");
-                              onNotify("나이스 코드 복사", `과목코드 '${r.sourceCell?.subjectCode}'가 복사되었습니다.`);
-                            }}
-                          >
-                            <Copy size={11} /> {r.sourceCell?.subjectCode || "코드"}
-                          </button>
-                        </td>
-                        <td>{r.requesterName} → {r.partnerName}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
+          <SwapExplorerModal
+            open={explorerOpen}
+            onOpenChange={setExplorerOpen}
+            serverUrl={serverUrl}
+            user={user}
+            cells={activeCells}
+            teachersMap={teachersMap}
+            weekStart={selectedWeekStart || thisMonday}
+            defaultScope={changeScope}
+            initialSourceId={selectedCellId || sourceId}
+            onRefresh={onRefresh}
+            onNotify={onNotify}
+          />
         </>
       )}
     </div>

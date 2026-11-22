@@ -80,8 +80,9 @@ type TimetableCell struct {
 	Grade         int    `json:"grade"`                // 1, 2, 3
 	Subject       string `json:"subject"`              // 과목명
 	SubjectCode   string `json:"subjectCode"`          // 나이스(NEIS) 과목 코드
-	TeacherID     string `json:"teacherId"`            // 주 담당 교사 ID
-	CoTeacherID   string `json:"coTeacherId"`          // 코티칭 협력 교사 ID (선택)
+	TeacherID     string   `json:"teacherId"`            // 주 담당 교사 ID
+	CoTeacherID   string   `json:"coTeacherId"`          // 코티칭 협력 교사 ID (선택)
+	CoTeacherIDs  []string `json:"coTeacherIds,omitempty"` // 복수 코티칭 협력 교사 ID 목록 (3인 이상 지원)
 	Room          string `json:"room"`                 // 교실 또는 이동수업/교과교실 전용실
 	ElectiveGroup string `json:"electiveGroup"`        // 고교학점제 이동수업 동시간대 블록 그룹 ID
 	BlockGroupID  string `json:"blockGroupID"`         // 연속 블록타임 묶음 ID
@@ -93,21 +94,24 @@ type TimetableCell struct {
 
 // SpecialRoom은 교과교실제 전용 강의실 및 특별실(과학실·컴퓨터실·음악실 등) 정의입니다.
 type SpecialRoom struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Subject  string `json:"subject"`
-	Capacity int    `json:"capacity"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Subject       string `json:"subject"`
+	Capacity      int    `json:"capacity"`
+	MaxConcurrent int    `json:"maxConcurrent,omitempty"` // 동시 수용 학급수 (기본 1, 예: 체육관 2학급)
 }
 
 // SchoolConfig는 학교 기본사항(학년별 학급수, 가상학급수, 요일별 기준 시수, 교과교실) 설정입니다.
 type SchoolConfig struct {
-	ID                 string              `json:"id"`
-	SchoolName         string              `json:"schoolName"`
-	AcademicYear       int                 `json:"academicYear"`
-	GradeClassCounts   map[int]int         `json:"gradeClassCounts"`   // 학년 -> 실제 학급수 (1~3)
-	VirtualClassCounts map[int]int         `json:"virtualClassCounts"` // 학년 -> 수준별/선택 가상학급수
-	DailyPeriodLimits  map[int]map[int]int `json:"dailyPeriodLimits"`  // 학년 -> (요일 1~5 -> 기준 교시수)
-	SpecialRooms       []SpecialRoom       `json:"specialRooms"`       // 교과교실·특별실 등록부
+	ID                   string                 `json:"id"`
+	SchoolName           string                 `json:"schoolName"`
+	AcademicYear         int                    `json:"academicYear"`
+	GradeClassCounts     map[int]int            `json:"gradeClassCounts"`               // 학년 -> 실제 학급수 (1~3)
+	VirtualClassCounts   map[int]int            `json:"virtualClassCounts"`             // 학년 -> 수준별/선택 가상학급수
+	DailyPeriodLimits    map[int]map[int]int    `json:"dailyPeriodLimits"`              // 학년 -> (요일 1~5 -> 기준 교시수)
+	SpecialRooms         []SpecialRoom          `json:"specialRooms"`                   // 교과교실·특별실 등록부
+	SubjectClassroomMode *bool                  `json:"subjectClassroomMode,omitempty"` // 교과교실제 활성화 여부 (nil이면 기본 true)
+	CreativeActivities   []CreativeActivitySlot `json:"creativeActivities,omitempty"`   // 창체 동시/고정 편성 슬롯
 }
 
 // TeachingLoad는 컴시간 방식 교사별·과목별·학급별 주당 배당 시수표 행 모델입니다.
@@ -119,12 +123,13 @@ type TeachingLoad struct {
 	ShortSubject      string         `json:"shortSubject"`
 	SubjectCode       string         `json:"subjectCode"`
 	Grade             int            `json:"grade"`
-	ClassHours        map[string]int `json:"classHours"`        // 학급명("1-1") -> 주당 시수
-	TotalHours        int            `json:"totalHours"`        // 행 합계 시수
-	BlockHours        int            `json:"blockHours"`        // 연속수업 시수 (예: 2연강=2)
-	SimultaneousGroup string         `json:"simultaneousGroup"` // 동시수업/수준별 그룹 코드
-	DedicatedRoom     string         `json:"dedicatedRoom"`     // 지정 교과교실/특별실
-	CoTeacherID       string         `json:"coTeacherId"`       // 복수교사(코티칭) ID
+	ClassHours        map[string]int `json:"classHours"`             // 학급명("1-1") -> 주당 시수
+	TotalHours        int            `json:"totalHours"`             // 행 합계 시수
+	BlockHours        int            `json:"blockHours"`             // 연속수업 시수 (예: 2연강=2)
+	SimultaneousGroup string         `json:"simultaneousGroup"`      // 동시수업/수준별 그룹 코드
+	DedicatedRoom     string         `json:"dedicatedRoom"`          // 지정 교과교실/특별실
+	CoTeacherID       string         `json:"coTeacherId"`            // 복수교사(코티칭) ID
+	CoTeacherIDs      []string       `json:"coTeacherIds,omitempty"` // 3인 이상 복수교사 ID 목록
 }
 
 // ChainSwapStep은 삼각(3단계) 또는 사각(4단계) 연쇄 수업 교환의 단계별 상세 이동 내역입니다.
@@ -147,12 +152,13 @@ type ChainSwapStep struct {
 
 // EvaluateMoveRequest는 시간표 Canvas 드래그 앤 드롭 시 신호등 판정을 요청하는 구조체입니다.
 type EvaluateMoveRequest struct {
-	SourceCellID  string `json:"sourceCellId"`
-	TargetDay     int    `json:"targetDay"`
-	TargetPeriod  int    `json:"targetPeriod"`
-	TargetClass   string `json:"targetClass"`
-	TargetTeacher string `json:"targetTeacher"`
-	TargetDate    string `json:"targetDate,omitempty"` // 특정 주차·일자 컨텍스트 (YYYY-MM-DD, 비어 있으면 정규 시간표)
+	SourceCellID   string `json:"sourceCellId"`
+	TargetDay      int    `json:"targetDay"`
+	TargetPeriod   int    `json:"targetPeriod"`
+	TargetClass    string `json:"targetClass"`
+	TargetTeacher  string `json:"targetTeacher"`
+	TargetDate     string `json:"targetDate,omitempty"`     // 특정 주차·일자 컨텍스트 (YYYY-MM-DD, 비어 있으면 정규 시간표)
+	MoveWholeBlock bool   `json:"moveWholeBlock,omitempty"` // 고교학점제 선택블록/연강 통째 이동 여부
 }
 
 // MoveEvaluationResult는 신호등 판정 결과(GREEN/YELLOW/RED)와 다단계 연쇄 교환 과정을 담습니다.
@@ -175,8 +181,11 @@ type TimetableChangeRequest struct {
 	RequesterName string          `json:"requesterName"`
 	PartnerID     string          `json:"partnerId"` // 맞교환/보강 교사 ID
 	PartnerName   string          `json:"partnerName"`
-	PartnerAgreed bool            `json:"partnerAgreed"`        // 상대 교사 동의 여부
-	SourceCell    TimetableCell   `json:"sourceCell"`           // 변경 전 셀
+	PartnerAgreed   bool            `json:"partnerAgreed"`             // 상대 교사 동의 여부
+	AgreementNote   string          `json:"agreementNote,omitempty"`   // 사전 합의/동의 메모
+	PartnerAgreedAt string          `json:"partnerAgreedAt,omitempty"` // 상대 교사 동의 시각
+	AutoApprove     bool            `json:"autoApprove,omitempty"`     // 일과계·교무부장 즉시 반영 요청 플래그
+	SourceCell      TimetableCell   `json:"sourceCell"`                // 변경 전 셀
 	TargetCell    TimetableCell   `json:"targetCell"`           // 변경 후/대상 셀
 	ChainSteps    []ChainSwapStep `json:"chainSteps,omitempty"` // 다단계 연쇄 교환 1~4단계 목록
 	Reason        string          `json:"reason"`               // 신청 사유 또는 비고

@@ -103,14 +103,14 @@
    - [x] `admin` 시스템 계정 프론트엔드 6곳 완전 격리 (`CurriculumLoadManager.jsx`, `TimetableView.jsx`, `MultiWeekAbsenceView.jsx`, `CalendarView.jsx`, `CommandPalette.jsx`, `TeacherManagerCard.jsx` + `AdminRemoteView.jsx` 시스템 전용 영역 분리)
    - [x] 비교과 교사(특수·보건·전문상담·사서·영양·기타) 유형 분리 및 수업 유무 / 결보강 대타 제외 속성 추가 (`pkg/protocol/models.go`, `auth/service.go`, `absence.go`, `base_builder.go`, `xlsx_teachers.go`)
    - [x] 특수교사 `특수학급고사실` 전담 배정 로직 구현 (`internal_exam/special_class.go`, `assigner.go`, `availability.go` — 특수학급고사실 개설 시 특수교사 최우선 배정, 부재 시 일반교사 폴백 및 대타 추천 1순위)
-2. **[2단계] 시간표 엔진 & 실무 프로세스 고도화:** *(다음 착수 대상)*
-   - **일회성(주차 한정) vs 정규 시간표 변경** 기본 분리 (`TimetableView.jsx` Canvas 드래그 수정 포함)
-   - **수업 교체 모든 경우의 수 전수 탐색 + 품질 정렬 모달** (`solver.go`: 1:1 맞교환 · 삼각 3단계 · 사각 4단계 · 다주간 +1~4주+ 후보 전수 탐색, 기피교시/연강 점수 정렬 및 사각 단계별 경로 표시)
-   - FET 방식 재귀적 교환(Ejection Chain) + 불가능 시수 역추적 진단기 보강 (`curriculum.go`)
-   - 창체(자율·진로·봉사·동아리) 동시/고정 편성, 교과부장 시수 제출/취합 및 가편성 피드백 → 최종 확정(Lock) 워크플로우
-   - 교과교실제 On/Off 및 특별실별 동시 수용 학급수(예: 체육관/운동장 2학급), 고교학점제 선택블록 통째 이동 · 2연강 보호 · 3인+ 코티칭
-   - **학기당 과목별 필수 시수 확보 원장 & 미보충 수업 부채 추적**, 교사 간 사전합의/동의 보고 + 일과계 즉시 교체 옵션
-3. **[3단계] 교내 · 외부 시험감독 고도화:**
+2. **[2단계] 시간표 엔진 & 실무 프로세스 고도화:** *(구현 완료)*
+   - [x] **일회성(주차 한정) vs 정규 시간표 변경** 기본 분리 (`multiweek.go`, `TimetableView.jsx`, `TimetableRequestAndNEISPanel.jsx`, `ApprovalModal.jsx`)
+   - [x] **수업 교체 모든 경우의 수 전수 탐색 + 품질 정렬 모달** (`solver_explore.go`, `SwapExplorerModal.jsx`: `MOVE` · `SWAP` · `TRIANGLE` · `QUAD` · `CROSS_WEEK` +1~4주 · `BLOCK_MOVE` 전수 탐색 및 기피교시/복잡도 품질 점수 정렬)
+   - [x] FET 방식 재귀적 교환(Ejection Chain) + 불가능 시수 역추적 진단기 보강 (`curriculum_fet.go`, `curriculum.go`, `CurriculumDiagnosticsBox.jsx`)
+   - [x] 창체(자율·진로·봉사·동아리) 동시/고정 편성, 교과부장 시수 제출/취합 및 가편성 피드백 → 최종 확정(Lock) 워크플로우 (`curriculum_workflow.go`, `TimetableWorkflowPanel.jsx`)
+   - [x] 교과교실제 On/Off 및 특별실별 동시 수용 학급수(`MaxConcurrent`, 예: 체육관 2학급), 고교학점제 선택블록 통째 이동 · 2연강 보호 · 3인+ 코티칭 (`solver_block.go`, `models_stage2.go`, `BaseCellEditorCard.jsx`, `CurriculumLoadManager.jsx`)
+   - [x] **학기당 과목별 필수 시수 확보 원장 & 미보충 수업 부채 추적**, 교사 간 사전합의/동의 보고(`AgreeRequest`) + 일과계 즉시 교체(`AutoApprove`) 옵션 (`ledger.go`, `SemesterLedgerPanel.jsx`, `service.go`, `handlers.go`, `handlers_stage2.go`)
+3. **[3단계] 교내 · 외부 시험감독 고도화:** *(다음 착수 대상)*
    - **교내:** 동일 고사실 중복 배정 금지, 사회적 약자(임산부·원로교사 등)·보직 차등 감면(최대 N회 상한·경감·연강 절대 금지), 해당 학년/출제 교사만 배제 옵션, 감염병 분리고사실 1·2·3실 복수 개설, 고교학점제 다과목 동시 이동시험 및 공강 학생 자습실 감독, 자동 배정 후 수동 맞교환, 개인별 감독 시간표
    - **외부:** 기본 3종(`검정고시`, `수능감독`, `임용고사`) + 담당자 자유 추가, 종목별 가중치 점수제 또는 별도 순번 트랙, 전입순 양방향(최근 전입자 우선 / 장기근속 우선) + 전입 1년차 유예, 시험 종류별 제외 규칙(수능 고3 담임·수험생자녀·기간제 등), 동점자 공정 처리(연령/호봉/가나다/공정 추첨), 지원자 초과 시 선발 기준, 학교 기본 내규 프리셋 저장, 공고 수정/삭제 UI 연결
 4. **[4단계] 주중 · 월중 행사 고도화 (`event_calendar`, `CalendarView.jsx`):**

@@ -29,6 +29,18 @@ func EvaluateMoveWithConstraints(
 	events []protocol.SchoolEvent,
 	constraints []protocol.TeacherConstraint,
 ) protocol.MoveEvaluationResult {
+	return EvaluateMoveWithConfig(req, cells, teachers, events, constraints, protocol.SchoolConfig{})
+}
+
+// EvaluateMoveWithConfig는 학교 설정(교과교실제 On/Off, 특별실 동시 수용 한도, 선택블록/연강 이동)을 포함해 신호등을 판정합니다.
+func EvaluateMoveWithConfig(
+	req protocol.EvaluateMoveRequest,
+	cells []protocol.TimetableCell,
+	teachers map[string]protocol.Teacher,
+	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
+	cfg protocol.SchoolConfig,
+) protocol.MoveEvaluationResult {
 	var src *protocol.TimetableCell
 	for i := range cells {
 		if cells[i].ID == req.SourceCellID {
@@ -48,11 +60,21 @@ func EvaluateMoveWithConstraints(
 	if src.BlockedBy != "" {
 		return protocol.MoveEvaluationResult{Signal: "RED", Mode: "BLOCKED", Reason: fmt.Sprintf("행사 블록('%s')으로 잠긴 수업입니다", src.BlockedBy)}
 	}
+	if req.MoveWholeBlock && (src.ElectiveGroup != "" || src.BlockGroupID != "") {
+		return evaluateWholeBlockMove(*src, req, cells, teachers, events, constraints, cfg)
+	}
 	if src.ElectiveGroup != "" {
 		return protocol.MoveEvaluationResult{
 			Signal: "RED",
 			Mode:   "BLOCKED",
-			Reason: fmt.Sprintf("고교학점제 선택과목(%s) 동시간대 블록으로 단독 이동 불가", src.ElectiveGroup),
+			Reason: fmt.Sprintf("고교학점제 선택과목(%s) 동시간대 블록으로 단독 이동 불가 (블록 통째 이동 모드를 사용하세요)", src.ElectiveGroup),
+		}
+	}
+	if src.BlockGroupID != "" {
+		return protocol.MoveEvaluationResult{
+			Signal: "RED",
+			Mode:   "BLOCKED",
+			Reason: "연강(블록) 수업 보호: 단독 이동/교환 불가 (블록 통째 이동 모드를 사용하세요)",
 		}
 	}
 	weekMon := ""
@@ -62,11 +84,8 @@ func EvaluateMoveWithConstraints(
 	if blk := eventBlockReason(src.Grade, src.ClassName, req.TargetDay, req.TargetPeriod, weekMon, events); blk != "" {
 		return protocol.MoveEvaluationResult{Signal: "RED", Mode: "BLOCKED", Reason: blk}
 	}
-	if itn := itinerantReason(src.TeacherID, req.TargetDay, teachers); itn != "" {
-		return protocol.MoveEvaluationResult{Signal: "RED", Mode: "BLOCKED", Reason: itn}
-	}
-	if src.CoTeacherID != "" {
-		if itn := itinerantReason(src.CoTeacherID, req.TargetDay, teachers); itn != "" {
+	for _, tid := range protocol.AllCellTeachers(*src) {
+		if itn := itinerantReason(tid, req.TargetDay, teachers); itn != "" {
 			return protocol.MoveEvaluationResult{Signal: "RED", Mode: "BLOCKED", Reason: itn}
 		}
 	}
@@ -81,7 +100,7 @@ func EvaluateMoveWithConstraints(
 
 	// 1. 빈 교시 단순 이동 검사
 	if targetCell == nil {
-		conflict := slotConflictReason(*src, req.TargetDay, req.TargetPeriod, weekMon, map[string]bool{src.ID: true}, cells, teachers, events, constraints)
+		conflict := slotConflictReasonWithConfig(*src, req.TargetDay, req.TargetPeriod, weekMon, map[string]bool{src.ID: true}, cells, teachers, events, constraints, cfg)
 		if conflict == "" {
 			step := buildChainStep(1, *src, src.DayOfWeek, src.Period, req.TargetDay, req.TargetPeriod, teachers)
 			reason := "빈 교시로 즉시 이동 가능합니다"
@@ -95,7 +114,7 @@ func EvaluateMoveWithConstraints(
 				ChainSteps: []protocol.ChainSwapStep{step},
 			}
 		}
-		if mode, path, steps := findEmptyTargetChain(src, req.TargetDay, req.TargetPeriod, weekMon, cells, teachers, events, constraints); len(steps) > 0 {
+		if mode, path, steps := findEmptyTargetChainWithConfig(src, req.TargetDay, req.TargetPeriod, weekMon, cells, teachers, events, constraints, cfg); len(steps) > 0 {
 			return protocol.MoveEvaluationResult{
 				Signal:       "YELLOW",
 				Mode:         mode,
@@ -116,11 +135,14 @@ func EvaluateMoveWithConstraints(
 	if targetCell.ElectiveGroup != "" {
 		return protocol.MoveEvaluationResult{Signal: "RED", Mode: "BLOCKED", Reason: "대상 수업이 고교학점제 블록 수업입니다"}
 	}
+	if targetCell.BlockGroupID != "" {
+		return protocol.MoveEvaluationResult{Signal: "RED", Mode: "BLOCKED", Reason: "대상 수업이 연강(블록) 보호 수업입니다"}
+	}
 
 	// 2. 1:1 맞교환 판정
 	ignoreBoth := map[string]bool{src.ID: true, targetCell.ID: true}
-	srcConflict := slotConflictReason(*src, targetCell.DayOfWeek, targetCell.Period, weekMon, ignoreBoth, cells, teachers, events, constraints)
-	tgtConflict := slotConflictReason(*targetCell, src.DayOfWeek, src.Period, weekMon, ignoreBoth, cells, teachers, events, constraints)
+	srcConflict := slotConflictReasonWithConfig(*src, targetCell.DayOfWeek, targetCell.Period, weekMon, ignoreBoth, cells, teachers, events, constraints, cfg)
+	tgtConflict := slotConflictReasonWithConfig(*targetCell, src.DayOfWeek, src.Period, weekMon, ignoreBoth, cells, teachers, events, constraints, cfg)
 	if srcConflict == "" && tgtConflict == "" {
 		reason := fmt.Sprintf("%s(%s) ↔ %s(%s) 1:1 수업 맞교환 가능", src.Subject, teacherName(src.TeacherID, teachers), targetCell.Subject, teacherName(targetCell.TeacherID, teachers))
 		var sNotes []string
@@ -145,7 +167,7 @@ func EvaluateMoveWithConstraints(
 	}
 
 	// 3. 3단계(삼각) → 4단계(사각) 순환 연쇄 교환 탐색
-	if mode, path, steps := findCyclicChainSwap(src, targetCell, weekMon, cells, teachers, events, constraints); len(steps) > 0 {
+	if mode, path, steps := findCyclicChainSwapWithConfig(src, targetCell, weekMon, cells, teachers, events, constraints, cfg); len(steps) > 0 {
 		return protocol.MoveEvaluationResult{
 			Signal:       "YELLOW",
 			Mode:         mode,
@@ -169,7 +191,7 @@ func modeLabel(mode string) string {
 	return "삼각 교환 1~3단계"
 }
 
-func findEmptyTargetChain(
+func findEmptyTargetChainWithConfig(
 	src *protocol.TimetableCell,
 	td, tp int,
 	weekMon string,
@@ -177,6 +199,7 @@ func findEmptyTargetChain(
 	teachers map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
 	constraints []protocol.TeacherConstraint,
+	cfg protocol.SchoolConfig,
 ) (string, []string, []protocol.ChainSwapStep) {
 	classCells := sameClassCandidates(src.ClassName, cells, src.ID)
 	// 2단계 연쇄 (중간 -> 빈칸, 원본 -> 중간)
@@ -185,8 +208,8 @@ func findEmptyTargetChain(
 			continue
 		}
 		ign := map[string]bool{src.ID: true, mid.ID: true}
-		if slotConflictReason(mid, td, tp, weekMon, ign, cells, teachers, events, constraints) == "" &&
-			slotConflictReason(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
+		if slotConflictReasonWithConfig(mid, td, tp, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+			slotConflictReasonWithConfig(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" {
 			steps := []protocol.ChainSwapStep{
 				buildChainStep(1, mid, mid.DayOfWeek, mid.Period, td, tp, teachers),
 				buildChainStep(2, *src, src.DayOfWeek, src.Period, mid.DayOfWeek, mid.Period, teachers),
@@ -197,22 +220,23 @@ func findEmptyTargetChain(
 	return "", nil, nil
 }
 
-func findCyclicChainSwap(
+func findCyclicChainSwapWithConfig(
 	src, tgt *protocol.TimetableCell,
 	weekMon string,
 	cells []protocol.TimetableCell,
 	teachers map[string]protocol.Teacher,
 	events []protocol.SchoolEvent,
 	constraints []protocol.TeacherConstraint,
+	cfg protocol.SchoolConfig,
 ) (string, []string, []protocol.ChainSwapStep) {
 	classCells := sameClassCandidates(src.ClassName, cells, src.ID, tgt.ID)
 
 	// 1) 3단계 삼각 순환 (A→B→C→A 또는 A→C→B→A)
 	for _, mid := range classCells {
 		ign := map[string]bool{src.ID: true, tgt.ID: true, mid.ID: true}
-		if slotConflictReason(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-			slotConflictReason(mid, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-			slotConflictReason(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
+		if slotConflictReasonWithConfig(*src, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+			slotConflictReasonWithConfig(mid, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+			slotConflictReasonWithConfig(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" {
 			steps := []protocol.ChainSwapStep{
 				buildChainStep(1, *src, src.DayOfWeek, src.Period, mid.DayOfWeek, mid.Period, teachers),
 				buildChainStep(2, mid, mid.DayOfWeek, mid.Period, tgt.DayOfWeek, tgt.Period, teachers),
@@ -220,9 +244,9 @@ func findCyclicChainSwap(
 			}
 			return "TRIANGLE", []string{src.ID, mid.ID, tgt.ID}, steps
 		}
-		if slotConflictReason(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-			slotConflictReason(*tgt, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-			slotConflictReason(mid, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
+		if slotConflictReasonWithConfig(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+			slotConflictReasonWithConfig(*tgt, mid.DayOfWeek, mid.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+			slotConflictReasonWithConfig(mid, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" {
 			steps := []protocol.ChainSwapStep{
 				buildChainStep(1, *src, src.DayOfWeek, src.Period, tgt.DayOfWeek, tgt.Period, teachers),
 				buildChainStep(2, *tgt, tgt.DayOfWeek, tgt.Period, mid.DayOfWeek, mid.Period, teachers),
@@ -239,10 +263,10 @@ func findCyclicChainSwap(
 				continue
 			}
 			ign := map[string]bool{src.ID: true, tgt.ID: true, m1.ID: true, m2.ID: true}
-			if slotConflictReason(*src, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-				slotConflictReason(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-				slotConflictReason(m2, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-				slotConflictReason(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
+			if slotConflictReasonWithConfig(*src, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+				slotConflictReasonWithConfig(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+				slotConflictReasonWithConfig(m2, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+				slotConflictReasonWithConfig(*tgt, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" {
 				steps := []protocol.ChainSwapStep{
 					buildChainStep(1, *src, src.DayOfWeek, src.Period, m1.DayOfWeek, m1.Period, teachers),
 					buildChainStep(2, m1, m1.DayOfWeek, m1.Period, m2.DayOfWeek, m2.Period, teachers),
@@ -251,10 +275,10 @@ func findCyclicChainSwap(
 				}
 				return "QUAD", []string{src.ID, m1.ID, m2.ID, tgt.ID}, steps
 			}
-			if slotConflictReason(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-				slotConflictReason(*tgt, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-				slotConflictReason(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events, constraints) == "" &&
-				slotConflictReason(m2, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints) == "" {
+			if slotConflictReasonWithConfig(*src, tgt.DayOfWeek, tgt.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+				slotConflictReasonWithConfig(*tgt, m1.DayOfWeek, m1.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+				slotConflictReasonWithConfig(m1, m2.DayOfWeek, m2.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" &&
+				slotConflictReasonWithConfig(m2, src.DayOfWeek, src.Period, weekMon, ign, cells, teachers, events, constraints, cfg) == "" {
 				steps := []protocol.ChainSwapStep{
 					buildChainStep(1, *src, src.DayOfWeek, src.Period, tgt.DayOfWeek, tgt.Period, teachers),
 					buildChainStep(2, *tgt, tgt.DayOfWeek, tgt.Period, m1.DayOfWeek, m1.Period, teachers),
@@ -271,7 +295,7 @@ func findCyclicChainSwap(
 func sameClassCandidates(className string, cells []protocol.TimetableCell, excludeIDs ...string) []protocol.TimetableCell {
 	var out []protocol.TimetableCell
 	for _, c := range cells {
-		if c.ClassName != className || c.IsLocked || c.BlockedBy != "" || c.ElectiveGroup != "" || slices.Contains(excludeIDs, c.ID) {
+		if c.ClassName != className || c.IsLocked || c.BlockedBy != "" || c.ElectiveGroup != "" || c.BlockGroupID != "" || slices.Contains(excludeIDs, c.ID) {
 			continue
 		}
 		out = append(out, c)
@@ -292,11 +316,8 @@ func buildChainStep(step int, cell protocol.TimetableCell, fd, fp, td, tp int, t
 
 func softNotesForSlot(cell protocol.TimetableCell, day, period int, constraints []protocol.TeacherConstraint, teachers map[string]protocol.Teacher) string {
 	var notes []string
-	if s := softConstraintReason(cell.TeacherID, day, period, constraints, teachers); s != "" {
-		notes = append(notes, s)
-	}
-	if cell.CoTeacherID != "" {
-		if s := softConstraintReason(cell.CoTeacherID, day, period, constraints, teachers); s != "" {
+	for _, tid := range protocol.AllCellTeachers(cell) {
+		if s := softConstraintReason(tid, day, period, constraints, teachers); s != "" {
 			notes = append(notes, s)
 		}
 	}
@@ -313,42 +334,66 @@ func slotConflictReason(
 	events []protocol.SchoolEvent,
 	constraints []protocol.TeacherConstraint,
 ) string {
+	return slotConflictReasonWithConfig(cell, day, period, weekMon, ignoreIDs, cells, teachers, events, constraints, protocol.SchoolConfig{})
+}
+
+func slotConflictReasonWithConfig(
+	cell protocol.TimetableCell,
+	day, period int,
+	weekMon string,
+	ignoreIDs map[string]bool,
+	cells []protocol.TimetableCell,
+	teachers map[string]protocol.Teacher,
+	events []protocol.SchoolEvent,
+	constraints []protocol.TeacherConstraint,
+	cfg protocol.SchoolConfig,
+) string {
 	if blk := eventBlockReason(cell.Grade, cell.ClassName, day, period, weekMon, events); blk != "" {
 		return blk
 	}
-	if itn := itinerantReason(cell.TeacherID, day, teachers); itn != "" {
-		return itn
-	}
-	if hr := hardConstraintReason(cell.TeacherID, day, period, constraints, teachers); hr != "" {
-		return hr
-	}
-	if cell.CoTeacherID != "" {
-		if itn := itinerantReason(cell.CoTeacherID, day, teachers); itn != "" {
+	cellTeachers := protocol.AllCellTeachers(cell)
+	for _, tid := range cellTeachers {
+		if itn := itinerantReason(tid, day, teachers); itn != "" {
 			return itn
 		}
-		if hr := hardConstraintReason(cell.CoTeacherID, day, period, constraints, teachers); hr != "" {
+		if hr := hardConstraintReason(tid, day, period, constraints, teachers); hr != "" {
 			return hr
 		}
 	}
+	roomUsers := 0
+	var roomSample protocol.TimetableCell
+	roomLimited := protocol.IsSubjectClassroomEnabled(cfg) && cell.Room != "" && cell.Room != cell.ClassName+"교실"
 	for _, c := range cells {
 		if ignoreIDs[c.ID] || c.DayOfWeek != day || c.Period != period {
 			continue
 		}
-		if c.TeacherID == cell.TeacherID || c.CoTeacherID == cell.TeacherID {
-			return fmt.Sprintf("%s 선생님이 동시간대 %s반(%s) 수업 중입니다", teacherName(cell.TeacherID, teachers), c.ClassName, c.Subject)
+		cTeachers := protocol.AllCellTeachers(c)
+		for _, tid := range cellTeachers {
+			if slices.Contains(cTeachers, tid) {
+				prefix := ""
+				if tid != cell.TeacherID {
+					prefix = "코티칭 "
+				}
+				return fmt.Sprintf("%s%s 선생님이 동시간대 %s반(%s) 수업 중입니다", prefix, teacherName(tid, teachers), c.ClassName, c.Subject)
+			}
 		}
-		if cell.CoTeacherID != "" && (c.TeacherID == cell.CoTeacherID || c.CoTeacherID == cell.CoTeacherID) {
-			return fmt.Sprintf("코티칭 %s 선생님이 동시간대 %s반(%s) 수업 중입니다", teacherName(cell.CoTeacherID, teachers), c.ClassName, c.Subject)
-		}
-		if cell.Room != "" && cell.Room != cell.ClassName+"교실" && c.Room == cell.Room {
-			return fmt.Sprintf("교과교실(%s)이 동시간대 %s반(%s)에서 사용 중입니다", cell.Room, c.ClassName, c.Subject)
+		if roomLimited && c.Room == cell.Room {
+			roomUsers++
+			if roomSample.ID == "" {
+				roomSample = c
+			}
 		}
 	}
-	if exceedsThreeConsecutiveMap(cell.TeacherID, day, period, ignoreIDs, cells) {
-		return fmt.Sprintf("%s 선생님의 3연강 초과 제한에 걸립니다", teacherName(cell.TeacherID, teachers))
+	if roomLimited {
+		maxConc := protocol.RoomMaxConcurrent(cfg, cell.Room)
+		if roomUsers >= maxConc {
+			return fmt.Sprintf("교과교실(%s) 동시 수용(%d학급) 초과로 %s반(%s)에서 사용 중입니다", cell.Room, maxConc, roomSample.ClassName, roomSample.Subject)
+		}
 	}
-	if cell.CoTeacherID != "" && exceedsThreeConsecutiveMap(cell.CoTeacherID, day, period, ignoreIDs, cells) {
-		return fmt.Sprintf("코티칭 %s 선생님의 3연강 초과 제한에 걸립니다", teacherName(cell.CoTeacherID, teachers))
+	for _, tid := range cellTeachers {
+		if exceedsThreeConsecutiveMap(tid, day, period, ignoreIDs, cells) {
+			return fmt.Sprintf("%s 선생님의 3연강 초과 제한에 걸립니다", teacherName(tid, teachers))
+		}
 	}
 	return ""
 }
@@ -396,7 +441,7 @@ func teacherName(id string, teachers map[string]protocol.Teacher) string {
 func exceedsThreeConsecutiveMap(teacherID string, day, targetPeriod int, ignoreIDs map[string]bool, cells []protocol.TimetableCell) bool {
 	occupied := make(map[int]bool)
 	for _, c := range cells {
-		if !ignoreIDs[c.ID] && c.DayOfWeek == day && (c.TeacherID == teacherID || c.CoTeacherID == teacherID) {
+		if !ignoreIDs[c.ID] && c.DayOfWeek == day && slices.Contains(protocol.AllCellTeachers(c), teacherID) {
 			occupied[c.Period] = true
 		}
 	}

@@ -1,17 +1,20 @@
 import React, { useMemo, useState } from "react";
 import { ArrowRight, Building2, GitBranch, Search } from "lucide-react";
-import { apiFetch } from "../../events/eventStore";
+import { apiFetch, hasRole } from "../../events/eventStore";
 
 const DAYS = ["", "월", "화", "수", "목", "금"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7];
 
-// ChainSwapPreview는 [삼각·사각 연쇄 교환 1~4단계 변경 과정 시각화/신청]과
-// [교과교실(특별실)별 주간 사용 시간표 및 빈 교시 열람]을 제공합니다.
-export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, activeChain, onClearChain, onRefresh, onNotify }) {
+// ChainSwapPreview는 [삼각·사각 연쇄·블록 이동 미리보기/신청]과
+// [교과교실(특별실)별 동시 수용 현황 및 빈 강의실 열람]을 제공합니다.
+export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, weekStart = "", changeScope = "DATE_ONLY", activeChain, onClearChain, onRefresh, onNotify }) {
   const [simSourceId, setSimSourceId] = useState(cells?.[0]?.id || "");
   const [simDay, setSimDay] = useState(2);
   const [simPeriod, setSimPeriod] = useState(2);
+  const [moveWholeBlock, setMoveWholeBlock] = useState(true);
+  const [instantApply, setInstantApply] = useState(false);
   const [simEval, setSimEval] = useState(null);
+  const isAdmin = hasRole(user, "TIMETABLE_ADMIN");
 
   const roomOptions = useMemo(() => {
     const set = new Set(["과학실1", "컴퓨터실", "음악실", "미술실", "체육관", "수학전용1실"]);
@@ -38,6 +41,8 @@ export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, 
           targetPeriod: Number(simPeriod),
           targetClass: src.className,
           targetTeacher: src.teacherId,
+          targetDate: changeScope === "DATE_ONLY" ? weekStart : "",
+          moveWholeBlock,
         }),
       });
       setSimEval(res);
@@ -51,17 +56,24 @@ export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, 
     if (!currentSteps.length) return;
     const first = currentSteps[0];
     const last = currentSteps[currentSteps.length - 1];
+    const firstCell = (cells || []).find((c) => c.id === first.cellId) || {};
+    const isDateOnly = changeScope === "DATE_ONLY";
+    const effDate = isDateOnly ? firstCell.lessonDate || weekStart || new Date().toISOString().slice(0, 10) : "";
     try {
       await apiFetch(serverUrl, "/api/timetable/requests", user.id, {
         method: "POST",
         body: JSON.stringify({
           requestType: currentEval.mode || "TRIANGLE",
+          scope: changeScope,
+          sourceDate: effDate,
+          targetDate: effDate,
           requesterId: user.id,
           requesterName: first.teacherName || user.name,
           partnerId: last.teacherId || first.teacherId,
-          partnerName: `${currentSteps.length}단계 연쇄(${last.teacherName})`,
+          partnerName: `${currentSteps.length}단계(${last.teacherName})`,
           partnerAgreed: true,
-          sourceCell: (cells || []).find((c) => c.id === first.cellId) || {},
+          autoApprove: Boolean(isAdmin && instantApply),
+          sourceCell: firstCell,
           targetCell: (cells || []).find((c) => c.id === last.cellId) || {
             className: first.className,
             dayOfWeek: first.toDay,
@@ -69,12 +81,15 @@ export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, 
             subject: first.subject,
           },
           chainSteps: currentSteps,
-          reason: `[${currentSteps.length}단계 연쇄교환] ${currentEval.reason}`,
+          reason: `[${currentSteps.length}단계 ${isDateOnly ? "일회성" : "정규"}] ${currentEval.reason}`,
         }),
       });
       setSimEval(null);
       if (onClearChain) onClearChain();
-      onNotify("연쇄 교환 대기열 등록 완료", `${currentSteps.length}단계 변경 과정이 시간표 담당자 승인 대기열에 등록되었습니다.`);
+      onNotify(
+        isAdmin && instantApply ? "연쇄 이동 즉시 반영 완료" : "연쇄 교환 대기열 등록 완료",
+        isAdmin && instantApply ? `${currentSteps.length}단계 변경이 즉시 반영되었습니다.` : `${currentSteps.length}단계 변경 과정이 승인 대기열에 등록되었습니다.`
+      );
       onRefresh();
     } catch (err) {
       onNotify("신청 실패", err.message, true);
@@ -112,6 +127,10 @@ export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, 
           <button type="submit" className="btn btn-sm btn-primary">
             <Search size={13} /> 경로 탐색
           </button>
+          <label style={{ fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <input type="checkbox" checked={moveWholeBlock} onChange={(e) => setMoveWholeBlock(e.target.checked)} />
+            블록 통째이동
+          </label>
         </form>
 
         {!currentEval ? (
@@ -148,9 +167,17 @@ export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, 
                 </div>
               </div>
             ))}
-            <button type="button" className="btn btn-sm btn-green" style={{ alignSelf: "flex-start", marginTop: 4 }} onClick={handleSubmitChain}>
-              이 {currentSteps.length}단계 연쇄 교환 대기열 신청
-            </button>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+              <button type="button" className="btn btn-sm btn-green" onClick={handleSubmitChain}>
+                {isAdmin && instantApply ? `이 ${currentSteps.length}단계 경로 즉시 반영` : `이 ${currentSteps.length}단계 연쇄 교환 대기열 신청`}
+              </button>
+              {isAdmin && (
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#087f5b", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <input type="checkbox" checked={instantApply} onChange={(e) => setInstantApply(e.target.checked)} />
+                  일과계 즉시 반영
+                </label>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -173,14 +200,16 @@ export default function ChainSwapPreview({ serverUrl, user, cells, teachersMap, 
               <tr key={p}>
                 <td><b>{p}교시</b></td>
                 {[1, 2, 3, 4, 5].map((d) => {
-                  const occ = (cells || []).find((c) => c.room === selectedRoom && c.dayOfWeek === d && c.period === p);
+                  const occList = (cells || []).filter((c) => c.room === selectedRoom && c.dayOfWeek === d && c.period === p);
                   return (
-                    <td key={d} style={{ background: occ ? "#fff9db" : "#e6fcf5", minWidth: 70 }}>
-                      {occ ? (
-                        <div>
-                          <b>{occ.className} {occ.subject}</b>
-                          <div style={{ fontSize: 10.5, color: "#475569" }}>{teachersMap[occ.teacherId]?.name || occ.teacherId}</div>
-                        </div>
+                    <td key={d} style={{ background: occList.length > 0 ? "#fff9db" : "#e6fcf5", minWidth: 70 }}>
+                      {occList.length > 0 ? (
+                        occList.map((occ) => (
+                          <div key={occ.id} style={{ marginBottom: occList.length > 1 ? 3 : 0 }}>
+                            <b>{occ.className} {occ.subject}</b>
+                            <div style={{ fontSize: 10.5, color: "#475569" }}>{teachersMap[occ.teacherId]?.name || occ.teacherId}</div>
+                          </div>
+                        ))
                       ) : (
                         <span style={{ color: "#087f5b" }}>비어있음</span>
                       )}

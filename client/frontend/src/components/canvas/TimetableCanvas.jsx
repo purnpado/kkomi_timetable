@@ -24,7 +24,7 @@ function formatHeaderMD(weekStart, dayIdx) {
 
 // TimetableCanvas는 HTML5 Canvas 60fps 기반 HiDPI 시간표 그리드입니다.
 // 과목별 컬러 코딩, 교시별 일과시간·주차별 날짜 표시, 드래그 고스트 및 신호등 가이드를 제공합니다.
-export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [], filterClass, weekStart = "", onEvaluateDrop, onRequestCommit }) {
+export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [], filterClass, weekStart = "", onSelectCell, onEvaluateDrop, onRequestCommit }) {
   const canvasRef = useRef(null);
   const [hoverInfo, setHoverInfo] = useState(null);
   const [dragState, setDragState] = useState(null); // { sourceCell, x, y, targetDay, targetPeriod, evalResult }
@@ -137,10 +137,16 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
             ctx.fillStyle = "#b86e00";
             ctx.font = "bold 10px Pretendard, sans-serif";
             ctx.fillText(cell.changeNote.slice(0, 24), x + 10, y + 52);
-          } else if (cell.coTeacherId || cell.electiveGroup) {
+          } else if (cell.coTeacherId || (cell.coTeacherIds && cell.coTeacherIds.length > 0) || cell.electiveGroup || cell.blockGroupID) {
             ctx.fillStyle = "#5f3dc4";
             ctx.font = "10.5px Pretendard, sans-serif";
-            ctx.fillText(cell.electiveGroup ? `선택블록: ${cell.electiveGroup}` : "코티칭 수업", x + 10, y + 52);
+            const coCount = new Set([cell.coTeacherId, ...(cell.coTeacherIds || [])].filter(Boolean)).size;
+            const tag = cell.electiveGroup
+              ? `선택블록: ${cell.electiveGroup}`
+              : cell.blockGroupID
+                ? `연강블록${coCount > 0 ? ` · 코티칭${coCount + 1}인` : ""}`
+                : `코티칭 ${coCount + 1}인 수업`;
+            ctx.fillText(tag.slice(0, 24), x + 10, y + 52);
           }
         }
       });
@@ -198,7 +204,9 @@ export default function TimetableCanvas({ cells, teachersMap, bellSchedule = [],
   const handleMouseUp = async () => {
     if (dragState?.sourceCell && dragState.targetDay > 0 && dragState.targetPeriod > 0) {
       const samePos = dragState.sourceCell.dayOfWeek === dragState.targetDay && dragState.sourceCell.period === dragState.targetPeriod;
-      if (!samePos && dragState.evalResult && dragState.evalResult.signal !== "RED") {
+      if (samePos) {
+        onSelectCell?.(dragState.sourceCell);
+      } else if (dragState.evalResult && dragState.evalResult.signal !== "RED") {
         const target = cellAt(dragState.targetDay, dragState.targetPeriod);
         await onRequestCommit(dragState.sourceCell, target, dragState.targetDay, dragState.targetPeriod, dragState.evalResult);
       }

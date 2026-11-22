@@ -152,7 +152,8 @@ go test -v ./...
   * [x] **`v0.2.x` 4단계 완료:** 다중일(3~5일) 지필고사 통합 편성·연강 감독 방지·일자별 부분 공개(`multiday.go`), 월별/학기별 교무업무 통합 정산·결보강 확인서 `.hwpx`/`.xlsx` 출력(`stats/service.go`, `settlement_exporter.go`)
   * [x] **`v0.2.x` 5단계 완료:** 시작·관리 화면 테스트/시연 문구 및 데모 ID 정리, 깨끗한 초기 기동(`EnsureCleanInit` + `--seed-demo` 분리), Radix UI 7종 전면 적용(`Tabs`, `ContextMenu`, `AlertDialog`, `Tooltip`, `DropdownMenu`, `Dialog`, `Toast`), 모션·접근성 마감 및 포터블 MariaDB `ibdata1` 초기화 중단 자동 복구(`InspectMariaDBDataDir`) 완료
   * [x] **차기 6단계 통합 고도화 1단계 완료:** `admin` 시스템 계정 프론트엔드 6곳 완전 격리(`eventStore.js` 공용 헬퍼 + `TeacherManagerCard.jsx` 시스템 영역 분리), 비교과 교사(특수·보건·상담·사서·영양·기타) 유형 및 `수업 유무`/`결보강 대타 제외` 속성(`models.go`, `absence.go`, `base_builder.go`, `xlsx_teachers.go`), 특수교사 `특수학급고사실` 최우선 전담 배정(`special_class.go`, `assigner.go`) 완료
+  * [x] **차기 6단계 통합 고도화 2단계 완료:** 일회성(`DATE_ONLY`)·정규 분리, 상대교사 사전 합의(`AgreeRequest`) 및 일과계 즉시 반영(`AutoApprove`), 수업 교체 전수 탐색 모달(`solver_explore.go` · `SwapExplorerModal.jsx`), 선택블록·2연강 통째 이동 및 3인+ 코티칭(`solver_block.go` · `models_stage2.go`), FET 재귀 교환·미배정 역추적 진단(`curriculum_fet.go`), 창체 고정 편성·3단계 잠금 워크플로우(`curriculum_workflow.go` · `TimetableWorkflowPanel.jsx`), 교과교실제 On/Off·특별실 동시 수용 한도, 학기 시수 확보 원장 및 미보충 부채 추적(`ledger.go` · `SemesterLedgerPanel.jsx`) 완료
 * **📋 앞으로 구현해야 할 항목 (상세 6단계 통합 고도화 계획: [ROADMAP.md](ROADMAP.md)):**
-  * [ ] **차기 6단계 통합 고도화 (2~6단계 진행 예정):** ② 시간표 전수 탐색 모달·창체·교과부장 취합·고교학점제·학기 시수 원장 → ③ 교내·외부 시험감독 내규/차등 감면/고교학점제 고사실 → ④ 주중·월중 행사 달력/주간업무표/단축수업 프리셋 → ⑤ Radix 확장 기반 전 페이지 시각화 → ⑥ `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환
+  * [ ] **차기 6단계 통합 고도화 (3~6단계 진행 예정):** ③ 교내·외부 시험감독 내규/차등 감면/고교학점제 고사실 → ④ 주중·월중 행사 달력/주간업무표/단축수업 프리셋 → ⑤ Radix 확장 기반 전 페이지 시각화 → ⑥ `꼬미시간서버` Wails v3 GUI 컨트롤 센터 & 트레이 전환
   * [ ] Windows/macOS 실제 교무실 네트워크 현장 교차 구동 및 `v0.2.0` 릴리즈 배포 준비
   * [ ] `v0.3.x` ~ `v1.0` 중·장기: 고교학점제 학생 이동수업 시간표, 나이스 양방향 검증 확대, 교무실 TV 전광판 모드, macOS GitHub 릴리즈 자동 업데이트 및 신학년도 이관 마법사

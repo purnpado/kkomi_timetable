@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Building2, CheckCircle2, Download, Plus, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { apiFetch, hasRegularClasses, isFacultyTeacher } from "../../events/eventStore";
 import { downloadAuthenticatedFile } from "../../events/downloadHelper";
+import CurriculumDiagnosticsBox from "./CurriculumDiagnosticsBox";
 
 const DAY_LABELS = [
   { key: 1, label: "월" },
@@ -19,7 +20,9 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
   const [summary, setSummary] = useState(null);
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomSubj, setNewRoomSubj] = useState("과학");
+  const [newRoomMax, setNewRoomMax] = useState(1);
   const [clearBeforeGen, setClearBeforeGen] = useState(true);
+  const [autoGenReport, setAutoGenReport] = useState(null);
 
   const facultyTeachers = useMemo(() => (teachers || []).filter(isFacultyTeacher), [teachers]);
   const regularTeachers = useMemo(() => {
@@ -29,6 +32,7 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
 
   const [formGrade, setFormGrade] = useState(1);
   const [formTeacherId, setFormTeacherId] = useState(regularTeachers[0]?.id || "");
+  const [formCoTeacherIds, setFormCoTeacherIds] = useState([]);
   const [formSubject, setFormSubject] = useState("국어");
   const [formRoom, setFormRoom] = useState("");
   const [formBlock, setFormBlock] = useState(1);
@@ -92,6 +96,8 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
         method: "POST",
         body: JSON.stringify({
           teacherId: formTeacherId,
+          coTeacherId: formCoTeacherIds[0] || "",
+          coTeacherIds: formCoTeacherIds,
           grade: Number(formGrade),
           subject: formSubject.trim(),
           dedicatedRoom: formRoom.trim(),
@@ -101,6 +107,7 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
         }),
       });
       setFormClassHours({});
+      setFormCoTeacherIds([]);
       await fetchCurriculum();
       onNotify("시수표 반영 완료", `${formGrade}학년 ${formSubject} 시수가 등록되었습니다.`);
     } catch (err) {
@@ -136,7 +143,11 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
         method: "POST",
         body: JSON.stringify({ useCurriculum: true, clearExisting: clearBeforeGen }),
       });
-      onNotify("시수표 기반 자동 편성 완료", `총 ${res.createdCount}개 수업 셀이 교과교실·동시/연속수업 제약에 맞춰 편성되었습니다.`);
+      setAutoGenReport(res);
+      onNotify(
+        "시수표 기반 자동 편성 완료",
+        `총 ${res.createdCount}개 교시 배정 · FET 연쇄 복구 ${res.ejectionRepairedCount || 0}건 · 미배정 ${res.unplacedCount || 0}건`
+      );
       onRefresh();
     } catch (err) {
       onNotify("자동 편성 실패", err.message, true);
@@ -215,19 +226,34 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
         </div>
 
         <div className="card">
-          <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
-            <Building2 size={15} style={{ verticalAlign: "middle" }} /> 2. 교과교실제 전용실 · 특별실 등록부
-          </h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>
+              <Building2 size={15} style={{ verticalAlign: "middle" }} /> 2. 교과교실제 On/Off · 특별실(동시수용)
+            </h3>
+            <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <input
+                type="checkbox"
+                checked={config.subjectClassroomMode !== false}
+                onChange={(e) => setConfig({ ...config, subjectClassroomMode: e.target.checked })}
+              />
+              교과교실제 활성화
+            </label>
+          </div>
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            <input className="input" placeholder="강의실명 (예: 수학전용2실)" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} />
-            <input className="input" style={{ width: 100 }} placeholder="담당과목" value={newRoomSubj} onChange={(e) => setNewRoomSubj(e.target.value)} />
+            <input className="input" placeholder="강의실명 (예: 체육관)" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} />
+            <input className="input" style={{ width: 90 }} placeholder="담당과목" value={newRoomSubj} onChange={(e) => setNewRoomSubj(e.target.value)} />
+            <input className="input" type="number" min={1} max={10} style={{ width: 72 }} title="동시 수용 학급수" value={newRoomMax} onChange={(e) => setNewRoomMax(e.target.value)} placeholder="동시수" />
             <button
               className="btn btn-sm btn-primary"
               onClick={() => {
                 if (!newRoomName.trim()) return;
-                const next = [...(config.specialRooms || []), { id: `rm-${Date.now()}`, name: newRoomName.trim(), subject: newRoomSubj.trim(), capacity: 35 }];
+                const next = [
+                  ...(config.specialRooms || []),
+                  { id: `rm-${Date.now()}`, name: newRoomName.trim(), subject: newRoomSubj.trim(), capacity: 35, maxConcurrent: Number(newRoomMax) || 1 },
+                ];
                 setConfig({ ...config, specialRooms: next });
                 setNewRoomName("");
+                setNewRoomMax(1);
               }}
             >
               <Plus size={13} /> 추가
@@ -236,7 +262,7 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {(config.specialRooms || []).map((rm) => (
               <span key={rm.id} className="badge badge-gray" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px" }}>
-                <b>{rm.name}</b> ({rm.subject || "공용"})
+                <b>{rm.name}</b> ({rm.subject || "공용"} · 동시{rm.maxConcurrent || 1}반)
                 <button
                   type="button"
                   style={{ border: "none", background: "none", cursor: "pointer", color: "#e03131", fontWeight: 700 }}
@@ -248,7 +274,7 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
             ))}
           </div>
           <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 10 }}>
-            ※ 교과교실/특별실 지정 시 자동 편성과 수업 교환 시 같은 교시에 2개 학급이 겹치지 않도록 자동 차단됩니다.
+            ※ 동시 수용 한도(예: 체육관 2반)까지 허용하며, 교과교실제 Off 시 전용실 중복 차단 없이 학급교실 기준으로 편성됩니다.
           </div>
         </div>
       </div>
@@ -293,6 +319,8 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
         </div>
       )}
 
+      <CurriculumDiagnosticsBox report={autoGenReport} />
+
       <div className="card">
         <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>3. 교사별 · 학급별 시수표 등록부 추가 및 현황</h3>
         <form onSubmit={handleSaveLoad} style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, background: "#f8fafc", borderRadius: 10, marginBottom: 14 }}>
@@ -321,6 +349,28 @@ export default function CurriculumLoadManager({ serverUrl, user, teachers, onRef
             </select>
             <input className="input" type="number" min={1} max={4} title="연속수업 시수(1=단시간, 2=2연강)" value={formBlock} onChange={(e) => setFormBlock(e.target.value)} placeholder="연속시수" />
             <input className="input" value={formSimGroup} onChange={(e) => setFormSimGroup(e.target.value)} placeholder="동시수업 그룹(선택)" />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <b style={{ fontSize: 12 }}>복수 코티칭 협력교사 (선택):</b>
+            {regularTeachers
+              .filter((t) => t.id !== formTeacherId)
+              .map((t) => {
+                const picked = formCoTeacherIds.includes(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`btn btn-sm ${picked ? "btn-primary" : ""}`}
+                    style={{ fontSize: 11, padding: "2px 7px" }}
+                    onClick={() =>
+                      setFormCoTeacherIds(picked ? formCoTeacherIds.filter((x) => x !== t.id) : [...formCoTeacherIds, t.id])
+                    }
+                  >
+                    {picked ? "✓ " : "+ "}
+                    {t.name}
+                  </button>
+                );
+              })}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <b style={{ fontSize: 12 }}>학급별 주당 시수 입력:</b>

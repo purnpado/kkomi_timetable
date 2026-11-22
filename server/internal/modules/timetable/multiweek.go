@@ -3,6 +3,7 @@ package timetable
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -147,16 +148,9 @@ func buildEffectiveWeekCells(
 				applyDate = rq.SourceDate
 			}
 			if applyDate >= monStr && applyDate <= friStr {
-				if idx := findEffectiveSlot(out, applyDate, rq.SourceCell.ClassName, rq.SourceCell.Period); idx >= 0 {
+				if idx := findEffectiveSlotByReq(out, applyDate, rq); idx >= 0 {
 					if rq.PartnerID != "" {
-						if out[idx].CoTeacherID != "" && out[idx].CoTeacherID == rq.RequesterID && out[idx].TeacherID != rq.RequesterID {
-							out[idx].CoTeacherID = rq.PartnerID
-						} else {
-							out[idx].TeacherID = rq.PartnerID
-							if out[idx].CoTeacherID == rq.PartnerID {
-								out[idx].CoTeacherID = ""
-							}
-						}
+						replaceSlotTeacher(&out[idx], rq.RequesterID, rq.PartnerID)
 					}
 					if rq.TargetCell.Subject != "" {
 						out[idx].Subject = rq.TargetCell.Subject
@@ -164,9 +158,108 @@ func buildEffectiveWeekCells(
 					out[idx].ChangeNote = fmt.Sprintf("[일일보강] %s(%s)", rq.PartnerName, shortMD(applyDate))
 				}
 			}
+		case "MOVE", "SWAP", "TRIANGLE", "QUAD", "BLOCK_MOVE":
+			if rq.Scope != "DATE_ONLY" {
+				continue
+			}
+			effDate := rq.SourceDate
+			if effDate == "" {
+				effDate = rq.TargetDate
+			}
+			if effDate == "" || NormalizeMonday(effDate) != monStr {
+				continue
+			}
+			applyDateOnlyChainOverlay(out, monStr, effDate, rq)
 		}
 	}
 	return out
+}
+
+func findEffectiveSlotByReq(cells []protocol.TimetableCell, dateStr string, rq protocol.TimetableChangeRequest) int {
+	if idx := findEffectiveSlot(cells, dateStr, rq.SourceCell.ClassName, rq.SourceCell.Period); idx >= 0 {
+		return idx
+	}
+	if rq.SourceCell.ID != "" {
+		for i := range cells {
+			if cells[i].ID == rq.SourceCell.ID && cells[i].LessonDate == dateStr {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func applyDateOnlyChainOverlay(out []protocol.TimetableCell, monStr, effDate string, rq protocol.TimetableChangeRequest) {
+	findByID := func(id string) int {
+		for i := range out {
+			if out[i].ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+	noteTag := fmt.Sprintf("[일회성 %s] %s", rq.RequestType, shortMD(effDate))
+	if len(rq.ChainSteps) > 0 {
+		for _, step := range rq.ChainSteps {
+			if idx := findByID(step.CellID); idx >= 0 {
+				out[idx].DayOfWeek = step.ToDay
+				out[idx].Period = step.ToPeriod
+				out[idx].LessonDate = DateForWeekday(monStr, step.ToDay)
+				out[idx].ChangeNote = noteTag
+			}
+		}
+		return
+	}
+	if rq.RequestType == "SWAP" && rq.SourceCell.ID != "" && rq.TargetCell.ID != "" {
+		sIdx, tIdx := findByID(rq.SourceCell.ID), findByID(rq.TargetCell.ID)
+		if sIdx >= 0 && tIdx >= 0 {
+			out[sIdx].DayOfWeek, out[tIdx].DayOfWeek = out[tIdx].DayOfWeek, out[sIdx].DayOfWeek
+			out[sIdx].Period, out[tIdx].Period = out[tIdx].Period, out[sIdx].Period
+			out[sIdx].LessonDate = DateForWeekday(monStr, out[sIdx].DayOfWeek)
+			out[tIdx].LessonDate = DateForWeekday(monStr, out[tIdx].DayOfWeek)
+			out[sIdx].ChangeNote = noteTag
+			out[tIdx].ChangeNote = noteTag
+		}
+		return
+	}
+	if rq.RequestType == "MOVE" && rq.SourceCell.ID != "" && rq.TargetCell.DayOfWeek > 0 && rq.TargetCell.Period > 0 {
+		if sIdx := findByID(rq.SourceCell.ID); sIdx >= 0 {
+			out[sIdx].DayOfWeek = rq.TargetCell.DayOfWeek
+			out[sIdx].Period = rq.TargetCell.Period
+			out[sIdx].LessonDate = DateForWeekday(monStr, out[sIdx].DayOfWeek)
+			out[sIdx].ChangeNote = noteTag
+		}
+	}
+}
+
+func replaceSlotTeacher(slot *protocol.TimetableCell, oldTeacherID, newTeacherID string) {
+	if slot == nil || newTeacherID == "" {
+		return
+	}
+	replacedCo := false
+	if slot.CoTeacherID != "" && oldTeacherID != "" && slot.CoTeacherID == oldTeacherID && slot.TeacherID != oldTeacherID {
+		slot.CoTeacherID = newTeacherID
+		replacedCo = true
+	}
+	for i, tid := range slot.CoTeacherIDs {
+		if oldTeacherID != "" && tid == oldTeacherID && slot.TeacherID != oldTeacherID {
+			slot.CoTeacherIDs[i] = newTeacherID
+			replacedCo = true
+		}
+	}
+	if !replacedCo {
+		slot.TeacherID = newTeacherID
+		if slot.CoTeacherID == newTeacherID {
+			slot.CoTeacherID = ""
+		}
+		var filtered []string
+		for _, tid := range slot.CoTeacherIDs {
+			if tid != "" && tid != newTeacherID {
+				filtered = append(filtered, tid)
+			}
+		}
+		slot.CoTeacherIDs = filtered
+	}
 }
 
 func findEffectiveSlot(cells []protocol.TimetableCell, dateStr, className string, period int) int {
@@ -183,6 +276,7 @@ func applySwapOverlay(slot *protocol.TimetableCell, incoming protocol.TimetableC
 	slot.SubjectCode = incoming.SubjectCode
 	slot.TeacherID = incoming.TeacherID
 	slot.CoTeacherID = incoming.CoTeacherID
+	slot.CoTeacherIDs = append([]string(nil), incoming.CoTeacherIDs...)
 	if incoming.Room != "" {
 		slot.Room = incoming.Room
 	}
@@ -316,11 +410,11 @@ func findCrossWeekForCell(
 }
 
 func hasTeacherOverlap(a, b protocol.TimetableCell) bool {
-	if a.TeacherID != "" && (a.TeacherID == b.TeacherID || a.TeacherID == b.CoTeacherID) {
-		return true
-	}
-	if a.CoTeacherID != "" && (a.CoTeacherID == b.TeacherID || a.CoTeacherID == b.CoTeacherID) {
-		return true
+	aTeachers := protocol.AllCellTeachers(a)
+	for _, bt := range protocol.AllCellTeachers(b) {
+		if slices.Contains(aTeachers, bt) {
+			return true
+		}
 	}
 	return false
 }

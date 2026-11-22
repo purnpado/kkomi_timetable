@@ -17,8 +17,11 @@ func (s *Service) AutoGenerateFromCurriculum(clearExisting bool) ([]protocol.Tim
 	return res.Cells, err
 }
 
-// AutoGenerateFromCurriculumDetailed는 자동 편성 결과와 함께 미배정 건수·상세 경고를 반환합니다.
+// AutoGenerateFromCurriculumDetailed는 자동 편성 결과와 함께 미배정 건수·FET 연쇄 복구 건수·원인 진단을 반환합니다.
 func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGenerateResult, error) {
+	if locked, wf := s.isWorkflowLocked(); locked {
+		return AutoGenerateResult{}, fmt.Errorf("정규 시간표가 '%s'에 의해 최종 확정(잠금)되어 자동 편성할 수 없습니다", wf.LockedBy)
+	}
 	cfg, _ := s.GetSchoolConfig()
 	loads, err := s.ListTeachingLoads()
 	if err != nil {
@@ -112,7 +115,7 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 
 	var created []protocol.TimetableCell
 	placeUnitInMem := func(u allocUnit, day, startP int) {
-		roomName := effectiveRoom(u.Load, tMap[u.Load.TeacherID], u.ClassName)
+		roomName := effectiveRoomWithConfig(u.Load, tMap[u.Load.TeacherID], u.ClassName, cfg)
 		blockID := ""
 		if u.Hours >= 2 {
 			blockID = fmt.Sprintf("blk-%s-%d-%d", u.ClassName, day, startP)
@@ -129,6 +132,7 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 				SubjectCode:   u.Load.SubjectCode,
 				TeacherID:     u.Load.TeacherID,
 				CoTeacherID:   u.Load.CoTeacherID,
+				CoTeacherIDs:  append([]string(nil), u.Load.CoTeacherIDs...),
 				Room:          roomName,
 				ElectiveGroup: u.Load.SimultaneousGroup,
 				BlockGroupID:  blockID,
@@ -177,7 +181,7 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 					roundUnits = append(roundUnits, memberMap[mk][round])
 				}
 			}
-			if hasIntraGroupConflict(roundUnits, tMap) {
+			if hasIntraGroupConflict(roundUnits, tMap, cfg) {
 				warnings = append(warnings, fmt.Sprintf("동시수업 그룹 '%s' %d회차 내부 교사/학급/교실 중복으로 일반 배치 전환", gKey, round+1))
 				normalUnits = append(normalUnits, roundUnits...)
 				continue
@@ -262,50 +266,23 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 		}
 	}
 
-	// 3. 미배정 시수 1단계 스왑 복구 패스
+	// 3. FET 방식 다단계 재귀적 교환(Ejection Chain) 복구 + 불가능 시수 역추적 진단
 	var finalUnplaced []allocUnit
+	var diagnostics []protocol.UnplacedDiagnosis
+	ejectionRepairedCount := 0
 	for _, u := range unplaced {
-		grade := parseGrade(u.ClassName, u.Load.Grade)
-		repaired := false
-		for ed := 1; ed <= 5 && !repaired; ed++ {
-			for ep := 1; ep <= st.maxPeriod(grade, ed) && !repaired; ep++ {
-				if st.slotBusy[fmt.Sprintf("%s-%d-%d", u.ClassName, ed, ep)] {
-					continue
-				}
-				for idx := range created {
-					other := created[idx]
-					if other.ClassName != u.ClassName || other.IsLocked || other.BlockGroupID != "" || other.ElectiveGroup != "" {
-						continue
-					}
-					st.mark(other, false)
-					otherUnit := allocUnit{
-						Load: protocol.TeachingLoad{
-							TeacherID: other.TeacherID, CoTeacherID: other.CoTeacherID,
-							Grade: other.Grade, Subject: other.Subject, DedicatedRoom: other.Room,
-						},
-						ClassName: other.ClassName, Hours: 1,
-					}
-					if st.canPlace(otherUnit, ed, ep, true, true) && st.canPlace(u, other.DayOfWeek, other.Period, true, true) {
-						targetD, targetP := other.DayOfWeek, other.Period
-						other.DayOfWeek = ed
-						other.Period = ep
-						other.ID = fmt.Sprintf("c-%d-%d-%s", ed, ep, other.ClassName)
-						created[idx] = other
-						st.mark(other, true)
-						placeUnitInMem(u, targetD, targetP)
-						warnings = append(warnings, st.softPlacementWarnings(otherUnit, ed, ep)...)
-						warnings = append(warnings, st.softPlacementWarnings(u, targetD, targetP)...)
-						repaired = true
-						break
-					}
-					st.mark(other, true)
-				}
-			}
+		nextCreated, chainWarns, ok := repairUnplacedWithEjectionChain(u, st, created, cfg, tMap, 4, 400)
+		if ok {
+			created = nextCreated
+			ejectionRepairedCount++
+			warnings = append(warnings, fmt.Sprintf("[FET 연쇄 복구] %s반 %s(%s) 다단계 재배치 성공", u.ClassName, u.Subject(), tMap[u.Load.TeacherID].Name))
+			warnings = append(warnings, chainWarns...)
+			continue
 		}
-		if !repaired {
-			finalUnplaced = append(finalUnplaced, u)
-			warnings = append(warnings, fmt.Sprintf("[미배정] %s반 %s(%s) 1시간", u.ClassName, u.Subject(), tMap[u.Load.TeacherID].Name))
-		}
+		finalUnplaced = append(finalUnplaced, u)
+		diag := diagnoseUnplacedUnit(u, st, tMap)
+		diagnostics = append(diagnostics, diag)
+		warnings = append(warnings, fmt.Sprintf("[미배정] %s반 %s(%s) — %s", u.ClassName, u.Subject(), tMap[u.Load.TeacherID].Name, diag.PrimaryCause))
 	}
 
 	afterCells := make([]protocol.TimetableCell, 0, len(keptCells)+len(created))
@@ -334,13 +311,15 @@ func (s *Service) AutoGenerateFromCurriculumDetailed(clearExisting bool) (AutoGe
 		s.bus.Publish(protocol.DomainEvent{
 			Type:    protocol.EventTimetableCellsUpdated,
 			Title:   "시수표 기반 정규 시간표 자동 편성 완료",
-			Message: fmt.Sprintf("총 %d교시 배정 (미배정 %d건)", len(created), len(finalUnplaced)),
-			Payload: map[string]int{"createdCount": len(created), "unplacedCount": len(finalUnplaced)},
+			Message: fmt.Sprintf("총 %d교시 배정 (연쇄복구 %d건 · 미배정 %d건)", len(created), ejectionRepairedCount, len(finalUnplaced)),
+			Payload: map[string]int{"createdCount": len(created), "repairedCount": ejectionRepairedCount, "unplacedCount": len(finalUnplaced)},
 		})
 	}
 	return AutoGenerateResult{
-		Cells:         created,
-		UnplacedCount: len(finalUnplaced),
-		Warnings:      warnings,
+		Cells:                 created,
+		UnplacedCount:         len(finalUnplaced),
+		EjectionRepairedCount: ejectionRepairedCount,
+		Warnings:              warnings,
+		Diagnostics:           diagnostics,
 	}, nil
 }

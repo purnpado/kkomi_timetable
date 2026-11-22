@@ -75,7 +75,8 @@ func (s *Service) EvaluateMove(req protocol.EvaluateMoveRequest) (protocol.MoveE
 	}
 	events, _ := database.LoadCollection[protocol.SchoolEvent](s.store, "school_events")
 	constraints, _ := s.ListConstraints()
-	return EvaluateMoveWithConstraints(req, cells, tMap, events, constraints), nil
+	cfg, _ := s.GetSchoolConfig()
+	return EvaluateMoveWithConfig(req, cells, tMap, events, constraints, cfg), nil
 }
 
 // SubmitRequest는 교사의 수업 교환 또는 결보강 신청을 대기열(STAGING)에 등록합니다.
@@ -87,9 +88,15 @@ func (s *Service) SubmitRequest(req protocol.TimetableChangeRequest) (protocol.T
 	if req.TargetDate == "" {
 		req.TargetDate = time.Now().Format("2006-01-02")
 	}
+	if req.Scope == "DATE_ONLY" && req.SourceDate == "" {
+		req.SourceDate = req.TargetDate
+	}
 	req.Status = protocol.StatusStaging
 	if req.CreatedAt == "" {
 		req.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
+	}
+	if req.PartnerAgreed && req.PartnerAgreedAt == "" {
+		req.PartnerAgreedAt = req.CreatedAt
 	}
 	if err := s.store.SaveRecord("timetable_requests", req.ID, req); err != nil {
 		return req, err
@@ -105,6 +112,39 @@ func (s *Service) SubmitRequest(req protocol.TimetableChangeRequest) (protocol.T
 		})
 	}
 	return req, nil
+}
+
+// AgreeRequest는 수업 교환·보강 대상(상대) 교사가 사전 합의 동의 여부와 메모를 기록합니다.
+func (s *Service) AgreeRequest(requestID, actorID, actorName string, agreed bool, note string, isAdmin bool) (*protocol.TimetableChangeRequest, error) {
+	var updated *protocol.TimetableChangeRequest
+	err := s.store.WithTx(func(tx *database.TxStore) error {
+		loaded, lErr := database.LoadRecordTx[protocol.TimetableChangeRequest](tx, "timetable_requests", requestID)
+		if lErr != nil || loaded == nil {
+			return fmt.Errorf("요청(%s)을 찾을 수 없습니다", requestID)
+		}
+		if loaded.Status != protocol.StatusStaging {
+			return fmt.Errorf("승인 대기 상태인 요청만 동의 상태를 변경할 수 있습니다")
+		}
+		if !isAdmin && loaded.PartnerID != "" && actorID != loaded.PartnerID {
+			return fmt.Errorf("지정된 상대 교사(%s) 또는 관리자만 합의 동의 처리를 할 수 있습니다", loaded.PartnerName)
+		}
+		loaded.PartnerAgreed = agreed
+		loaded.AgreementNote = strings.TrimSpace(note)
+		if agreed {
+			loaded.PartnerAgreedAt = time.Now().Format("2006-01-02 15:04:05")
+			if loaded.AgreementNote == "" && actorName != "" {
+				loaded.AgreementNote = fmt.Sprintf("%s 사전 합의 완료", actorName)
+			}
+		} else {
+			loaded.PartnerAgreedAt = ""
+		}
+		if sErr := tx.SaveRecord("timetable_requests", loaded.ID, *loaded); sErr != nil {
+			return sErr
+		}
+		updated = loaded
+		return nil
+	})
+	return updated, err
 }
 
 // CommitRequest는 시간표 담당교사가 대기열 항목을 [최종 선택(서버 반영)]할 때 원자적 트랜잭션으로 마스터 시간표를 갱신합니다.
@@ -134,6 +174,9 @@ func (s *Service) CommitRequest(requestID, reviewerName string, approve bool, re
 		}
 
 		if loaded.RequestType != "CROSS_WEEK_SWAP" && loaded.Scope != "DATE_ONLY" {
+			if locked, wf := isWorkflowLockedTx(tx); locked {
+				return fmt.Errorf("정규 시간표가 '%s'에 의해 최종 확정(잠금)되어 영구 수정할 수 없습니다. 일회성(주차 한정) 변경을 이용해 주세요", wf.LockedBy)
+			}
 			cells, cErr := database.LoadCollectionTx[protocol.TimetableCell](tx, "timetable_cells")
 			if cErr != nil {
 				return cErr
@@ -147,7 +190,8 @@ func (s *Service) CommitRequest(requestID, reviewerName string, approve bool, re
 				tMap[t.ID] = t
 			}
 			constraints, _ := database.LoadCollectionTx[protocol.TeacherConstraint](tx, "teacher_constraints")
-			changed, uErr := validateAndApplyCellUpdateTx(tx, cells, tMap, constraints, *loaded, reviewerName)
+			cfg := loadSchoolConfigTx(tx)
+			changed, uErr := validateAndApplyCellUpdateTx(tx, cells, tMap, constraints, cfg, *loaded, reviewerName)
 			if uErr != nil {
 				return uErr
 			}
@@ -219,6 +263,7 @@ func validateAndApplyCellUpdateTx(
 	cells []protocol.TimetableCell,
 	tMap map[string]protocol.Teacher,
 	constraints []protocol.TeacherConstraint,
+	cfg protocol.SchoolConfig,
 	req protocol.TimetableChangeRequest,
 	actorName string,
 ) (bool, error) {
@@ -282,10 +327,7 @@ func validateAndApplyCellUpdateTx(
 		if !ok {
 			return false, fmt.Errorf("대타 대상 셀(%s)을 찾을 수 없습니다", req.SourceCell.ID)
 		}
-		sim[srcIdx].TeacherID = req.PartnerID
-		if sim[srcIdx].CoTeacherID == req.PartnerID {
-			sim[srcIdx].CoTeacherID = ""
-		}
+		replaceSlotTeacher(&sim[srcIdx], req.RequesterID, req.PartnerID)
 		if req.TargetCell.Subject != "" {
 			sim[srcIdx].Subject = req.TargetCell.Subject
 		}
@@ -298,7 +340,7 @@ func validateAndApplyCellUpdateTx(
 	for _, tid := range touchedIDs {
 		idx := indexByID[tid]
 		c := sim[idx]
-		if reason := slotConflictReason(c, c.DayOfWeek, c.Period, "", map[string]bool{c.ID: true}, sim, tMap, nil, constraints); reason != "" {
+		if reason := slotConflictReasonWithConfig(c, c.DayOfWeek, c.Period, "", map[string]bool{c.ID: true}, sim, tMap, nil, constraints, cfg); reason != "" {
 			return false, fmt.Errorf("승인 시점 시간표 충돌: %s", reason)
 		}
 		for _, other := range sim {
@@ -341,146 +383,4 @@ func (s *Service) NEISHelperList() ([]protocol.TimetableChangeRequest, error) {
 		return approved[i].SourceCell.Period < approved[j].SourceCell.Period
 	})
 	return approved, nil
-}
-
-func (s *Service) onExternalExamConfirmed(evt protocol.DomainEvent) {
-	notice, ok := evt.Payload.(protocol.ExternalExamNotice)
-	if !ok {
-		return
-	}
-	prefix := fmt.Sprintf("ext-trip-%s-", notice.ID)
-	existingReqs, _ := s.ListRequests()
-
-	desired := make(map[string]protocol.TimetableChangeRequest)
-	if parsedDate, err := time.Parse("2006-01-02", notice.ExamDate); err == nil {
-		wd := int(parsedDate.Weekday()) // 0=일, 1=월 ... 5=금, 6=토
-		if wd >= 1 && wd <= 5 && len(notice.ConfirmedIDs) > 0 {
-			cells, _ := s.ListCells()
-			teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
-			tNameMap := make(map[string]string, len(teachers))
-			for _, t := range teachers {
-				tNameMap[t.ID] = t.Name
-			}
-			nowStr := time.Now().Format("2006-01-02 15:04:05")
-			for _, tid := range notice.ConfirmedIDs {
-				for _, c := range cells {
-					if c.DayOfWeek == wd && (c.TeacherID == tid || c.CoTeacherID == tid) {
-						id := fmt.Sprintf("%s%s-%s", prefix, tid, c.ID)
-						desired[id] = protocol.TimetableChangeRequest{
-							ID: id, RequestType: "EXTERNAL_TRIP", Scope: "DATE_ONLY",
-							SourceDate: notice.ExamDate, TargetDate: notice.ExamDate,
-							RequesterID: tid, RequesterName: tNameMap[tid],
-							PartnerName: "보강교사 미배정", SourceCell: c, TargetCell: c,
-							Reason:    fmt.Sprintf("[외부감독 자동이관] %s 파견 출장", notice.Title),
-							Status:    protocol.StatusStaging,
-							CreatedAt: nowStr,
-						}
-					}
-				}
-			}
-		}
-	}
-
-	for _, rq := range existingReqs {
-		if !strings.HasPrefix(rq.ID, prefix) {
-			continue
-		}
-		if _, keep := desired[rq.ID]; !keep {
-			if rq.Status == protocol.StatusStaging {
-				_ = s.store.DeleteRecord("timetable_requests", rq.ID)
-			}
-		} else if rq.Status == protocol.StatusApproved {
-			delete(desired, rq.ID)
-		}
-	}
-	for _, rq := range desired {
-		_ = s.store.SaveRecord("timetable_requests", rq.ID, rq)
-	}
-}
-
-func (s *Service) onExternalExamUpdated(evt protocol.DomainEvent) {
-	info, ok := evt.Payload.(map[string]string)
-	if !ok {
-		return
-	}
-	deletedID := strings.TrimSpace(info["deletedId"])
-	if deletedID == "" {
-		return
-	}
-	prefix := fmt.Sprintf("ext-trip-%s-", deletedID)
-	reqs, _ := s.ListRequests()
-	for _, rq := range reqs {
-		if strings.HasPrefix(rq.ID, prefix) && rq.Status == protocol.StatusStaging {
-			_ = s.store.DeleteRecord("timetable_requests", rq.ID)
-		}
-	}
-}
-
-func (s *Service) onSchoolEventPublished(evt protocol.DomainEvent) {
-	ev, ok := evt.Payload.(protocol.SchoolEvent)
-	if !ok || ev.Status != protocol.StatusApproved {
-		return
-	}
-	// [학년/전교 수업블록]은 정규 timetable_cells를 오염시키지 않고 해당 주차 조회(buildEffectiveWeekCells)에서 동적 합성
-	if ev.LinkType != protocol.EventLinkTeacherTrip {
-		return
-	}
-	parsedDate, err := time.Parse("2006-01-02", ev.EventDate)
-	if err != nil {
-		return
-	}
-	wd := int(parsedDate.Weekday())
-	if wd < 1 || wd > 5 {
-		return
-	}
-	cells, _ := s.ListCells()
-	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
-	tNameMap := make(map[string]string, len(teachers))
-	for _, t := range teachers {
-		tNameMap[t.ID] = t.Name
-	}
-
-	nowStr := time.Now().Format("2006-01-02 15:04:05")
-	for _, tid := range ev.LeadTeachers {
-		for _, c := range cells {
-			if c.DayOfWeek == wd && (c.TeacherID == tid || c.CoTeacherID == tid) &&
-				(ev.StartPeriod == 0 || (c.Period >= ev.StartPeriod && c.Period <= ev.EndPeriod)) {
-				req := protocol.TimetableChangeRequest{
-					ID: fmt.Sprintf("evt-trip-%s-%s-%s", ev.ID, tid, c.ID),
-					RequestType: "EVENT_TRIP", Scope: "DATE_ONLY",
-					SourceDate: ev.EventDate, TargetDate: ev.EventDate,
-					RequesterID: tid, RequesterName: tNameMap[tid],
-					PartnerName: "보강교사 미배정", SourceCell: c, TargetCell: c,
-					Reason:    fmt.Sprintf("[행사 자동이관] %s 인솔 출장", ev.Title),
-					Status:    protocol.StatusStaging,
-					CreatedAt: nowStr,
-				}
-				_ = s.store.SaveRecord("timetable_requests", req.ID, req)
-			}
-		}
-	}
-}
-
-func (s *Service) onSchoolEventDeleted(evt protocol.DomainEvent) {
-	ev, ok := evt.Payload.(protocol.SchoolEvent)
-	if !ok || strings.TrimSpace(ev.ID) == "" {
-		return
-	}
-	prefix := fmt.Sprintf("evt-trip-%s-", ev.ID)
-	reqs, _ := s.ListRequests()
-	for _, rq := range reqs {
-		if strings.HasPrefix(rq.ID, prefix) && rq.Status == protocol.StatusStaging {
-			_ = s.store.DeleteRecord("timetable_requests", rq.ID)
-		}
-	}
-}
-
-func compactIDs(ids ...string) []string {
-	var out []string
-	for _, id := range ids {
-		if strings.TrimSpace(id) != "" {
-			out = append(out, id)
-		}
-	}
-	return out
 }

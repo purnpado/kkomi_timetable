@@ -77,7 +77,7 @@ func (s *Service) PlanTeacherAbsence(req protocol.AbsencePlanRequest) ([]protoco
 		var dayCells []protocol.TimetableCell
 		for _, c := range weekCells {
 			if c.LessonDate == dateStr && c.BlockedBy == "" && c.Period >= sp && c.Period <= ep &&
-				(c.TeacherID == req.TeacherID || c.CoTeacherID == req.TeacherID) {
+				slices.Contains(protocol.AllCellTeachers(c), req.TeacherID) {
 				dayCells = append(dayCells, c)
 			}
 		}
@@ -141,7 +141,7 @@ func rankSubstituteCandidates(
 		busy := false
 		for _, wc := range weekCells {
 			if wc.DayOfWeek == slot.DayOfWeek && wc.Period == slot.Period &&
-				(wc.TeacherID == t.ID || wc.CoTeacherID == t.ID) {
+				slices.Contains(protocol.AllCellTeachers(wc), t.ID) {
 				busy = true
 				break
 			}

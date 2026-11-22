@@ -384,7 +384,7 @@ func DefaultSchoolConfig() protocol.SchoolConfig {
 			{ID: "rm-comp", Name: "컴퓨터실", Subject: "정보", Capacity: 32},
 			{ID: "rm-music", Name: "음악실", Subject: "음악", Capacity: 35},
 			{ID: "rm-art", Name: "미술실", Subject: "미술", Capacity: 35},
-			{ID: "rm-gym", Name: "체육관", Subject: "체육", Capacity: 70},
+			{ID: "rm-gym", Name: "체육관", Subject: "체육", Capacity: 70, MaxConcurrent: 2},
 			{ID: "rm-math1", Name: "수학전용1실", Subject: "수학", Capacity: 30},
 		},
 	}

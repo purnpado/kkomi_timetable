@@ -18,38 +18,67 @@ func CalculateScenarioMetrics(
 	teachers []protocol.Teacher,
 	constraints []protocol.TeacherConstraint,
 ) protocol.ScenarioMetrics {
+	return CalculateScenarioMetricsWithConfig(cells, teachers, constraints, protocol.SchoolConfig{})
+}
+
+// CalculateScenarioMetricsWithConfig는 학교 교과교실 설정 및 복수 코티칭을 반영해 시나리오 품질 지표를 산출합니다.
+func CalculateScenarioMetricsWithConfig(
+	cells []protocol.TimetableCell,
+	teachers []protocol.Teacher,
+	constraints []protocol.TeacherConstraint,
+	cfg protocol.SchoolConfig,
+) protocol.ScenarioMetrics {
 	tMap := make(map[string]protocol.Teacher, len(teachers))
 	for _, t := range teachers {
 		tMap[t.ID] = t
 	}
 
 	m := protocol.ScenarioMetrics{TotalCells: len(cells)}
+	type roomSlotKey struct {
+		room   string
+		day    int
+		period int
+	}
+	roomCountMap := make(map[roomSlotKey]int)
+	if protocol.IsSubjectClassroomEnabled(cfg) {
+		for _, c := range cells {
+			if c.Room != "" && c.Room != c.ClassName+"교실" {
+				roomCountMap[roomSlotKey{room: c.Room, day: c.DayOfWeek, period: c.Period}]++
+			}
+		}
+		for rk, cnt := range roomCountMap {
+			maxConc := protocol.RoomMaxConcurrent(cfg, rk.room)
+			if cnt > maxConc {
+				m.ConflictCount += cnt - maxConc
+			}
+		}
+	}
 
-	// 1. 동시간대(학급·교사·교과교실) 중복 및 순회 비출강·제약 위반 집계
+	// 1. 동시간대(학급·교사) 중복 및 순회 비출강·제약 위반 집계
 	for i := 0; i < len(cells); i++ {
 		c := cells[i]
-		if t, ok := tMap[c.TeacherID]; ok && len(t.ItinerantDays) > 0 && !slices.Contains(t.ItinerantDays, c.DayOfWeek) {
-			m.ConflictCount++
-		}
-		if c.CoTeacherID != "" {
-			if ct, ok := tMap[c.CoTeacherID]; ok && len(ct.ItinerantDays) > 0 && !slices.Contains(ct.ItinerantDays, c.DayOfWeek) {
+		cellTeachers := protocol.AllCellTeachers(c)
+		for _, tid := range cellTeachers {
+			if t, ok := tMap[tid]; ok && len(t.ItinerantDays) > 0 && !slices.Contains(t.ItinerantDays, c.DayOfWeek) {
 				m.ConflictCount++
 			}
 		}
 
-		hardHit := hardConstraintReason(c.TeacherID, c.DayOfWeek, c.Period, constraints, tMap) != ""
-		if !hardHit && c.CoTeacherID != "" {
-			hardHit = hardConstraintReason(c.CoTeacherID, c.DayOfWeek, c.Period, constraints, tMap) != ""
+		hardHit := false
+		for _, tid := range cellTeachers {
+			if hardConstraintReason(tid, c.DayOfWeek, c.Period, constraints, tMap) != "" {
+				hardHit = true
+				break
+			}
 		}
 		if hardHit {
 			m.HardAvoidViolated++
 		} else {
-			softHit := softConstraintReason(c.TeacherID, c.DayOfWeek, c.Period, constraints, tMap) != ""
-			if !softHit && c.CoTeacherID != "" {
-				softHit = softConstraintReason(c.CoTeacherID, c.DayOfWeek, c.Period, constraints, tMap) != ""
-			}
-			if softHit {
-				m.SoftAvoidViolated++
+			for _, tid := range cellTeachers {
+				if softConstraintReason(tid, c.DayOfWeek, c.Period, constraints, tMap) != "" {
+					m.SoftAvoidViolated++
+					break
+				}
 			}
 		}
 
@@ -60,8 +89,6 @@ func CalculateScenarioMetrics(
 			}
 			if c.ClassName == o.ClassName || hasTeacherOverlap(c, o) {
 				m.ConflictCount++
-			} else if c.Room != "" && c.Room != c.ClassName+"교실" && c.Room == o.Room {
-				m.ConflictCount++
 			}
 		}
 	}
@@ -69,7 +96,7 @@ func CalculateScenarioMetrics(
 	// 2. 교사별 3연강/4연강+ 및 주 1일 이상 전일 공강 확보 교사 수 집계
 	teacherSlots := make(map[string]map[int]map[int]bool)
 	for _, c := range cells {
-		for _, tid := range compactIDs(c.TeacherID, c.CoTeacherID) {
+		for _, tid := range protocol.AllCellTeachers(c) {
 			if teacherSlots[tid] == nil {
 				teacherSlots[tid] = make(map[int]map[int]bool)
 			}
@@ -132,7 +159,8 @@ func (s *Service) CurrentMetrics() (protocol.ScenarioMetrics, error) {
 	}
 	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
 	constraints, _ := s.ListConstraints()
-	return CalculateScenarioMetrics(cells, teachers, constraints), nil
+	cfg, _ := s.GetSchoolConfig()
+	return CalculateScenarioMetricsWithConfig(cells, teachers, constraints, cfg), nil
 }
 
 // ListScenarios는 저장된 시간표 비교 시나리오(A/B/C안 등) 목록을 반환합니다.
@@ -161,6 +189,7 @@ func (s *Service) SaveScenario(slotCode, name, description, actorName string) (p
 	}
 	teachers, _ := database.LoadCollection[protocol.Teacher](s.store, "teachers")
 	constraints, _ := s.ListConstraints()
+	cfg, _ := s.GetSchoolConfig()
 
 	code := strings.ToUpper(strings.TrimSpace(slotCode))
 	if code == "" {
@@ -181,7 +210,7 @@ func (s *Service) SaveScenario(slotCode, name, description, actorName string) (p
 		Name:        title,
 		Description: strings.TrimSpace(description),
 		Cells:       cells,
-		Metrics:     CalculateScenarioMetrics(cells, teachers, constraints),
+		Metrics:     CalculateScenarioMetricsWithConfig(cells, teachers, constraints, cfg),
 		CreatedBy:   actorName,
 		CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
 	}
